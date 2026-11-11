@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useApp } from '../../context/AppContext.tsx';
+import { useApp, usePixelBackLayer } from '../../context/AppContext.tsx';
 import { Header } from '../common/Header.tsx';
 import { BottomActionBar } from '../common/BottomActionBar.tsx';
 import { BottomNav } from '../common/BottomNav.tsx';
@@ -30,6 +30,8 @@ export const SicherungView: React.FC = () => {
   const [targetLabel, setTargetLabel] = useState<string>(() => {
     return getNativeBackupMeta()?.targetLabel || 'hausgarten-backup.zip';
   });
+
+  usePixelBackLayer(restoreModalOpen, () => setRestoreModalOpen(false));
 
   const handleBackup = async (forcePickTarget = false) => {
     setIsBackingUp(true);

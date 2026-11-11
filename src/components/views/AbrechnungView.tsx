@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useApp } from '../../context/AppContext.tsx';
+import { useApp, usePixelBackLayer } from '../../context/AppContext.tsx';
 import { Header } from '../common/Header.tsx';
 import { BottomActionBar } from '../common/BottomActionBar.tsx';
 import { BottomNav } from '../common/BottomNav.tsx';
@@ -17,7 +17,6 @@ import { downloadOrSaveBlob } from '../../services/nativeBridge.ts';
 import {
   Receipt,
   CheckCircle,
-  ChevronRight,
   ChevronDown,
   ChevronUp,
   CreditCard,
@@ -98,6 +97,13 @@ export const AbrechnungView: React.FC = () => {
   const [editPayDate, setEditPayDate] = useState('');
   const [editPayAmountStr, setEditPayAmountStr] = useState('');
   const [editPayNote, setEditPayNote] = useState('');
+
+  usePixelBackLayer(mainTab === 'guv' && !selectedInvoiceId, () => setMainTab('rechnungen'));
+  usePixelBackLayer(refundModalOpen, () => setRefundModalOpen(false));
+  usePixelBackLayer(partialPayModalOpen, () => setPartialPayModalOpen(false));
+  usePixelBackLayer(stornoModalOpen, () => setStornoModalOpen(false));
+  usePixelBackLayer(Boolean(editingInvoice), () => setEditingInvoice(null));
+  usePixelBackLayer(Boolean(editingPayment), () => setEditingPayment(null));
 
   // Offene Arbeitsaufzeichnungen je Rechnungsempfänger (inkl. Sub-Objekte, exkl. L.C.R.)
   const openWorkRecords = workRecords.filter((w) => !w.settlement_id && !w.is_lcr);
@@ -499,46 +505,46 @@ export const AbrechnungView: React.FC = () => {
               <GuvPanel />
             </div>
           ) : (
-            <div className="flex-1 min-h-0 overflow-y-auto p-3 flex flex-col gap-2 overscroll-contain">
+            <div className="flex-1 min-h-0 overflow-y-auto p-3.5 flex flex-col gap-3 overscroll-contain">
               {/* OBEN: Reine Übersichten (Kennzahlen, Unbezahlte Rechnungen, Alle Rechnungen) */}
-              <div className="space-y-2">
+              <div className="space-y-3">
                 <div className="grid grid-cols-3 gap-2">
-                  <div className="py-2 px-2.5 bg-white border border-slate-200 rounded-xl shadow-2xs text-center">
-                    <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-tight block">
+                  <div className="py-2.5 px-2.5 bg-white border border-slate-200 rounded-2xl shadow-2xs text-center">
+                    <span className="text-[11px] font-bold text-slate-500 uppercase tracking-tight block">
                       Ausgestellt
                     </span>
-                    <span className="text-sm font-bold text-[#B4470B] block mt-0.5 font-mono">
+                    <span className="text-base font-bold text-[#B4470B] block mt-0.5 font-mono tabular-nums">
                       {issuedTotal.toFixed(0)} €
                     </span>
                   </div>
 
-                  <div className="py-2 px-2.5 bg-white border border-slate-200 rounded-xl shadow-2xs text-center">
-                    <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-tight block">
+                  <div className="py-2.5 px-2.5 bg-white border border-slate-200 rounded-2xl shadow-2xs text-center">
+                    <span className="text-[11px] font-bold text-slate-500 uppercase tracking-tight block">
                       Bezahlt
                     </span>
-                    <span className="text-sm font-bold text-[#2C7738] block mt-0.5 font-mono">
+                    <span className="text-base font-bold text-[#2C7738] block mt-0.5 font-mono tabular-nums">
                       {paidTotal.toFixed(0)} €
                     </span>
                   </div>
 
-                  <div className="py-2 px-2.5 bg-white border border-slate-200 rounded-xl shadow-2xs text-center">
-                    <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-tight block">
+                  <div className="py-2.5 px-2.5 bg-white border border-slate-200 rounded-2xl shadow-2xs text-center">
+                    <span className="text-[11px] font-bold text-slate-500 uppercase tracking-tight block">
                       Unbezahlt
                     </span>
-                    <span className="text-sm font-bold text-[#B4470B] block mt-0.5 font-mono">
+                    <span className="text-base font-bold text-[#B4470B] block mt-0.5 font-mono tabular-nums">
                       {openTotal.toFixed(0)} €
                     </span>
                   </div>
                 </div>
 
                 {/* Unbezahlte Rechnungen */}
-                <div className="bg-white border border-slate-200 rounded-xl shadow-2xs px-3 py-2.5 space-y-2">
+                <div className="bg-white border border-slate-200 rounded-2xl shadow-2xs px-3.5 py-3 space-y-2.5">
                   <div className="flex items-center justify-between">
-                    <h3 className="text-xs font-bold text-slate-900">
+                    <h3 className="text-sm font-bold text-slate-950">
                       Unbezahlte Rechnungen
                     </h3>
                     <span
-                      className={`text-[11px] font-semibold px-2 py-0.5 rounded-md ${
+                      className={`text-xs font-bold px-2.5 py-0.5 rounded-lg ${
                         openPaymentInvoices.length > 0
                           ? 'bg-fuchsia-50 text-[#9A1B8D]'
                           : 'bg-emerald-50 text-[#2C7738]'
@@ -551,7 +557,7 @@ export const AbrechnungView: React.FC = () => {
                   </div>
 
                   {openPaymentInvoices.length > 0 && (
-                    <div className="space-y-1.5">
+                    <div className="space-y-2">
                       {openPaymentInvoices.map((inv) => {
                         const paid = inv.payments.reduce((s, p) => s + p.amount, 0);
                         const openRest = Math.max(0, inv.total_amount - paid);
@@ -563,19 +569,19 @@ export const AbrechnungView: React.FC = () => {
                           >
                             <div
                               onClick={() => setSelectedInvoiceId(inv.id)}
-                              className="p-2 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between cursor-pointer hover:border-[#3138A0] transition-colors"
+                              className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between cursor-pointer hover:border-[#3138A0] transition-colors"
                             >
                               <div className="min-w-0 pr-2">
-                                <span className="font-bold text-slate-900 block text-xs truncate">
+                                <span className="font-bold text-slate-950 block text-sm truncate">
                                   {inv.invoice_number} · {inv.billing_customer_name}
                                 </span>
-                                <span className="text-[10px] text-[#9A1B8D] font-medium">
+                                <span className="text-xs text-[#9A1B8D] font-semibold">
                                   Fällig am {inv.due_date}
                                 </span>
                               </div>
 
-                              <div className="flex items-center gap-1.5 shrink-0">
-                                <span className="font-bold text-xs text-[#B4470B]">
+                              <div className="flex items-center gap-2 shrink-0">
+                                <span className="font-bold text-sm text-[#B4470B] tabular-nums">
                                   {openRest.toLocaleString('de-DE', {
                                     minimumFractionDigits: 0,
                                     maximumFractionDigits: 2
@@ -588,13 +594,12 @@ export const AbrechnungView: React.FC = () => {
                                     e.stopPropagation();
                                     setSendingInvoiceId(inv.id);
                                   }}
-                                  className="w-7 h-7 rounded-lg bg-white border border-slate-200 hover:bg-indigo-50 flex items-center justify-center text-[#3138A0] transition-colors"
+                                  className="w-10 h-10 rounded-xl bg-white border border-slate-200 hover:bg-indigo-50 flex items-center justify-center text-[#3138A0] transition-colors"
                                   title="Rechnung versenden"
                                   aria-label="Rechnung versenden"
                                 >
-                                  <Share2 size={13} />
+                                  <Share2 size={16} />
                                 </button>
-                                <ChevronRight size={15} className="text-slate-400" />
                               </div>
                             </div>
                           </SwipeToDeleteRow>
@@ -605,20 +610,20 @@ export const AbrechnungView: React.FC = () => {
                 </div>
 
                 {/* Alle Rechnungen */}
-                <div className="bg-white border border-slate-200 rounded-xl shadow-2xs px-3 py-2.5 space-y-2">
+                <div className="bg-white border border-slate-200 rounded-2xl shadow-2xs px-3.5 py-3 space-y-2.5">
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-slate-900">
+                    <span className="text-sm font-bold text-slate-950">
                       Alle Rechnungen
                     </span>
-                    <span className="text-[11px] text-slate-500">{invoices.length} Belege</span>
+                    <span className="text-xs font-semibold text-slate-500">{invoices.length} Belege</span>
                   </div>
 
                   {invoices.length === 0 ? (
-                    <p className="text-xs text-slate-400 italic">
+                    <p className="text-sm text-slate-500 italic">
                       Noch keine Rechnungen erstellt.
                     </p>
                   ) : (
-                    <div className="space-y-1.5">
+                    <div className="space-y-2">
                       {invoices.map((inv) => (
                         <SwipeToDeleteRow
                           key={inv.id}
@@ -627,30 +632,30 @@ export const AbrechnungView: React.FC = () => {
                         >
                           <div
                             onClick={() => setSelectedInvoiceId(inv.id)}
-                            className="py-2 px-2.5 bg-slate-50/70 hover:bg-slate-100 border border-slate-200/80 rounded-xl flex items-center justify-between cursor-pointer transition-colors text-xs"
+                            className="py-2.5 px-3 bg-slate-50/80 hover:bg-slate-100 border border-slate-200/90 rounded-xl flex items-center justify-between cursor-pointer transition-colors text-xs"
                           >
-                            <div className="flex items-center gap-2 min-w-0 pr-2">
+                            <div className="flex items-center gap-2.5 min-w-0 pr-2">
                               <Receipt
-                                size={15}
+                                size={17}
                                 className={`shrink-0 ${
                                   inv.is_storno ? 'text-[#B42318]' : 'text-[#3138A0]'
                                 }`}
                               />
                               <div className="min-w-0">
-                                <span className="font-bold text-slate-900 block truncate leading-tight">
+                                <span className="font-bold text-slate-950 text-sm block truncate leading-snug">
                                   {inv.invoice_number} · {inv.billing_customer_name}
                                 </span>
-                                <span className="text-[10px] text-slate-500">
+                                <span className="text-xs text-slate-600">
                                   {inv.issue_date} {inv.is_storno ? '· Storno' : ''}
                                 </span>
                               </div>
                             </div>
 
                             <div className="flex items-center gap-1.5 shrink-0">
-                              <div className="text-right">
+                              <div className="text-right pr-1">
                                 <span
-                                  className={`font-bold block leading-tight ${
-                                    inv.is_storno ? 'text-[#B42318]' : 'text-slate-900'
+                                  className={`font-bold text-sm block leading-tight tabular-nums ${
+                                    inv.is_storno ? 'text-[#B42318]' : 'text-slate-950'
                                   }`}
                                 >
                                   {inv.total_amount.toLocaleString('de-DE', {
@@ -660,7 +665,7 @@ export const AbrechnungView: React.FC = () => {
                                   €
                                 </span>
                                 <span
-                                  className={`text-[10px] font-semibold ${
+                                  className={`text-[11px] font-bold ${
                                     inv.status === 'paid'
                                       ? 'text-[#2C7738]'
                                       : inv.status === 'cancelled'
@@ -684,11 +689,11 @@ export const AbrechnungView: React.FC = () => {
                                   e.stopPropagation();
                                   setSendingInvoiceId(inv.id);
                                 }}
-                                className="w-8 h-8 rounded-lg bg-white border border-slate-200 hover:bg-indigo-50 flex items-center justify-center text-[#3138A0] transition-colors shrink-0"
+                                className="w-10 h-10 rounded-xl bg-white border border-slate-200 hover:bg-indigo-50 flex items-center justify-center text-[#3138A0] transition-colors shrink-0"
                                 title="Rechnung versenden"
                                 aria-label="Rechnung versenden"
                               >
-                                <Share2 size={13} />
+                                <Share2 size={15} />
                               </button>
 
                               <button
@@ -697,11 +702,11 @@ export const AbrechnungView: React.FC = () => {
                                   e.stopPropagation();
                                   openEditInvoiceModal(inv);
                                 }}
-                                className="w-8 h-8 rounded-lg bg-white border border-slate-200 hover:bg-slate-100 flex items-center justify-center text-[#3138A0] transition-colors shrink-0"
+                                className="w-10 h-10 rounded-xl bg-white border border-slate-200 hover:bg-slate-100 flex items-center justify-center text-[#3138A0] transition-colors shrink-0"
                                 title="Buchung bearbeiten"
                                 aria-label="Buchung bearbeiten"
                               >
-                                <Pencil size={13} />
+                                <Pencil size={15} />
                               </button>
                             </div>
                           </div>
@@ -714,16 +719,16 @@ export const AbrechnungView: React.FC = () => {
 
               {/* UNTERER BEREICH: Aktions- & Abrechnungsbereich direkt in Daumenreichweite */}
               <div className="mt-auto pt-1">
-                <div className="bg-white border border-slate-200 rounded-xl shadow-2xs px-3 py-2.5 space-y-2">
+                <div className="bg-white border border-slate-200 rounded-2xl shadow-2xs px-3.5 py-3 space-y-2.5">
                   <div className="flex items-center justify-between">
-                    <h3 className="text-xs font-bold text-slate-900">
+                    <h3 className="text-sm font-bold text-slate-950">
                       Arbeiten ohne Rechnung
                     </h3>
                     <span
-                      className={`text-[11px] font-semibold px-2 py-0.5 rounded-md ${
+                      className={`text-xs font-bold px-2.5 py-0.5 rounded-lg ${
                         groupedOpenWork.length > 0
                           ? 'bg-orange-50 text-[#B4470B]'
-                          : 'bg-slate-100 text-slate-500'
+                          : 'bg-slate-100 text-slate-600'
                       }`}
                     >
                       {groupedOpenWork.length === 0
@@ -733,17 +738,17 @@ export const AbrechnungView: React.FC = () => {
                   </div>
 
                   {groupedOpenWork.length > 0 && (
-                    <div className="space-y-1.5">
+                    <div className="space-y-2">
                       {groupedOpenWork.map((g) => (
                         <div
                           key={g.customer.id}
-                          className="p-2 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between"
+                          className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between"
                         >
                           <div className="min-w-0 pr-2">
-                            <span className="font-bold text-slate-900 block text-xs truncate">
+                            <span className="font-bold text-slate-950 block text-sm truncate">
                               {g.customer.name}
                             </span>
-                            <span className="text-[10px] text-slate-500 block truncate">
+                            <span className="text-xs text-slate-600 block truncate">
                               {g.records.length} {g.records.length === 1 ? 'Arbeit' : 'Arbeiten'} ·{' '}
                               {g.totalHours.toLocaleString('de-DE', { maximumFractionDigits: 2 })} Std.
                               {g.subCustomerNames.length > 0
@@ -753,7 +758,7 @@ export const AbrechnungView: React.FC = () => {
                           </div>
 
                           <div className="flex items-center gap-2 shrink-0">
-                            <span className="font-bold text-xs text-[#B4470B]">
+                            <span className="font-bold text-sm text-[#B4470B] tabular-nums">
                               {g.totalAmount.toLocaleString('de-DE', {
                                 minimumFractionDigits: 0,
                                 maximumFractionDigits: 2
@@ -765,7 +770,7 @@ export const AbrechnungView: React.FC = () => {
                                 setSelectedCustomerId(g.customer.id);
                                 setActiveModal('RECHNUNG_VORBEREITEN');
                               }}
-                              className="px-2.5 py-1.5 bg-[#3138A0] hover:bg-[#272d82] text-white text-[11px] font-semibold rounded-lg shadow-2xs transition-colors"
+                              className="px-3.5 h-10 bg-[#3138A0] hover:bg-[#272d82] text-white text-xs font-bold rounded-xl shadow-2xs transition-colors flex items-center justify-center"
                             >
                               Abrechnen
                             </button>
@@ -1113,25 +1118,25 @@ export const AbrechnungView: React.FC = () => {
       <div className="shrink-0 w-full mt-auto bg-white border-t border-slate-200/80 z-20 shadow-md">
         {selectedInvoice ? (
           /* Detailansicht Beleg: alle Aktionen & Eingabeoptionen kompakt im unteren Bereich */
-          <div className="p-2.5 space-y-2">
+          <div className="p-3 space-y-2 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
             {!selectedInvoice.is_storno &&
               selectedInvoice.status !== 'paid' &&
               selectedInvoice.status !== 'cancelled' && (
-                <div className="grid grid-cols-2 gap-1.5">
+                <div className="grid grid-cols-2 gap-2">
                   <button
                     type="button"
                     onClick={() => handlePayFull(selectedInvoice)}
-                    className="h-10 bg-[#2C7738] hover:bg-[#235f2d] active:scale-98 text-white font-semibold rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-2xs transition-all"
+                    className="h-12 bg-[#2C7738] hover:bg-[#235f2d] active:scale-98 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-2xs transition-all"
                   >
-                    <CheckCircle size={15} />
+                    <CheckCircle size={16} />
                     <span>Bezahlt (5s Undo)</span>
                   </button>
                   <button
                     type="button"
                     onClick={() => setPartialPayModalOpen(true)}
-                    className="h-10 bg-slate-100 hover:bg-slate-200 active:scale-98 text-slate-800 font-semibold rounded-xl text-xs flex items-center justify-center gap-1.5 transition-all"
+                    className="h-12 bg-slate-100 hover:bg-slate-200 active:scale-98 text-slate-900 font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 transition-all"
                   >
-                    <CreditCard size={14} className="text-[#3138A0]" />
+                    <CreditCard size={16} className="text-[#3138A0]" />
                     <span>Teilzahlung</span>
                   </button>
                 </div>
@@ -1141,9 +1146,9 @@ export const AbrechnungView: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setSendingInvoiceId(selectedInvoice.id)}
-                className="flex-1 h-10 px-3 bg-[#3138A0] hover:bg-[#272d82] active:scale-98 text-white text-xs font-semibold rounded-xl flex items-center justify-center gap-1.5 shadow-2xs transition-all"
+                className="flex-1 h-12 px-3 bg-[#3138A0] hover:bg-[#272d82] active:scale-98 text-white text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 shadow-2xs transition-all"
               >
-                <Share2 size={14} />
+                <Share2 size={16} />
                 <span>Senden</span>
               </button>
 
@@ -1158,20 +1163,20 @@ export const AbrechnungView: React.FC = () => {
                   const { blob, filename } = await generateInvoicePdfAsync(resolved);
                   await downloadOrSaveBlob(blob, filename, 'application/pdf');
                 }}
-                className="h-10 px-2.5 bg-slate-100 hover:bg-slate-200 text-slate-800 font-semibold rounded-xl text-xs flex items-center justify-center gap-1 transition-colors shrink-0"
+                className="h-12 px-3 bg-slate-100 hover:bg-slate-200 text-slate-900 font-bold rounded-xl text-xs flex items-center justify-center gap-1 transition-colors shrink-0"
                 title="Als PDF herunterladen"
               >
-                <Download size={14} className="text-[#3138A0]" />
+                <Download size={16} className="text-[#3138A0]" />
                 <span>PDF</span>
               </button>
 
               <button
                 type="button"
                 onClick={() => openEditInvoiceModal(selectedInvoice)}
-                className="h-10 px-2.5 bg-slate-100 hover:bg-slate-200 text-slate-800 font-semibold rounded-xl text-xs flex items-center justify-center gap-1 transition-colors shrink-0"
+                className="h-12 px-3 bg-slate-100 hover:bg-slate-200 text-slate-900 font-bold rounded-xl text-xs flex items-center justify-center gap-1 transition-colors shrink-0"
                 title="Beleg bearbeiten"
               >
-                <Pencil size={14} className="text-[#3138A0]" />
+                <Pencil size={16} className="text-[#3138A0]" />
                 <span>Ändern</span>
               </button>
 
@@ -1179,10 +1184,10 @@ export const AbrechnungView: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setStornoModalOpen(true)}
-                  className="h-10 px-2.5 bg-amber-50 hover:bg-amber-100 text-[#B4470B] font-semibold rounded-xl text-xs flex items-center justify-center gap-1 transition-colors shrink-0"
+                  className="h-12 px-3 bg-amber-50 hover:bg-amber-100 text-[#B4470B] font-bold rounded-xl text-xs flex items-center justify-center gap-1 transition-colors shrink-0"
                   title="Rechnung stornieren"
                 >
-                  <Ban size={14} />
+                  <Ban size={16} />
                   <span>Storno</span>
                 </button>
               )}
@@ -1190,26 +1195,26 @@ export const AbrechnungView: React.FC = () => {
               <button
                 type="button"
                 onClick={() => deleteInvoice(selectedInvoice.id)}
-                className="w-10 h-10 bg-red-50 hover:bg-red-100 text-[#B42318] font-semibold rounded-xl flex items-center justify-center transition-colors shrink-0"
+                className="w-12 h-12 bg-red-50 hover:bg-red-100 text-[#B42318] font-bold rounded-xl flex items-center justify-center transition-colors shrink-0"
                 title="Beleg löschen"
                 aria-label="Beleg löschen"
               >
-                <Trash2 size={15} />
+                <Trash2 size={17} />
               </button>
             </div>
           </div>
         ) : (
           <>
-            {/* Schlanke untere Bedienzeile ohne + Rechnung Button */}
+            {/* Schlanke untere Bedienzeile */}
             <BottomActionBar>
-              <div className="w-full max-w-[240px] flex items-center p-1 bg-slate-100 rounded-xl">
+              <div className="w-full max-w-[260px] flex items-center p-1 bg-slate-100 rounded-2xl">
                 <button
                   type="button"
                   onClick={() => setMainTab('rechnungen')}
-                  className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-all ${
+                  className={`flex-1 py-2 text-xs font-bold rounded-xl transition-all ${
                     mainTab === 'rechnungen'
                       ? 'bg-white text-[#3138A0] shadow-xs'
-                      : 'text-slate-600 hover:text-slate-900'
+                      : 'text-slate-600 hover:text-slate-950'
                   }`}
                 >
                   Rechnungen
@@ -1217,10 +1222,10 @@ export const AbrechnungView: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setMainTab('guv')}
-                  className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-all ${
+                  className={`flex-1 py-2 text-xs font-bold rounded-xl transition-all ${
                     mainTab === 'guv'
                       ? 'bg-white text-[#2C7738] shadow-xs'
-                      : 'text-slate-600 hover:text-slate-900'
+                      : 'text-slate-600 hover:text-slate-950'
                   }`}
                 >
                   Gewinn & Verlust

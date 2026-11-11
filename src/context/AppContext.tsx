@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
+import React, { createContext, useCallback, useContext, useState, useEffect, useRef } from 'react';
 import {
   ScreenId,
   Customer,
@@ -34,7 +34,8 @@ import {
   resolveBackendEndpoint,
   restoreNativeVerifiedBackup,
   runNativeVerifiedBackup,
-  saveNativeStoreJson
+  saveNativeStoreJson,
+  syncNativeCanGoBack
 } from '../services/nativeBridge.ts';
 
 // Re-export canonical data contracts (DATA-02, DATA-04, DATA-09, DATA-10, M11) directly from AppContext
@@ -74,9 +75,15 @@ interface AppContextType {
   setCurrentScreen: (screen: ScreenId) => void;
   screenHistory: ScreenId[];
   canGoBack: boolean;
+  canSystemGoBack: boolean;
   navigate: (screen: ScreenId) => void;
   switchMainTab: (screen: ScreenId) => void;
   goBack: () => void;
+  triggerSystemBack: () => boolean;
+  registerLocalBackLayer: (
+    id: string,
+    onBackRef: React.MutableRefObject<() => void>
+  ) => () => void;
 
   // Selected contexts
   selectedCustomerId: string | null;
@@ -240,6 +247,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [currentScreen, setCurrentScreen] = useState<ScreenId>('M01_HEUTE');
   const [screenHistory, setScreenHistory] = useState<ScreenId[]>(['M01_HEUTE']);
   const [returnStack, setReturnStack] = useState<ReturnNavEntry[]>([]);
+  const [localBackLayers, setLocalBackLayers] = useState<
+    Array<{ id: string; onBackRef: React.MutableRefObject<() => void> }>
+  >([]);
+  const [popStateTick, setPopStateTick] = useState(0);
+
+  const registerLocalBackLayer = useCallback(
+    (id: string, onBackRef: React.MutableRefObject<() => void>) => {
+      setLocalBackLayers((prev) => [...prev.filter((item) => item.id !== id), { id, onBackRef }]);
+      return () => {
+        setLocalBackLayers((prev) => prev.filter((item) => item.id !== id));
+      };
+    },
+    []
+  );
 
   const [selectedCustomerId, setSelectedCustomerIdState] = useState<string | null>(null);
   const [customerTab, setCustomerTab] = useState<CustomerTab>('objekte');
@@ -699,79 +720,126 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setSelectedInvoiceId(null);
       return;
     }
-    setCurrentScreen('M01_HEUTE');
+    switchMainTab('M01_HEUTE');
   };
 
-  // Pixel 10 Pro Android Zurück-Geste (popstate) synchron mit App-Navigation
-  const hasInternalBack = Boolean(
-    activeModal ||
+  // Pixel 10 Pro Android Zurück-Funktion (Edge-Swipe, Predictive Back, Browser/PWA popstate & Escape)
+  const canSystemGoBack = Boolean(
+    localBackLayers.length > 0 ||
+      sendingInvoiceId ||
+      activeModal ||
       isPlusMenuOpen ||
       isThreeDotsMenuOpen ||
       isSearchOpen ||
       returnStack.length > 0 ||
       (currentScreen === 'M03_KUNDEN' && selectedCustomerId) ||
-      (currentScreen === 'M04_ABRECHNUNG' && selectedInvoiceId)
+      (currentScreen === 'M04_ABRECHNUNG' && selectedInvoiceId) ||
+      currentScreen !== 'M01_HEUTE'
   );
 
-  const hasInternalBackRef = useRef(hasInternalBack);
-  const systemBackActionRef = useRef<() => void>(() => {});
+  const triggerSystemBack = (): boolean => {
+    if (localBackLayers.length > 0) {
+      const topLayer = localBackLayers[localBackLayers.length - 1];
+      topLayer.onBackRef.current();
+      return true;
+    }
+    if (sendingInvoiceId) {
+      setSendingInvoiceId(null);
+      return true;
+    }
+    if (activeModal) {
+      setActiveModal(null);
+      return true;
+    }
+    if (isSearchOpen) {
+      setIsSearchOpen(false);
+      return true;
+    }
+    if (isPlusMenuOpen) {
+      setIsPlusMenuOpen(false);
+      return true;
+    }
+    if (isThreeDotsMenuOpen) {
+      setIsThreeDotsMenuOpen(false);
+      return true;
+    }
+    if (
+      returnStack.length > 0 ||
+      (currentScreen === 'M03_KUNDEN' && selectedCustomerId) ||
+      (currentScreen === 'M04_ABRECHNUNG' && selectedInvoiceId) ||
+      currentScreen !== 'M01_HEUTE'
+    ) {
+      goBack();
+      return true;
+    }
+    return false;
+  };
+
+  const canSystemGoBackRef = useRef(canSystemGoBack);
+  const triggerSystemBackRef = useRef<() => boolean>(triggerSystemBack);
   const historyGuardPushedRef = useRef(false);
+  const ignoringProgrammaticBackRef = useRef(false);
 
   useEffect(() => {
-    hasInternalBackRef.current = hasInternalBack;
-    systemBackActionRef.current = () => {
-      if (activeModal) {
-        setActiveModal(null);
-        return;
-      }
-      if (isSearchOpen) {
-        setIsSearchOpen(false);
-        return;
-      }
-      if (isPlusMenuOpen) {
-        setIsPlusMenuOpen(false);
-        return;
-      }
-      if (isThreeDotsMenuOpen) {
-        setIsThreeDotsMenuOpen(false);
-        return;
-      }
-      goBack();
-    };
+    canSystemGoBackRef.current = canSystemGoBack;
+    triggerSystemBackRef.current = triggerSystemBack;
   });
 
+  // Synchronisiere aktiven In-App-Back-Status mit Kotlin OnBackPressedDispatcher (Android 16 Predictive Back)
   useEffect(() => {
-    if (hasInternalBack && !historyGuardPushedRef.current) {
+    syncNativeCanGoBack(canSystemGoBack);
+  }, [canSystemGoBack]);
+
+  // Browser / Mobile Chrome / PWA History-Guard (popstate)
+  useEffect(() => {
+    if (isNativeAndroidApp()) return;
+
+    if (canSystemGoBack && !historyGuardPushedRef.current) {
       window.history.pushState({ eisbaerInternalBack: true }, '');
       historyGuardPushedRef.current = true;
+    } else if (!canSystemGoBack && historyGuardPushedRef.current) {
+      historyGuardPushedRef.current = false;
+      if (window.history.state?.eisbaerInternalBack === true) {
+        ignoringProgrammaticBackRef.current = true;
+        window.history.back();
+      }
     }
-  }, [
-    hasInternalBack,
-    currentScreen,
-    selectedCustomerId,
-    customerWorkViewOpen,
-    customerTermineViewOpen,
-    selectedInvoiceId,
-    activeModal
-  ]);
+  }, [canSystemGoBack, popStateTick]);
 
   useEffect(() => {
     const handlePopState = () => {
+      if (ignoringProgrammaticBackRef.current) {
+        ignoringProgrammaticBackRef.current = false;
+        return;
+      }
       historyGuardPushedRef.current = false;
-      if (hasInternalBackRef.current) {
-        systemBackActionRef.current();
+      if (canSystemGoBackRef.current) {
+        triggerSystemBackRef.current();
+        setPopStateTick((n) => n + 1);
       }
     };
-    window.addEventListener('popstate', handlePopState);
-    const unregisterNativeBack = registerNativeBackHandler(() => {
-      if (hasInternalBackRef.current) {
-        systemBackActionRef.current();
-        return true;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && canSystemGoBackRef.current) {
+        e.preventDefault();
+        triggerSystemBackRef.current();
       }
-      return false;
+    };
+
+    if (!isNativeAndroidApp()) {
+      window.addEventListener('popstate', handlePopState);
+    }
+    window.addEventListener('keydown', handleKeyDown);
+
+    const unregisterNativeBack = registerNativeBackHandler(() => {
+      return triggerSystemBackRef.current();
     });
+
     return () => {
-      window.removeEventListener('popstate', handlePopState);
+      if (!isNativeAndroidApp()) {
+        window.removeEventListener('popstate', handlePopState);
+      }
+      window.removeEventListener('keydown', handleKeyDown);
       unregisterNativeBack();
     };
   }, []);
@@ -1957,9 +2025,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setCurrentScreen,
         screenHistory,
         canGoBack,
+        canSystemGoBack,
         navigate,
         switchMainTab,
         goBack,
+        triggerSystemBack,
+        registerLocalBackLayer,
         selectedCustomerId,
         setSelectedCustomerId,
         customerTab,
@@ -2062,3 +2133,19 @@ export const useApp = () => {
   }
   return context;
 };
+
+/**
+ * Registriert einen lokalen Dialog / Lightbox / Auswahlmodus auf dem Pixel 10 Pro Zurück-Stack (LIFO).
+ * Solange `isActive === true`, schließt die Android-Zurück-Geste zuerst diese Ebene.
+ */
+export function usePixelBackLayer(isActive: boolean, onBack: () => void): void {
+  const { registerLocalBackLayer } = useApp();
+  const idRef = useRef(`back_${Math.random().toString(36).slice(2, 10)}`);
+  const onBackRef = useRef(onBack);
+  onBackRef.current = onBack;
+
+  useEffect(() => {
+    if (!isActive) return;
+    return registerLocalBackLayer(idRef.current, onBackRef);
+  }, [isActive, registerLocalBackLayer]);
+}

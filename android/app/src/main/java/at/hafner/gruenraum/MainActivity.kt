@@ -35,6 +35,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var storeManager: NativeStoreManager
     private lateinit var documentManager: NativeDocumentManager
     private lateinit var calendarReader: NativeCalendarReader
+    private lateinit var inAppBackCallback: OnBackPressedCallback
 
     private var fileUploadCallback: ValueCallback<Array<Uri>>? = null
 
@@ -274,20 +275,30 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // Pixel 10 Pro Back-Gesture -> App internal stack first, minimize at root
-        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+        // Pixel 10 Pro Predictive Back & Edge-Swipe:
+        // Callback ist nur aktiv, solange innerhalb der App ein Zurück-Ziel existiert.
+        // Auf der Startansicht ("Heute" ohne offene Dialoge) übernimmt Android 16 nativ Predictive Back zum Launcher.
+        inAppBackCallback = object : OnBackPressedCallback(false) {
             override fun handleOnBackPressed() {
                 webView.evaluateJavascript(
                     "(typeof window.__hafnerNativeBack === 'function' ? window.__hafnerNativeBack() : false)"
                 ) { result ->
                     if (result != "true") {
+                        isEnabled = false
                         moveTaskToBack(true)
                     }
                 }
             }
-        })
+        }
+        onBackPressedDispatcher.addCallback(this, inAppBackCallback)
 
         webView.loadUrl("https://appassets.androidplatform.net/")
+    }
+
+    fun updateCanGoBackInApp(canGoBack: Boolean) {
+        if (::inAppBackCallback.isInitialized) {
+            inAppBackCallback.isEnabled = canGoBack
+        }
     }
 
     fun requestSaveDocumentToDevice(

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useApp } from '../../context/AppContext.tsx';
+import { useApp, usePixelBackLayer } from '../../context/AppContext.tsx';
 import { Header } from '../common/Header.tsx';
 import { BottomActionBar } from '../common/BottomActionBar.tsx';
 import { BottomNav } from '../common/BottomNav.tsx';
@@ -113,6 +113,9 @@ export const KundenView: React.FC = () => {
   const [appointmentFilter, setAppointmentFilter] = useState<'all' | 'upcoming' | 'past'>('all');
   const contentScrollRef = useRef<HTMLDivElement>(null);
 
+  usePixelBackLayer(confirmDeleteCustomer, () => setConfirmDeleteCustomer(false));
+  usePixelBackLayer(Boolean(previewPhoto), () => setPreviewPhoto(null));
+
   useEffect(() => {
     setConfirmDeleteCustomer(false);
     setShowCombinedAmounts(false);
@@ -187,24 +190,24 @@ export const KundenView: React.FC = () => {
                       setActiveTab('objekte');
                       setSelectedCustomerId(c.id);
                     }}
-                    className="p-3.5 bg-white border border-slate-200 rounded-2xl shadow-2xs hover:border-[#3138A0] transition-colors cursor-pointer flex items-center justify-between gap-2.5"
+                    className="p-4 bg-white border border-slate-200 rounded-2xl shadow-2xs hover:border-[#3138A0] active:bg-slate-50 transition-colors cursor-pointer flex items-center justify-between gap-2.5"
                   >
                     <div className="flex items-center gap-3 min-w-0 flex-1">
-                      <div className="w-10 h-10 rounded-full bg-indigo-50 border border-indigo-100 flex items-center justify-center text-[#3138A0] font-bold text-xs shrink-0">
+                      <div className="w-11 h-11 rounded-full bg-indigo-50 border border-indigo-100 flex items-center justify-center text-[#3138A0] font-bold text-sm shrink-0">
                         {c.name.slice(0, 2).toUpperCase()}
                       </div>
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-1.5 flex-wrap">
-                          <h3 className="text-sm font-bold text-slate-900 leading-tight truncate">
+                          <h3 className="text-base font-bold text-slate-950 leading-snug truncate">
                             {c.name}
                           </h3>
                           {divRecip && (
-                            <span className="px-1.5 py-0.5 bg-indigo-50 text-[#3138A0] text-[10px] font-bold rounded-md truncate max-w-[130px]">
-                              Sub → {divRecip.name}
+                            <span className="text-xs font-semibold text-[#3138A0] truncate max-w-[140px]">
+                              · Sub → {divRecip.name}
                             </span>
                           )}
                         </div>
-                        <p className="text-xs text-slate-500 mt-0.5 truncate">
+                        <p className="text-xs text-slate-600 mt-0.5 truncate">
                           {customerProps.length}{' '}
                           {customerProps.length === 1 ? 'Objekt' : 'Objekte'}
                           {exactAddress ? ` · ${exactAddress}` : ''}
@@ -212,29 +215,29 @@ export const KundenView: React.FC = () => {
                       </div>
                     </div>
 
-                    {/* Direkte Kundenaktionen: Google Maps Navigation, Anruf, WhatsApp */}
+                    {/* Direkte Kundenaktionen: Google Maps Navigation, Anruf, WhatsApp (44dp+ Daumenziele) */}
                     <div className="flex items-center gap-1.5 shrink-0">
                       <a
                         href={buildMapsNavigationUrl(navTarget)}
                         target="_blank"
                         rel="noopener noreferrer"
                         onClick={(e) => e.stopPropagation()}
-                        className="w-9 h-9 rounded-xl bg-indigo-50 hover:bg-indigo-100 active:scale-95 text-[#3138A0] flex items-center justify-center transition-all"
+                        className="w-11 h-11 rounded-xl bg-indigo-50 hover:bg-indigo-100 active:scale-95 text-[#3138A0] flex items-center justify-center transition-all"
                         title={`Google Maps Navigation zu ${c.name}`}
                         aria-label={`Navigation zu ${c.name}`}
                       >
-                        <Navigation size={16} />
+                        <Navigation size={19} />
                       </a>
 
                       {cleanPhone ? (
                         <a
                           href={`tel:${cleanPhone}`}
                           onClick={(e) => e.stopPropagation()}
-                          className="w-9 h-9 rounded-xl bg-slate-100 hover:bg-slate-200 active:scale-95 text-slate-700 flex items-center justify-center transition-all"
+                          className="w-11 h-11 rounded-xl bg-slate-100 hover:bg-slate-200 active:scale-95 text-slate-800 flex items-center justify-center transition-all"
                           title={`${c.name} anrufen`}
                           aria-label={`${c.name} anrufen`}
                         >
-                          <Phone size={16} />
+                          <Phone size={19} />
                         </a>
                       ) : (
                         <button
@@ -244,11 +247,11 @@ export const KundenView: React.FC = () => {
                             setSelectedCustomerId(c.id);
                             setActiveModal('KUNDE_BEARBEITEN');
                           }}
-                          className="w-9 h-9 rounded-xl bg-slate-100 hover:bg-slate-200 active:scale-95 text-slate-400 flex items-center justify-center transition-all"
+                          className="w-11 h-11 rounded-xl bg-slate-100 hover:bg-slate-200 active:scale-95 text-slate-400 flex items-center justify-center transition-all"
                           title="Telefonnummer ergänzen"
                           aria-label="Telefonnummer ergänzen"
                         >
-                          <Phone size={16} />
+                          <Phone size={19} />
                         </button>
                       )}
 
@@ -258,11 +261,11 @@ export const KundenView: React.FC = () => {
                           target="_blank"
                           rel="noopener noreferrer"
                           onClick={(e) => e.stopPropagation()}
-                          className="w-9 h-9 rounded-xl bg-emerald-50 hover:bg-emerald-100 active:scale-95 text-[#128C7E] flex items-center justify-center transition-all"
+                          className="w-11 h-11 rounded-xl bg-emerald-50 hover:bg-emerald-100 active:scale-95 text-[#128C7E] flex items-center justify-center transition-all"
                           title={`WhatsApp Nachricht an ${c.name}`}
                           aria-label={`WhatsApp an ${c.name}`}
                         >
-                          <MessageCircle size={16} />
+                          <MessageCircle size={19} />
                         </a>
                       ) : (
                         <button
@@ -272,15 +275,13 @@ export const KundenView: React.FC = () => {
                             setSelectedCustomerId(c.id);
                             setActiveModal('KUNDE_BEARBEITEN');
                           }}
-                          className="w-9 h-9 rounded-xl bg-slate-100 hover:bg-slate-200 active:scale-95 text-slate-400 flex items-center justify-center transition-all"
+                          className="w-11 h-11 rounded-xl bg-slate-100 hover:bg-slate-200 active:scale-95 text-slate-400 flex items-center justify-center transition-all"
                           title="Telefonnummer für WhatsApp ergänzen"
                           aria-label="Telefonnummer für WhatsApp ergänzen"
                         >
-                          <MessageCircle size={16} />
+                          <MessageCircle size={19} />
                         </button>
                       )}
-
-                      <ChevronRight size={15} className="text-slate-400 ml-0.5" />
                     </div>
                   </div>
                 </SwipeToDeleteRow>
@@ -291,7 +292,16 @@ export const KundenView: React.FC = () => {
 
         {/* Untere Leiste fixiert (Pixel 10 Pro Daumenzone) */}
         <div className="shrink-0 w-full mt-auto bg-white border-t border-slate-200/80 z-20 shadow-md">
-          <BottomActionBar />
+          <BottomActionBar>
+            <button
+              type="button"
+              onClick={() => setActiveModal('KUNDE_ANLEGEN')}
+              className="h-11 px-4 bg-[#3138A0] hover:bg-[#272d82] active:scale-97 text-white text-sm font-bold rounded-2xl flex items-center justify-center gap-1.5 shadow-xs transition-all whitespace-nowrap"
+            >
+              <Plus size={18} strokeWidth={2.5} />
+              <span>Kunde anlegen</span>
+            </button>
+          </BottomActionBar>
           <BottomNav />
         </div>
       </div>
@@ -1925,37 +1935,37 @@ export const KundenView: React.FC = () => {
           )}
         </div>
 
-        {/* Zeile 2: Direktbedienung Navigation (Google Maps), Anrufen, WhatsApp, + Arbeit, Suche & Schnellmenü */}
-        <div className="px-3 pt-1.5 pb-1 flex items-center justify-between gap-1">
-          <div className="flex items-center gap-1 min-w-0">
+        {/* Zeile 2: Klare Pixel 10 Pro Direktbedienung (Route, Anruf, WhatsApp, + Arbeit, Suche & Schnellmenü) */}
+        <div className="px-3 pt-2 pb-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] flex items-center gap-1.5">
+          <div className="flex-1 grid grid-cols-4 gap-1.5 min-w-0">
             <a
               href={buildMapsNavigationUrl(primaryMapAddress)}
               target="_blank"
               rel="noopener noreferrer"
-              className="h-10 px-2.5 bg-indigo-50 hover:bg-indigo-100 active:scale-95 text-[#3138A0] font-semibold text-xs rounded-xl flex items-center gap-1 transition-colors shrink-0"
+              className="h-12 px-1 bg-indigo-50 hover:bg-indigo-100 active:scale-95 text-[#3138A0] font-bold text-[11px] rounded-xl flex flex-col items-center justify-center gap-0.5 transition-all whitespace-nowrap"
               title="Direkte Google Maps Navigation zum Kunden"
             >
-              <Navigation size={14} />
+              <Navigation size={17} />
               <span>Route</span>
             </a>
 
             {currentCustomer.phone ? (
               <a
                 href={`tel:${currentCustomer.phone.replace(/\s+/g, '')}`}
-                className="h-10 px-2.5 bg-slate-100 hover:bg-slate-200 active:scale-95 text-slate-700 font-semibold text-xs rounded-xl flex items-center gap-1 transition-colors shrink-0"
+                className="h-12 px-1 bg-slate-100 hover:bg-slate-200 active:scale-95 text-slate-800 font-bold text-[11px] rounded-xl flex flex-col items-center justify-center gap-0.5 transition-all whitespace-nowrap"
                 title="Kunden anrufen"
               >
-                <Phone size={14} className="text-[#3138A0]" />
+                <Phone size={17} className="text-[#3138A0]" />
                 <span>Anruf</span>
               </a>
             ) : (
               <button
                 type="button"
                 onClick={() => setActiveModal('KUNDE_BEARBEITEN')}
-                className="h-10 px-2.5 bg-slate-100 hover:bg-slate-200 active:scale-95 text-slate-400 font-semibold text-xs rounded-xl flex items-center gap-1 transition-colors shrink-0"
+                className="h-12 px-1 bg-slate-100 hover:bg-slate-200 active:scale-95 text-slate-400 font-bold text-[11px] rounded-xl flex flex-col items-center justify-center gap-0.5 transition-all whitespace-nowrap"
                 title="Telefonnummer ergänzen"
               >
-                <Phone size={14} />
+                <Phone size={17} />
                 <span>Anruf</span>
               </button>
             )}
@@ -1965,20 +1975,20 @@ export const KundenView: React.FC = () => {
                 href={buildWhatsAppUrl(currentCustomer.phone)}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="h-10 px-2.5 bg-emerald-50 hover:bg-emerald-100 active:scale-95 text-[#128C7E] font-semibold text-xs rounded-xl flex items-center gap-1 transition-colors shrink-0"
+                className="h-12 px-1 bg-emerald-50 hover:bg-emerald-100 active:scale-95 text-[#128C7E] font-bold text-[11px] rounded-xl flex flex-col items-center justify-center gap-0.5 transition-all whitespace-nowrap"
                 title="WhatsApp Nachricht senden"
               >
-                <MessageCircle size={14} />
+                <MessageCircle size={17} />
                 <span>WhatsApp</span>
               </a>
             ) : (
               <button
                 type="button"
                 onClick={() => setActiveModal('KUNDE_BEARBEITEN')}
-                className="h-10 px-2.5 bg-slate-100 hover:bg-slate-200 active:scale-95 text-slate-400 font-semibold text-xs rounded-xl flex items-center gap-1 transition-colors shrink-0"
+                className="h-12 px-1 bg-slate-100 hover:bg-slate-200 active:scale-95 text-slate-400 font-bold text-[11px] rounded-xl flex flex-col items-center justify-center gap-0.5 transition-all whitespace-nowrap"
                 title="Telefonnummer für WhatsApp ergänzen"
               >
-                <MessageCircle size={14} />
+                <MessageCircle size={17} />
                 <span>WhatsApp</span>
               </button>
             )}
@@ -1989,32 +1999,32 @@ export const KundenView: React.FC = () => {
                 setSelectedPropertyId(customerProps[0]?.id || null);
                 setActiveModal('ARBEIT_NACHTRAGEN');
               }}
-              className="h-10 px-2.5 bg-slate-100 hover:bg-slate-200 active:scale-95 text-slate-700 font-semibold text-xs rounded-xl flex items-center gap-1 transition-colors shrink-0"
+              className="h-12 px-1 bg-slate-100 hover:bg-slate-200 active:scale-95 text-slate-800 font-bold text-[11px] rounded-xl flex flex-col items-center justify-center gap-0.5 transition-all whitespace-nowrap"
               title="Arbeit nachtragen (07:00 – 17:00)"
             >
-              <Briefcase size={14} className="text-[#3138A0]" />
+              <Briefcase size={17} className="text-[#3138A0]" />
               <span>+ Arbeit</span>
             </button>
           </div>
 
-          <div className="flex items-center gap-0.5 shrink-0">
+          <div className="flex items-center gap-1 shrink-0">
             <button
               type="button"
               onClick={() => setIsSearchOpen(true)}
-              className="w-10 h-10 flex items-center justify-center text-slate-700 hover:text-slate-900 active:bg-slate-100 rounded-full transition-colors shrink-0"
+              className="w-11 h-12 flex items-center justify-center bg-slate-100 hover:bg-slate-200 active:scale-95 text-slate-800 rounded-xl transition-all shrink-0"
               aria-label="Suche öffnen"
               title="Suche"
             >
-              <Search size={20} />
+              <Search size={21} />
             </button>
             <button
               type="button"
               onClick={() => setIsPlusMenuOpen(true)}
-              className="w-10 h-10 flex items-center justify-center text-slate-700 hover:text-slate-900 active:bg-slate-100 rounded-full transition-colors shrink-0"
+              className="w-11 h-12 flex items-center justify-center bg-indigo-50 hover:bg-indigo-100 active:scale-95 text-[#3138A0] border border-indigo-200/80 rounded-xl transition-all shrink-0"
               aria-label="Schnellmenü öffnen"
               title="Schnellmenü"
             >
-              <Plus size={22} />
+              <Plus size={23} strokeWidth={2.5} />
             </button>
           </div>
         </div>

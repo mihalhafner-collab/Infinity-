@@ -1,7 +1,6 @@
 import React from 'react';
 import { useApp } from '../../context/AppContext.tsx';
 import { ChevronLeft, MoreVertical } from 'lucide-react';
-import { ScreenId } from '../../types/index.ts';
 
 interface HeaderProps {
   title: string;
@@ -30,24 +29,24 @@ export const Header: React.FC<HeaderProps> = ({
   };
 
   return (
-    <header className="h-14 px-4 bg-white border-b border-slate-200/80 flex items-center justify-between shrink-0 sticky top-0 z-20">
+    <header className="h-[60px] px-4 bg-white border-b border-slate-200/90 flex items-center justify-between shrink-0 sticky top-0 z-20">
       <div className="flex items-center gap-2 min-w-0">
         {shouldShowBack && (
           <button
             onClick={handleBack}
-            className="min-w-[48px] min-h-[48px] -ml-2 flex items-center justify-center text-slate-700 hover:text-slate-900 active:bg-slate-100 rounded-full transition-colors"
+            className="w-12 h-12 -ml-2 flex items-center justify-center text-slate-800 hover:text-slate-950 active:bg-slate-100 rounded-full transition-colors shrink-0"
             aria-label="Zurück"
           >
-            <ChevronLeft size={24} />
+            <ChevronLeft size={26} strokeWidth={2.5} />
           </button>
         )}
         <div className="flex flex-col min-w-0">
           {subtitle && (
-            <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wider truncate">
+            <span className="text-xs font-semibold text-slate-600 tracking-wide truncate leading-tight">
               {subtitle}
             </span>
           )}
-          <h1 className="text-lg font-bold text-slate-900 tracking-tight truncate leading-tight">
+          <h1 className="text-xl font-bold text-slate-950 tracking-tight truncate leading-tight">
             {title}
           </h1>
         </div>
@@ -56,10 +55,10 @@ export const Header: React.FC<HeaderProps> = ({
       <div className="flex items-center gap-1 shrink-0">
         <button
           onClick={() => setIsThreeDotsMenuOpen(true)}
-          className="min-w-[48px] min-h-[48px] -mr-2 flex items-center justify-center text-slate-700 hover:text-slate-900 active:bg-slate-100 rounded-full transition-colors"
+          className="w-12 h-12 -mr-2 flex items-center justify-center text-slate-800 hover:text-slate-950 active:bg-slate-100 rounded-full transition-colors"
           aria-label="Menü öffnen"
         >
-          <MoreVertical size={22} />
+          <MoreVertical size={24} strokeWidth={2.2} />
         </button>
       </div>
     </header>

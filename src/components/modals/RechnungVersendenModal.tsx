@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { User as FirebaseUser } from 'firebase/auth';
-import { useApp } from '../../context/AppContext.tsx';
+import { useApp, usePixelBackLayer } from '../../context/AppContext.tsx';
 import { InvoicePaperPreview } from '../common/InvoicePaperPreview.tsx';
 import { GoogleSignInButton } from '../common/GoogleSignInButton.tsx';
 import {
@@ -101,6 +101,7 @@ export const RechnungVersendenModal: React.FC = () => {
   // Expliziter Bestätigungsdialog vor E-Mail-Versand über Gmail API
   const [confirmSendOpen, setConfirmSendOpen] = useState(false);
   const [isSending, setIsSending] = useState(false);
+  usePixelBackLayer(confirmSendOpen && !isSending, () => setConfirmSendOpen(false));
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
 

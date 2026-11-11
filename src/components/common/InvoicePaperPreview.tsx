@@ -33,7 +33,7 @@ export const InvoicePaperPreview: React.FC<InvoicePaperPreviewProps> = ({
   const displayInvNo = data.invoiceNumber?.trim() || (isDraft ? 'RE-Entwurf' : '');
 
   return (
-    <div className="relative bg-white text-neutral-900 border border-neutral-300 rounded-lg shadow-xs px-4 pt-3 pb-4 font-sans text-[10px] leading-snug select-text overflow-hidden">
+    <div className="invoice-a4-sheet relative bg-white text-neutral-900 border border-neutral-300 rounded-lg shadow-xs px-4 pt-3 pb-4 font-sans text-[10px] leading-snug select-text overflow-hidden">
       {/* Dezente DIN-Falzmarken am linken Blattrand */}
       <span className="absolute left-0 top-[36%] w-1.5 h-[1.5px] bg-neutral-700" />
       <span className="absolute left-0 top-[51%] w-2.5 h-[2px] bg-neutral-800" />

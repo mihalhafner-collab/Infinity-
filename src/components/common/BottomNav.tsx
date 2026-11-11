@@ -24,10 +24,9 @@ export const BottomNav: React.FC = () => {
   };
 
   return (
-    <nav className="h-[56px] bg-white border-t border-slate-200/90 grid grid-cols-4 items-center shrink-0 z-20 px-1 select-none">
+    <nav className="min-h-[62px] pb-[env(safe-area-inset-bottom)] bg-white border-t border-slate-200/90 grid grid-cols-4 items-center shrink-0 z-20 px-1.5 select-none">
       {navItems.map((item) => {
         const Icon = item.icon;
-        // Also highlight parent tab if we are in a sub-view
         const isActive =
           currentScreen === item.id ||
           (item.id === 'M01_HEUTE' && currentScreen === 'M19_ZEITERFASSUNG') ||
@@ -37,15 +36,21 @@ export const BottomNav: React.FC = () => {
           <button
             key={item.id}
             onClick={() => handleNav(item.id)}
-            className={`h-full min-h-[48px] flex flex-col items-center justify-center py-1 transition-colors active:scale-95 ${
-              isActive ? 'text-[#3138A0]' : 'text-[#5D6178] hover:text-slate-800'
+            className={`h-full min-h-[56px] flex flex-col items-center justify-center py-1 transition-all active:scale-95 ${
+              isActive ? 'text-[#3138A0]' : 'text-slate-600 hover:text-slate-900'
             }`}
             aria-label={item.label}
           >
-            <Icon size={21} className={isActive ? 'stroke-[2.5]' : 'stroke-[1.8]'} />
             <span
-              className={`text-[11px] mt-0.5 tracking-tight ${
-                isActive ? 'font-bold text-[#3138A0]' : 'font-medium text-[#5D6178]'
+              className={`px-3.5 py-0.5 rounded-full flex items-center justify-center transition-colors ${
+                isActive ? 'bg-indigo-100/90 text-[#3138A0]' : 'bg-transparent'
+              }`}
+            >
+              <Icon size={23} className={isActive ? 'stroke-[2.5]' : 'stroke-[2]'} />
+            </span>
+            <span
+              className={`text-xs mt-0.5 tracking-tight whitespace-nowrap ${
+                isActive ? 'font-bold text-[#3138A0]' : 'font-semibold text-slate-600'
               }`}
             >
               {item.label}

@@ -13,33 +13,32 @@ export const BottomActionBar: React.FC<BottomActionBarProps> = ({ children }) =>
   } = useApp();
 
   return (
-    <div className="px-5 py-2 bg-white/95 backdrop-blur-xs border-t border-slate-200/80 flex items-center justify-between shrink-0 z-10">
-      {/* Lupe (Suche) - min 48dp hitbox */}
+    <div className="px-4 py-2 bg-white/95 backdrop-blur-xs border-t border-slate-200/80 flex items-center justify-between gap-2 shrink-0 z-10">
+      {/* Lupe (Suche) - klare 48dp+ Daumenfläche */}
       <button
         onClick={() => setIsSearchOpen(true)}
-        className="w-12 h-12 flex items-center justify-center text-slate-700 hover:text-slate-900 active:bg-slate-100 rounded-full transition-colors shrink-0"
+        className="w-12 h-12 flex items-center justify-center bg-slate-100/90 hover:bg-slate-200 active:scale-95 text-slate-800 rounded-2xl transition-all shrink-0"
         aria-label="Suche öffnen"
         title="Suche"
       >
-        <Search size={22} />
+        <Search size={23} strokeWidth={2.2} />
       </button>
 
       {children && (
-        <div className="flex-1 flex items-center justify-center px-2">
+        <div className="flex-1 flex items-center justify-center min-w-0 px-1">
           {children}
         </div>
       )}
 
-      {/* Plus (Schnellmenü) - min 48dp hitbox */}
+      {/* Plus (Schnellmenü) - klare primäre 48dp+ Daumenfläche */}
       <button
         onClick={() => setIsPlusMenuOpen(true)}
-        className="w-12 h-12 flex items-center justify-center text-slate-700 hover:text-slate-900 active:bg-slate-100 rounded-full transition-colors shrink-0"
+        className="w-12 h-12 flex items-center justify-center bg-indigo-50 hover:bg-indigo-100 active:scale-95 text-[#3138A0] border border-indigo-200/80 rounded-2xl transition-all shrink-0"
         aria-label="Schnellmenü öffnen"
         title="Schnellmenü"
       >
-        <Plus size={24} />
+        <Plus size={25} strokeWidth={2.5} />
       </button>
     </div>
   );
 };
-

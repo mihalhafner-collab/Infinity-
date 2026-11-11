@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { useApp } from '../../context/AppContext.tsx';
+import { useApp, usePixelBackLayer } from '../../context/AppContext.tsx';
 import { Header } from '../common/Header.tsx';
 import { BottomActionBar } from '../common/BottomActionBar.tsx';
 import { BottomNav } from '../common/BottomNav.tsx';
@@ -37,6 +37,11 @@ export const ArbeitenView: React.FC = () => {
   const [lockedNotice, setLockedNotice] = useState<string | null>(null);
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+
+  usePixelBackLayer(selectionMode, () => {
+    setSelectionMode(false);
+    setSelectedIds([]);
+  });
 
   const filteredRecords = useMemo(
     () =>

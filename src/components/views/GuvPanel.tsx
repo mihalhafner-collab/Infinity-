@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useApp } from '../../context/AppContext.tsx';
+import { useApp, usePixelBackLayer } from '../../context/AppContext.tsx';
 import { SwipeToDeleteRow } from '../common/SwipeToDeleteRow.tsx';
 import {
   BusinessExpense,
@@ -61,6 +61,7 @@ export const GuvPanel: React.FC = () => {
   const [deductionsOpen, setDeductionsOpen] = useState(true);
   const [expenseModalOpen, setExpenseModalOpen] = useState(false);
   const [editingExpense, setEditingExpense] = useState<BusinessExpense | null>(null);
+  usePixelBackLayer(expenseModalOpen, () => setExpenseModalOpen(false));
 
   // Modal Form States
   const [expTitle, setExpTitle] = useState('');
