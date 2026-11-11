@@ -14,6 +14,7 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.FrameLayout
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
@@ -186,16 +187,29 @@ class MainActivity : AppCompatActivity() {
             overScrollMode = WebView.OVER_SCROLL_NEVER
         }
 
-        // Apply exact Pixel 10 Pro system-bar & keyboard (IME) insets natively
-        ViewCompat.setOnApplyWindowInsetsListener(webView) { view, windowInsets ->
+        val rootContainer = FrameLayout(this).apply {
+            setBackgroundColor(Color.WHITE)
+            addView(
+                webView,
+                FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.MATCH_PARENT
+                )
+            )
+        }
+
+        // Exakte automatische Ausrichtung auf dem Pixel 10 Pro (Statusleiste + Kamera-Cutout oben, Gestenbalken & Tastatur unten)
+        ViewCompat.setOnApplyWindowInsetsListener(rootContainer) { view, windowInsets ->
             val bars = windowInsets.getInsets(
-                WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.ime()
+                WindowInsetsCompat.Type.systemBars() or
+                    WindowInsetsCompat.Type.displayCutout() or
+                    WindowInsetsCompat.Type.ime()
             )
             view.setPadding(bars.left, bars.top, bars.right, bars.bottom)
             WindowInsetsCompat.CONSUMED
         }
 
-        setContentView(webView)
+        setContentView(rootContainer)
 
         val rawAssetsHandler = WebViewAssetLoader.AssetsPathHandler(this)
         val assetLoader = WebViewAssetLoader.Builder()

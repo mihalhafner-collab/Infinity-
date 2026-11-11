@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useLayoutEffect, useRef, useState } from 'react';
 import { useApp } from '../../context/AppContext.tsx';
 import { isNativeAndroidApp } from '../../services/nativeBridge.ts';
 import { ChevronLeft, Monitor, Smartphone } from 'lucide-react';
@@ -26,6 +26,10 @@ export const PixelFrame: React.FC<PixelFrameProps> = ({ children }) => {
   } = useApp();
 
   const canvasRef = useRef<HTMLDivElement>(null);
+  const probeRef = useRef<HTMLDivElement>(null);
+  const maxViewportHeightRef = useRef<number>(0);
+  const lastPortraitRef = useRef<boolean | null>(null);
+
   const gestureRef = useRef<{
     active: boolean;
     side: 'left' | 'right';
@@ -38,12 +42,114 @@ export const PixelFrame: React.FC<PixelFrameProps> = ({ children }) => {
     ready: boolean;
   } | null>(null);
 
+  // Automatische Ausrichtung auf dem Google Pixel 10 Pro (Statusleiste + Kamera-Cutout oben, Gestenbalken & Tastatur unten)
+  useLayoutEffect(() => {
+    const updateSafeInsets = () => {
+      const root = document.documentElement;
+      const nativeApp = isNativeAndroidApp();
+
+      // Auf Desktop (>= 640px) übernimmt der simulierte Pixel-Rahmen Status- und Gestenleiste separat
+      if (window.innerWidth >= 640 && !nativeApp) {
+        root.style.setProperty('--pixel-safe-top', '0px');
+        root.style.setProperty('--pixel-safe-bottom', '0px');
+        return;
+      }
+
+      // Echte vom System/Browser gemeldete CSS env(safe-area-inset-*) Werte auslesen
+      let envTop = 0;
+      let envBottom = 0;
+      if (probeRef.current) {
+        const cs = window.getComputedStyle(probeRef.current);
+        envTop = parseFloat(cs.paddingTop) || 0;
+        envBottom = parseFloat(cs.paddingBottom) || 0;
+      }
+
+      const rawScreenW = window.screen?.width || window.innerWidth;
+      const rawScreenH = window.screen?.height || window.innerHeight;
+      const dpr = window.devicePixelRatio || 1;
+      const screenCssH =
+        rawScreenW > window.innerWidth * 1.5 && dpr > 1 ? rawScreenH / dpr : rawScreenH;
+
+      const vvH = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+      const layoutH = Math.max(window.innerHeight, Math.round(vvH));
+      const isPortrait = window.innerHeight >= window.innerWidth;
+
+      if (lastPortraitRef.current !== isPortrait) {
+        lastPortraitRef.current = isPortrait;
+        maxViewportHeightRef.current = layoutH;
+      } else if (layoutH > maxViewportHeightRef.current) {
+        maxViewportHeightRef.current = layoutH;
+      }
+
+      const baseH = Math.max(maxViewportHeightRef.current, layoutH);
+      const isKeyboardOpen = vvH < baseH * 0.78;
+
+      // Differenz zwischen physischer Pixel-10-Pro-Displayhöhe (952dp / 915dp) und App-Fensterhöhe:
+      // - < 36px: Echtes Edge-to-Edge (weder Statusleiste ~52dp noch Gestenleiste ~24dp durch OS abgezogen)
+      // - 36..67px: Obere Statusleiste durch OS abgezogen, untere Gestenleiste liegt noch im Viewport
+      // - >= 68px: Beide Systemleisten (z. B. Native FrameLayout oder Browser-Adressleiste) bereits berücksichtigt
+      const missingVertical = Math.max(0, screenCssH - baseH);
+      const isStandalone =
+        Boolean(window.matchMedia?.('(display-mode: standalone)').matches) ||
+        Boolean(window.matchMedia?.('(display-mode: fullscreen)').matches);
+
+      let safeTop = envTop;
+      let safeBottom = envBottom;
+
+      if (isPortrait) {
+        if (missingVertical < 36) {
+          safeTop = Math.max(envTop, 52);
+          safeBottom = Math.max(envBottom, 28);
+        } else if (missingVertical < 68) {
+          safeTop = envTop;
+          safeBottom = Math.max(envBottom, 28);
+        } else {
+          safeTop = envTop;
+          safeBottom = nativeApp ? envBottom : Math.max(envBottom, isStandalone ? 20 : 10);
+        }
+      } else if (missingVertical < 28) {
+        safeTop = Math.max(envTop, 28);
+        safeBottom = Math.max(envBottom, 20);
+      }
+
+      // Bei geöffneter Bildschirmtastatur liegt der untere Bedienbereich bündig über der Tastatur
+      if (isKeyboardOpen) {
+        safeBottom = 0;
+      }
+
+      root.style.setProperty('--pixel-safe-top', `${Math.round(safeTop)}px`);
+      root.style.setProperty('--pixel-safe-bottom', `${Math.round(safeBottom)}px`);
+    };
+
+    updateSafeInsets();
+
+    const vv = window.visualViewport;
+    const standaloneMedia = window.matchMedia?.('(display-mode: standalone)');
+
+    window.addEventListener('resize', updateSafeInsets);
+    window.addEventListener('orientationchange', updateSafeInsets);
+    vv?.addEventListener('resize', updateSafeInsets);
+    standaloneMedia?.addEventListener?.('change', updateSafeInsets);
+
+    return () => {
+      window.removeEventListener('resize', updateSafeInsets);
+      window.removeEventListener('orientationchange', updateSafeInsets);
+      vv?.removeEventListener('resize', updateSafeInsets);
+      standaloneMedia?.removeEventListener?.('change', updateSafeInsets);
+    };
+  }, []);
+
   // In der eigenständigen Native-Kotlin-App auf dem Pixel 10 Pro übernimmt Android 16
   // Statusleiste, Predictive-Back-Pfeil und Gestenbalken nativ über OnBackPressedDispatcher.
   if (isNativeAndroidApp()) {
     return (
-      <div className="pixel-app-shell w-full h-[100dvh] bg-[#F8F9FA] text-[#1E2238] flex flex-col overflow-hidden relative">
-        {children}
+      <div className="pixel-app-shell w-full h-[100dvh] bg-white text-[#1E2238] flex flex-col overflow-hidden relative">
+        <div ref={probeRef} className="pixel-env-probe" aria-hidden="true" />
+        <div className="pixel-safe-top-spacer w-full bg-white shrink-0" aria-hidden="true" />
+        <div className="flex-1 min-h-0 flex flex-col overflow-hidden relative bg-[#F8F9FA]">
+          {children}
+        </div>
+        <div className="pixel-safe-bottom-spacer w-full bg-white shrink-0" aria-hidden="true" />
       </div>
     );
   }
@@ -123,7 +229,9 @@ export const PixelFrame: React.FC<PixelFrameProps> = ({ children }) => {
   };
 
   return (
-    <div className="pixel-app-shell w-full h-full h-[100dvh] bg-[#F8F9FA] sm:bg-[#E2E5E9] flex flex-col items-center justify-center sm:py-2 sm:px-4 text-[#1E2238] overflow-hidden">
+    <div className="pixel-app-shell w-full h-full h-[100dvh] bg-white sm:bg-[#E2E5E9] flex flex-col items-center justify-center sm:py-2 sm:px-4 text-[#1E2238] overflow-hidden">
+      <div ref={probeRef} className="pixel-env-probe" aria-hidden="true" />
+
       {/* Desktop Helper Bar to toggle Device Frame */}
       <div className="hidden sm:flex items-center justify-between w-full max-w-[432px] mb-2 px-3.5 py-1.5 text-xs text-slate-700 bg-white/90 backdrop-blur-sm rounded-xl border border-slate-200 shadow-xs shrink-0">
         <div className="flex items-center gap-2 font-semibold">
@@ -150,15 +258,18 @@ export const PixelFrame: React.FC<PixelFrameProps> = ({ children }) => {
       </div>
 
       {/* Main Container:
-          - Auf dem echten Pixel 10 Pro (< 640px): 100% Vollfläche ohne doppelte Status-/Home-Leiste.
+          - Auf dem echten Pixel 10 Pro (< 640px): Automatische Systemleisten-Ausrichtung oben & unten.
           - Auf Desktop (>= 640px): Exakte Pixel 10 Pro 20:9 Bildschirmgeometrie (428×936). */}
       <div
-        className={`w-full bg-[#F8F9FA] relative flex flex-col overflow-hidden transition-all duration-200 h-[100dvh] max-h-[100dvh] ${
+        className={`w-full bg-white relative flex flex-col overflow-hidden transition-all duration-200 h-[100dvh] max-h-[100dvh] ${
           pixelFrameEnabled
             ? 'sm:w-[428px] sm:max-w-[428px] sm:h-[min(936px,calc(100dvh-3rem))] sm:max-h-[min(936px,calc(100dvh-3rem))] sm:rounded-[50px] sm:shadow-2xl sm:ring-[12px] sm:ring-slate-900 sm:border-[3px] sm:border-slate-700/80'
             : 'sm:w-[468px] sm:max-w-[468px] sm:h-[min(960px,calc(100dvh-3rem))] sm:rounded-3xl sm:shadow-xl sm:border sm:border-slate-300'
         }`}
       >
+        {/* Automatischer oberer Systemleisten-/Kamera-Abstand auf dem echten Pixel 10 Pro */}
+        <div className="sm:hidden pixel-safe-top-spacer w-full bg-white shrink-0" aria-hidden="true" />
+
         {/* Pixel 10 Pro Centered Camera Punch-Hole (nur im Desktop-Geräterahmen) */}
         {pixelFrameEnabled && (
           <div className="hidden sm:flex absolute top-2.5 left-1/2 -translate-x-1/2 w-4 h-4 bg-black rounded-full z-50 pointer-events-none ring-1 ring-slate-800 shadow-inner items-center justify-center">
@@ -219,6 +330,9 @@ export const PixelFrame: React.FC<PixelFrameProps> = ({ children }) => {
             </div>
           )}
         </div>
+
+        {/* Automatischer unterer Gestenbalken-Abstand auf dem echten Pixel 10 Pro */}
+        <div className="sm:hidden pixel-safe-bottom-spacer w-full bg-white shrink-0" aria-hidden="true" />
 
         {/* Simulierte Android 16 Systemleiste (nur auf Desktop – auf dem echten Pixel nutzt Android die echte Gestenleiste) */}
         <div className="hidden sm:grid w-full h-8 px-5 bg-white grid-cols-3 items-center shrink-0 border-t border-slate-100/70 z-30 select-none">

@@ -8,7 +8,19 @@
     --color-eisbaer-magenta: #9A1B8D;
     --color-eisbaer-rot: #B42318;
     --color-eisbaer-schiefer: #5D6178;
+    --pixel-safe-top: env(safe-area-inset-top, 0px);
+    --pixel-safe-bottom: env(safe-area-inset-bottom, 0px);
     font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+  }
+
+  /* Sofortige automatische Ausrichtung auf dem Pixel 10 Pro im Vollbild-/Homescreen-Modus
+     (Statusleiste + Kamera-Cutout oben ~52dp, Gestenbalken unten ~28dp) */
+  @media (max-width: 639px) and (display-mode: standalone),
+         (max-width: 639px) and (display-mode: fullscreen) {
+    :root {
+      --pixel-safe-top: max(env(safe-area-inset-top, 0px), 52px);
+      --pixel-safe-bottom: max(env(safe-area-inset-bottom, 0px), 28px);
+    }
   }
 
   /* Kalibriert für Google Pixel 10 Pro (6.3" Super Actua OLED, 1280×2856 px, ~412–428dp, 20:9):
@@ -44,6 +56,26 @@
   textarea {
     font-size: max(0.95rem, 16px);
   }
+}
+
+.pixel-safe-top-spacer {
+  height: var(--pixel-safe-top, 0px);
+}
+
+.pixel-safe-bottom-spacer {
+  height: var(--pixel-safe-bottom, 0px);
+}
+
+.pixel-env-probe {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 0;
+  height: 0;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  pointer-events: none;
+  visibility: hidden;
 }
 
 /* Klare Mindestschriftgrößen auf dem Pixel 10 Pro (ausgenommen A4-Rechnungsblattvorschau) */

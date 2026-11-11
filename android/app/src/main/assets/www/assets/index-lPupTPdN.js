@@ -30894,7 +30894,7 @@ function le() {
 	}, t.allowFsRead = void 0, t.loadImageFile = t.loadFile;
 }(E.API), function(e) {
 	function r() {
-		return (i.html2canvas ? Promise.resolve(i.html2canvas) : __vitePreload(() => import("./html2canvas-BW5BL98o.js").then((m) => /* @__PURE__ */ __toESM(m.default)), [])).catch(function(t) {
+		return (i.html2canvas ? Promise.resolve(i.html2canvas) : __vitePreload(() => import("./html2canvas-DUPuu1N7.js").then((m) => /* @__PURE__ */ __toESM(m.default)), [])).catch(function(t) {
 			return Promise.reject(/* @__PURE__ */ new Error("Could not load html2canvas: " + t));
 		}).then(function(t) {
 			return t.default ? t.default : t;
@@ -32061,7 +32061,7 @@ function le() {
 		ignoreAnimation: !0,
 		ignoreDimensions: !0
 	}, d = this;
-	return (i.canvg ? Promise.resolve(i.canvg) : __vitePreload(() => import("./index.es-BMfG3RKn.js"), [])).catch(function(t) {
+	return (i.canvg ? Promise.resolve(i.canvg) : __vitePreload(() => import("./index.es-ByFIIZXr.js"), [])).catch(function(t) {
 		return Promise.reject(/* @__PURE__ */ new Error("Could not load canvg: " + t));
 	}).then(function(t) {
 		return t.default ? t.default : t;
@@ -39024,16 +39024,16 @@ var X = createLucideIcon("x", [["path", {
 	key: "d8bk6v"
 }]]);
 // src/components/common/PixelFrame.tsx
-var EDGE_START_ZONE_PX = 18;
+var EDGE_START_ZONE_PX = 20;
 var SWIPE_TRIGGER_PX = 48;
-var MAX_VERTICAL_DRIFT_PX = 44;
+var MAX_VERTICAL_DRIFT_PX = 46;
 var PixelFrame = ({ children }) => {
 	const { pixelFrameEnabled, setPixelFrameEnabled, canSystemGoBack, triggerSystemBack, switchMainTab, setActiveModal, setSendingInvoiceId, setIsSearchOpen, setIsPlusMenuOpen, setIsThreeDotsMenuOpen } = useApp();
 	const canvasRef = (0, import_react.useRef)(null);
 	const gestureRef = (0, import_react.useRef)(null);
 	const [edgePreview, setEdgePreview] = (0, import_react.useState)(null);
 	if (isNativeAndroidApp()) return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
-		className: "w-full h-[100dvh] bg-[#F8F9FA] text-[#1E2238] flex flex-col overflow-hidden relative",
+		className: "pixel-app-shell w-full h-[100dvh] bg-[#F8F9FA] text-[#1E2238] flex flex-col overflow-hidden relative",
 		children
 	});
 	const handlePointerDown = (e) => {
@@ -39092,38 +39092,38 @@ var PixelFrame = ({ children }) => {
 		switchMainTab("M01_HEUTE");
 	};
 	return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-		className: "w-full h-full h-[100dvh] bg-[#E2E5E9] flex flex-col items-center justify-center sm:py-2 sm:px-4 text-[#1E2238] overflow-hidden",
+		className: "pixel-app-shell w-full h-full h-[100dvh] bg-[#F8F9FA] sm:bg-[#E2E5E9] flex flex-col items-center justify-center sm:py-2 sm:px-4 text-[#1E2238] overflow-hidden",
 		children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-			className: "hidden sm:flex items-center justify-between w-full max-w-[412px] mb-2 px-3 py-1.5 text-xs text-slate-600 bg-white/80 backdrop-blur-sm rounded-xl border border-slate-200 shadow-xs shrink-0",
+			className: "hidden sm:flex items-center justify-between w-full max-w-[432px] mb-2 px-3.5 py-1.5 text-xs text-slate-700 bg-white/90 backdrop-blur-sm rounded-xl border border-slate-200 shadow-xs shrink-0",
 			children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-				className: "flex items-center gap-1.5 font-medium",
+				className: "flex items-center gap-2 font-semibold",
 				children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Smartphone, {
-					size: 14,
+					size: 15,
 					className: "text-[#3138A0]"
-				}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Google Pixel 10 Pro (20:9)" })]
+				}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Google Pixel 10 Pro (6.3\" · 20:9)" })]
 			}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
 				onClick: () => setPixelFrameEnabled(!pixelFrameEnabled),
-				className: "flex items-center gap-1 px-2 py-0.5 rounded-md hover:bg-slate-200 text-[11px] font-semibold text-slate-700 transition-colors",
+				className: "flex items-center gap-1.5 px-2.5 py-1 rounded-lg hover:bg-slate-200/80 text-xs font-semibold text-slate-800 transition-colors",
 				title: "Rahmen umschalten",
-				children: pixelFrameEnabled ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Monitor, { size: 12 }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Vollbild" })] }) : /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Smartphone, { size: 12 }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Pixel Rahmen" })] })
+				children: pixelFrameEnabled ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Monitor, { size: 13 }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Vollbild" })] }) : /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Smartphone, { size: 13 }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Pixel Rahmen" })] })
 			})]
 		}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-			className: `w-full bg-[#F8F9FA] relative flex flex-col overflow-hidden transition-all duration-200 h-[100dvh] max-h-[100dvh] ${pixelFrameEnabled ? "sm:w-[412px] sm:max-w-[412px] sm:h-[892px] sm:max-h-[892px] sm:rounded-[52px] sm:shadow-2xl sm:ring-[14px] sm:ring-slate-900 sm:border-[3px] sm:border-slate-700/80" : "max-w-[440px] sm:rounded-3xl sm:shadow-xl sm:border sm:border-slate-300"}`,
+			className: `w-full bg-[#F8F9FA] relative flex flex-col overflow-hidden transition-all duration-200 h-[100dvh] max-h-[100dvh] ${pixelFrameEnabled ? "sm:w-[428px] sm:max-w-[428px] sm:h-[min(936px,calc(100dvh-3rem))] sm:max-h-[min(936px,calc(100dvh-3rem))] sm:rounded-[50px] sm:shadow-2xl sm:ring-[12px] sm:ring-slate-900 sm:border-[3px] sm:border-slate-700/80" : "sm:w-[468px] sm:max-w-[468px] sm:h-[min(960px,calc(100dvh-3rem))] sm:rounded-3xl sm:shadow-xl sm:border sm:border-slate-300"}`,
 			children: [
 				pixelFrameEnabled && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
 					className: "hidden sm:flex absolute top-2.5 left-1/2 -translate-x-1/2 w-4 h-4 bg-black rounded-full z-50 pointer-events-none ring-1 ring-slate-800 shadow-inner items-center justify-center",
 					children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "w-1.5 h-1.5 rounded-full bg-slate-900 ring-1 ring-indigo-950/40" })
 				}),
 				/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-					className: "w-full h-8 px-6 flex items-center justify-between text-xs font-semibold text-slate-800 bg-white shrink-0 select-none z-30 pt-0.5 border-b border-slate-100/50",
+					className: "hidden sm:flex w-full h-8 px-6 items-center justify-between text-xs font-semibold text-slate-800 bg-white shrink-0 select-none z-30 pt-0.5 border-b border-slate-100/60",
 					children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-						className: "font-mono text-[11px]",
+						className: "font-mono text-xs tabular-nums",
 						children: "09:41"
 					}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-						className: "flex items-center gap-1.5 text-[11px] text-slate-700",
+						className: "flex items-center gap-1.5 text-xs text-slate-700",
 						children: [
 							/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-								className: "font-mono text-[10px] tracking-tight font-bold",
+								className: "font-mono text-[11px] tracking-tight font-bold",
 								children: "5G"
 							}),
 							/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("svg", {
@@ -39146,7 +39146,7 @@ var PixelFrame = ({ children }) => {
 								children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "w-full h-full bg-slate-800 rounded-2xs" })
 							}),
 							/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-								className: "text-[10px] font-mono",
+								className: "text-[11px] font-mono tabular-nums",
 								children: "100%"
 							})
 						]
@@ -39160,28 +39160,28 @@ var PixelFrame = ({ children }) => {
 					onPointerCancel: handlePointerCancel,
 					className: "flex-1 min-h-0 flex flex-col overflow-hidden relative bg-[#F8F9FA]",
 					children: [children, edgePreview && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
-						className: `pointer-events-none absolute top-1/2 -translate-y-1/2 z-50 flex items-center justify-center rounded-full shadow-lg transition-all duration-150 ${edgePreview.side === "left" ? "left-2.5" : "right-2.5"} ${edgePreview.ready ? "w-10 h-10 bg-[#3138A0] text-white scale-100 opacity-100" : "w-8 h-8 bg-slate-900/75 text-white scale-90 opacity-80"}`,
+						className: `pointer-events-none absolute top-1/2 -translate-y-1/2 z-50 flex items-center justify-center rounded-full shadow-lg transition-all duration-150 ${edgePreview.side === "left" ? "left-3" : "right-3"} ${edgePreview.ready ? "w-11 h-11 bg-[#3138A0] text-white scale-100 opacity-100" : "w-9 h-9 bg-slate-900/80 text-white scale-90 opacity-85"}`,
 						"aria-hidden": "true",
 						children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ChevronLeft, {
-							size: 20,
-							strokeWidth: 2.5
+							size: 22,
+							strokeWidth: 2.6
 						})
 					})]
 				}),
 				/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-					className: "w-full h-7 px-5 bg-white grid grid-cols-3 items-center shrink-0 border-t border-slate-100/60 z-30 select-none",
+					className: "hidden sm:grid w-full h-8 px-5 bg-white grid-cols-3 items-center shrink-0 border-t border-slate-100/70 z-30 select-none",
 					children: [
 						/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
 							className: "flex items-center justify-start",
 							children: canSystemGoBack && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
 								type: "button",
 								onClick: () => triggerSystemBack(),
-								className: "flex items-center gap-0.5 px-2 py-0.5 -ml-1.5 rounded-full text-slate-600 hover:text-slate-900 hover:bg-slate-100 active:scale-95 transition-all",
+								className: "flex items-center gap-0.5 px-2.5 py-1 -ml-1.5 rounded-full text-slate-700 hover:text-slate-950 hover:bg-slate-100 active:scale-95 transition-all",
 								"aria-label": "Pixel Zurück",
 								title: "Zurück (Pixel-Geste / Esc)",
 								children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ChevronLeft, {
-									size: 16,
-									strokeWidth: 2.4
+									size: 18,
+									strokeWidth: 2.5
 								})
 							})
 						}),
@@ -39193,7 +39193,7 @@ var PixelFrame = ({ children }) => {
 								className: "py-1.5 px-3 rounded-full hover:bg-slate-100/80 active:scale-95 transition-transform",
 								"aria-label": "Startansicht Heute",
 								title: "Heute (Pixel Home-Leiste)",
-								children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "block w-32 h-1 bg-slate-900/75 rounded-full" })
+								children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "block w-34 h-1 bg-slate-900/80 rounded-full" })
 							})
 						}),
 						/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {})
@@ -39218,21 +39218,24 @@ var Header = ({ title, subtitle, showBack = false, onBack }) => {
 		else goBack();
 	};
 	return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("header", {
-		className: "h-14 px-4 bg-white border-b border-slate-200/80 flex items-center justify-between shrink-0 sticky top-0 z-20",
+		className: "h-[60px] px-4 bg-white border-b border-slate-200/90 flex items-center justify-between shrink-0 sticky top-0 z-20",
 		children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 			className: "flex items-center gap-2 min-w-0",
 			children: [shouldShowBack && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
 				onClick: handleBack,
-				className: "min-w-[48px] min-h-[48px] -ml-2 flex items-center justify-center text-slate-700 hover:text-slate-900 active:bg-slate-100 rounded-full transition-colors",
+				className: "w-12 h-12 -ml-2 flex items-center justify-center text-slate-800 hover:text-slate-950 active:bg-slate-100 rounded-full transition-colors shrink-0",
 				"aria-label": "Zurück",
-				children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ChevronLeft, { size: 24 })
+				children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ChevronLeft, {
+					size: 26,
+					strokeWidth: 2.5
+				})
 			}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 				className: "flex flex-col min-w-0",
 				children: [subtitle && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-					className: "text-[11px] font-medium text-slate-500 uppercase tracking-wider truncate",
+					className: "text-xs font-semibold text-slate-600 tracking-wide truncate leading-tight",
 					children: subtitle
 				}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h1", {
-					className: "text-lg font-bold text-slate-900 tracking-tight truncate leading-tight",
+					className: "text-xl font-bold text-slate-950 tracking-tight truncate leading-tight",
 					children: title
 				})]
 			})]
@@ -39240,9 +39243,12 @@ var Header = ({ title, subtitle, showBack = false, onBack }) => {
 			className: "flex items-center gap-1 shrink-0",
 			children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
 				onClick: () => setIsThreeDotsMenuOpen(true),
-				className: "min-w-[48px] min-h-[48px] -mr-2 flex items-center justify-center text-slate-700 hover:text-slate-900 active:bg-slate-100 rounded-full transition-colors",
+				className: "w-12 h-12 -mr-2 flex items-center justify-center text-slate-800 hover:text-slate-950 active:bg-slate-100 rounded-full transition-colors",
 				"aria-label": "Menü öffnen",
-				children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(EllipsisVertical, { size: 22 })
+				children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(EllipsisVertical, {
+					size: 24,
+					strokeWidth: 2.2
+				})
 			})
 		})]
 	});
@@ -39251,25 +39257,31 @@ var Header = ({ title, subtitle, showBack = false, onBack }) => {
 var BottomActionBar = ({ children }) => {
 	const { setIsSearchOpen, setIsPlusMenuOpen } = useApp();
 	return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-		className: "px-5 py-2 bg-white/95 backdrop-blur-xs border-t border-slate-200/80 flex items-center justify-between shrink-0 z-10",
+		className: "px-4 py-2 bg-white/95 backdrop-blur-xs border-t border-slate-200/80 flex items-center justify-between gap-2 shrink-0 z-10",
 		children: [
 			/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
 				onClick: () => setIsSearchOpen(true),
-				className: "w-12 h-12 flex items-center justify-center text-slate-700 hover:text-slate-900 active:bg-slate-100 rounded-full transition-colors shrink-0",
+				className: "w-12 h-12 flex items-center justify-center bg-slate-100/90 hover:bg-slate-200 active:scale-95 text-slate-800 rounded-2xl transition-all shrink-0",
 				"aria-label": "Suche öffnen",
 				title: "Suche",
-				children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Search, { size: 22 })
+				children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Search, {
+					size: 23,
+					strokeWidth: 2.2
+				})
 			}),
 			children && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
-				className: "flex-1 flex items-center justify-center px-2",
+				className: "flex-1 flex items-center justify-center min-w-0 px-1",
 				children
 			}),
 			/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
 				onClick: () => setIsPlusMenuOpen(true),
-				className: "w-12 h-12 flex items-center justify-center text-slate-700 hover:text-slate-900 active:bg-slate-100 rounded-full transition-colors shrink-0",
+				className: "w-12 h-12 flex items-center justify-center bg-indigo-50 hover:bg-indigo-100 active:scale-95 text-[#3138A0] border border-indigo-200/80 rounded-2xl transition-all shrink-0",
 				"aria-label": "Schnellmenü öffnen",
 				title: "Schnellmenü",
-				children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Plus, { size: 24 })
+				children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Plus, {
+					size: 25,
+					strokeWidth: 2.5
+				})
 			})
 		]
 	});
@@ -39303,19 +39315,22 @@ var BottomNav = () => {
 		switchMainTab(screenId);
 	};
 	return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("nav", {
-		className: "h-[56px] bg-white border-t border-slate-200/90 grid grid-cols-4 items-center shrink-0 z-20 px-1 select-none",
+		className: "min-h-[62px] pb-[env(safe-area-inset-bottom)] bg-white border-t border-slate-200/90 grid grid-cols-4 items-center shrink-0 z-20 px-1.5 select-none",
 		children: navItems.map((item) => {
 			const Icon = item.icon;
 			const isActive = currentScreen === item.id || item.id === "M01_HEUTE" && currentScreen === "M19_ZEITERFASSUNG" || item.id === "M03_KUNDEN" && currentScreen === "M17_OBJEKTE";
 			return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
 				onClick: () => handleNav(item.id),
-				className: `h-full min-h-[48px] flex flex-col items-center justify-center py-1 transition-colors active:scale-95 ${isActive ? "text-[#3138A0]" : "text-[#5D6178] hover:text-slate-800"}`,
+				className: `h-full min-h-[56px] flex flex-col items-center justify-center py-1 transition-all active:scale-95 ${isActive ? "text-[#3138A0]" : "text-slate-600 hover:text-slate-900"}`,
 				"aria-label": item.label,
-				children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Icon, {
-					size: 21,
-					className: isActive ? "stroke-[2.5]" : "stroke-[1.8]"
+				children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+					className: `px-3.5 py-0.5 rounded-full flex items-center justify-center transition-colors ${isActive ? "bg-indigo-100/90 text-[#3138A0]" : "bg-transparent"}`,
+					children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Icon, {
+						size: 23,
+						className: isActive ? "stroke-[2.5]" : "stroke-[2]"
+					})
 				}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-					className: `text-[11px] mt-0.5 tracking-tight ${isActive ? "font-bold text-[#3138A0]" : "font-medium text-[#5D6178]"}`,
+					className: `text-xs mt-0.5 tracking-tight whitespace-nowrap ${isActive ? "font-bold text-[#3138A0]" : "font-semibold text-slate-600"}`,
 					children: item.label
 				})]
 			}, item.id);
@@ -39356,12 +39371,12 @@ var HeuteView = () => {
 				className: "flex-1 min-h-0 overflow-y-auto p-4 space-y-4 overscroll-contain",
 				children: [
 					/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-						className: "flex items-start justify-between",
+						className: "flex items-start justify-between gap-3",
 						children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("h2", {
-							className: "text-xl font-bold text-slate-900 tracking-tight leading-tight",
+							className: "text-2xl font-bold text-slate-950 tracking-tight leading-tight",
 							children: todayLabel
 						}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-							className: "flex items-center gap-1.5 text-xs text-slate-500 mt-0.5",
+							className: "flex items-center gap-1.5 text-sm text-slate-600 mt-1 tabular-nums",
 							children: [
 								/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
 									todayApps.length,
@@ -39369,69 +39384,76 @@ var HeuteView = () => {
 									todayApps.length === 1 ? "Termin" : "Termine"
 								] }),
 								/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "·" }),
-								/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [todayApps.reduce((sum, a) => sum + (a.duration_minutes || 60) / 60, 0).toFixed(0), " Std. geplant"] })
+								/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
+									todayApps.reduce((sum, a) => sum + (a.duration_minutes || 60) / 60, 0).toFixed(0),
+									" ",
+									"Std. geplant"
+								] })
 							]
 						})] }), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-							className: "flex items-center gap-1.5 px-2.5 py-1.5 bg-white border border-slate-200/80 rounded-xl shadow-2xs text-xs font-semibold text-slate-800",
+							className: "flex items-center gap-2 px-3 py-2 bg-white border border-slate-200/90 rounded-2xl shadow-2xs text-sm font-bold text-slate-900 tabular-nums shrink-0",
 							children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Sun, {
-								size: 16,
+								size: 18,
 								className: "text-amber-500"
 							}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "12°" })]
 						})]
 					}),
 					/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-						className: "flex items-center justify-between text-xs font-semibold px-0.5",
+						className: "flex items-center justify-between text-sm font-semibold px-0.5",
 						children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-							className: "text-slate-500 uppercase tracking-wider text-[11px]",
+							className: "text-slate-600 tracking-wide text-xs font-bold",
 							children: "Dein Tag"
 						}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
 							onClick: handleOpenTour,
-							className: "text-[#3138A0] hover:underline flex items-center gap-0.5",
-							children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Tagestour" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ChevronRight, { size: 14 })]
+							className: "min-h-[44px] -my-2 px-2 text-[#3138A0] font-bold hover:underline flex items-center gap-0.5 rounded-xl active:bg-indigo-50/70",
+							children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Tagestour" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ChevronRight, { size: 16 })]
 						})]
 					}),
 					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
-						className: "space-y-2.5",
+						className: "space-y-3",
 						children: todayApps.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
-							className: "p-4 bg-white border border-slate-200 rounded-2xl text-center text-xs text-slate-500",
+							className: "p-5 bg-white border border-slate-200 rounded-2xl text-center text-sm text-slate-600",
 							children: "Keine Termine für heute eingetragen."
 						}) : todayApps.map((app, idx) => {
 							const cust = customers.find((c) => c.id === app.customer_id);
 							const isNext = idx === 0;
 							return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
 								onClick: () => handleOpenCustomer(app.customer_id),
-								className: "p-3.5 bg-white border border-slate-200 rounded-2xl shadow-2xs hover:border-[#3138A0] transition-colors cursor-pointer",
+								className: "p-4 bg-white border border-slate-200 rounded-2xl shadow-2xs hover:border-[#3138A0] active:bg-slate-50 transition-colors cursor-pointer",
 								children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-									className: "flex items-start justify-between gap-2",
+									className: "flex items-start justify-between gap-2.5",
 									children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-										className: "flex items-start gap-3",
+										className: "flex items-start gap-3.5 min-w-0",
 										children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-											className: "flex flex-col text-xs font-bold text-slate-700 font-mono shrink-0 pt-0.5",
+											className: "flex flex-col text-sm font-bold text-slate-800 font-mono tabular-nums shrink-0 pt-0.5",
 											children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: app.start_time || "Ohne Zeit" }), app.end_time && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-												className: "text-slate-400 font-normal",
+												className: "text-xs text-slate-500 font-normal",
 												children: app.end_time
 											})]
-										}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [
-											/* @__PURE__ */ (0, import_jsx_runtime.jsx)("h3", {
-												className: "text-sm font-bold text-slate-900 leading-tight",
-												children: app.title || "Termin"
-											}),
-											/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
-												className: "text-xs text-slate-500 mt-0.5",
-												children: [cust ? cust.name : "Ohne Kunde", app.duration_minutes ? ` · ${app.duration_minutes} Min.` : ""]
-											}),
-											app.address && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
-												className: "text-[11px] text-slate-400 mt-0.5 truncate",
-												children: app.address
-											})
-										] })]
+										}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+											className: "min-w-0",
+											children: [
+												/* @__PURE__ */ (0, import_jsx_runtime.jsx)("h3", {
+													className: "text-base font-bold text-slate-950 leading-snug",
+													children: app.title || "Termin"
+												}),
+												/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
+													className: "text-sm text-slate-600 mt-0.5",
+													children: [cust ? cust.name : "Ohne Kunde", app.duration_minutes ? ` · ${app.duration_minutes} Min.` : ""]
+												}),
+												app.address && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+													className: "text-xs text-slate-500 mt-0.5 truncate",
+													children: app.address
+												})
+											]
+										})]
 									}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
 										className: "shrink-0",
 										children: isNext ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-											className: "px-2 py-0.5 bg-indigo-50 border border-indigo-100 text-[#3138A0] text-[10px] font-bold rounded-md",
+											className: "text-xs font-bold text-[#3138A0]",
 											children: "Als Nächstes"
 										}) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-											className: "px-2 py-0.5 bg-slate-100 text-slate-600 text-[10px] font-semibold rounded-md",
+											className: "text-xs font-semibold text-slate-500",
 											children: "Geplant"
 										})
 									})]
@@ -39440,14 +39462,14 @@ var HeuteView = () => {
 						})
 					}),
 					/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-						className: "pt-2",
+						className: "pt-1",
 						children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-							className: "flex items-center justify-between text-xs font-semibold px-0.5 mb-2",
+							className: "flex items-center justify-between text-xs font-bold px-0.5 mb-2.5",
 							children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-								className: "text-slate-500 uppercase tracking-wider text-[11px]",
+								className: "text-slate-600 tracking-wide",
 								children: "Zu erledigen"
 							}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
-								className: "text-[11px] text-slate-400",
+								className: "text-slate-500 font-semibold tabular-nums",
 								children: [
 									openWork.length + dueEquipments.length + newInquiries.length,
 									" ",
@@ -39455,22 +39477,22 @@ var HeuteView = () => {
 								]
 							})]
 						}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-							className: "space-y-2",
+							className: "space-y-2.5",
 							children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 								className: "bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-2xs",
 								children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
 									onClick: () => setOpenHoursExpanded(!openHoursExpanded),
-									className: "w-full min-h-[48px] p-3 flex items-center justify-between hover:bg-slate-50 transition-colors text-left",
+									className: "w-full min-h-[58px] p-3.5 flex items-center justify-between hover:bg-slate-50 active:bg-slate-100/70 transition-colors text-left",
 									children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-										className: "flex items-center gap-2.5",
+										className: "flex items-center gap-3",
 										children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
-											className: "w-8 h-8 rounded-full bg-orange-50 flex items-center justify-center text-[#B4470B]",
-											children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Clock, { size: 16 })
+											className: "w-10 h-10 rounded-full bg-orange-50 flex items-center justify-center text-[#B4470B] shrink-0",
+											children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Clock, { size: 19 })
 										}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-											className: "text-xs font-bold text-slate-900 block leading-tight",
+											className: "text-sm font-bold text-slate-950 block leading-tight",
 											children: "Offene Stunden"
 										}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
-											className: "text-[11px] text-slate-500",
+											className: "text-xs text-slate-600 tabular-nums",
 											children: [
 												openHoursSum,
 												" Std. · ",
@@ -39479,48 +39501,51 @@ var HeuteView = () => {
 											]
 										})] })]
 									}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-										className: "flex items-center gap-1.5",
+										className: "flex items-center gap-2 shrink-0",
 										children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
-											className: "text-xs font-bold text-[#B4470B] px-1.5 py-0.5 bg-orange-50 rounded-md",
+											className: "text-sm font-bold text-[#B4470B] tabular-nums",
 											children: [openAmountSum.toFixed(0), " €"]
 										}), openHoursExpanded ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ChevronDown, {
-											size: 16,
-											className: "text-slate-400"
+											size: 18,
+											className: "text-slate-500"
 										}) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ChevronRight, {
-											size: 16,
-											className: "text-slate-400"
+											size: 18,
+											className: "text-slate-500"
 										})]
 									})]
 								}), openHoursExpanded && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
-									className: "p-3 bg-slate-50/70 border-t border-slate-100 text-xs",
+									className: "p-3.5 bg-slate-50/70 border-t border-slate-100 text-sm",
 									children: openWork.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
-										className: "py-2 text-center text-slate-400 italic",
+										className: "py-2 text-center text-slate-500 italic",
 										children: "Keine offenen Arbeitsstunden vorhanden."
 									}) : /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-										className: "divide-y divide-slate-100",
+										className: "divide-y divide-slate-200/70",
 										children: [openWork.map((w) => {
 											const c = customers.find((cust) => cust.id === w.customer_id);
 											return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-												className: "py-2 flex items-center justify-between",
-												children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-													className: "font-semibold text-slate-800 block",
-													children: w.title
+												className: "py-2.5 flex items-center justify-between gap-2",
+												children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+													className: "min-w-0",
+													children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+														className: "font-bold text-slate-900 block truncate",
+														children: w.title
+													}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
+														className: "text-xs text-slate-600 tabular-nums",
+														children: [
+															c?.name,
+															" · ",
+															w.hours,
+															" Std."
+														]
+													})]
 												}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
-													className: "text-[11px] text-slate-500",
-													children: [
-														c?.name,
-														" · ",
-														w.hours,
-														" Std."
-													]
-												})] }), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
-													className: "font-bold text-[#B4470B]",
+													className: "font-bold text-[#B4470B] tabular-nums shrink-0",
 													children: [(w.accounting_amount || 0).toFixed(2), " €"]
 												})]
 											}, w.id);
 										}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
 											onClick: () => navigate("M04_ABRECHNUNG"),
-											className: "w-full mt-2 pt-2 text-center text-xs font-bold text-[#3138A0] hover:underline",
+											className: "w-full min-h-[44px] mt-2 pt-2 text-center text-sm font-bold text-[#3138A0] hover:underline",
 											children: "Zur Abrechnung wechseln →"
 										})]
 									})
@@ -39529,17 +39554,17 @@ var HeuteView = () => {
 								className: "bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-2xs",
 								children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
 									onClick: () => setTasksExpanded(!tasksExpanded),
-									className: "w-full min-h-[48px] p-3 flex items-center justify-between hover:bg-slate-50 transition-colors text-left",
+									className: "w-full min-h-[58px] p-3.5 flex items-center justify-between hover:bg-slate-50 active:bg-slate-100/70 transition-colors text-left",
 									children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-										className: "flex items-center gap-2.5",
+										className: "flex items-center gap-3",
 										children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
-											className: "w-8 h-8 rounded-full bg-fuchsia-50 flex items-center justify-center text-[#9A1B8D]",
-											children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(TriangleAlert, { size: 16 })
+											className: "w-10 h-10 rounded-full bg-fuchsia-50 flex items-center justify-center text-[#9A1B8D] shrink-0",
+											children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(TriangleAlert, { size: 19 })
 										}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-											className: "text-xs font-bold text-slate-900 block leading-tight",
+											className: "text-sm font-bold text-slate-950 block leading-tight",
 											children: "Fällig & neu"
 										}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
-											className: "text-[11px] text-slate-500",
+											className: "text-xs text-slate-600 tabular-nums",
 											children: [
 												dueEquipments.length,
 												" Wartung · ",
@@ -39548,63 +39573,69 @@ var HeuteView = () => {
 											]
 										})] })]
 									}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-										className: "flex items-center gap-1.5",
+										className: "flex items-center gap-2 shrink-0",
 										children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-											className: "text-xs font-bold text-[#9A1B8D] px-1.5 py-0.5 bg-fuchsia-50 rounded-md",
+											className: "text-sm font-bold text-[#9A1B8D] tabular-nums",
 											children: dueEquipments.length + newInquiries.length
 										}), tasksExpanded ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ChevronDown, {
-											size: 16,
-											className: "text-slate-400"
+											size: 18,
+											className: "text-slate-500"
 										}) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ChevronRight, {
-											size: 16,
-											className: "text-slate-400"
+											size: 18,
+											className: "text-slate-500"
 										})]
 									})]
 								}), tasksExpanded && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
-									className: "p-3 bg-slate-50/70 border-t border-slate-100 text-xs",
+									className: "p-3.5 bg-slate-50/70 border-t border-slate-100 text-sm",
 									children: dueEquipments.length === 0 && newInquiries.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
-										className: "py-2 text-center text-slate-400 italic",
+										className: "py-2 text-center text-slate-500 italic",
 										children: "Keine fälligen Aufgaben oder Anfragen."
 									}) : /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-										className: "space-y-2",
+										className: "space-y-2.5",
 										children: [dueEquipments.map((eq) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 											onClick: () => navigate("M10_GERAETE"),
-											className: "p-2 bg-white rounded-xl border border-slate-200 flex items-center justify-between cursor-pointer hover:border-[#9A1B8D]",
+											className: "p-3 bg-white rounded-xl border border-slate-200 flex items-center justify-between gap-2 cursor-pointer hover:border-[#9A1B8D]",
 											children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-												className: "flex items-center gap-2",
+												className: "flex items-center gap-2.5 min-w-0",
 												children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Wrench, {
-													size: 14,
-													className: "text-[#9A1B8D]"
-												}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-													className: "font-semibold text-slate-800 block",
-													children: eq.name
-												}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
-													className: "text-[10px] text-slate-500",
-													children: ["Wartung fällig: ", eq.maintenance_plan]
-												})] })]
+													size: 17,
+													className: "text-[#9A1B8D] shrink-0"
+												}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+													className: "min-w-0",
+													children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+														className: "font-bold text-slate-900 block truncate",
+														children: eq.name
+													}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
+														className: "text-xs text-slate-600",
+														children: ["Wartung fällig: ", eq.maintenance_plan]
+													})]
+												})]
 											}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-												className: "text-[10px] font-bold text-[#9A1B8D] uppercase",
+												className: "text-xs font-bold text-[#9A1B8D] shrink-0",
 												children: "Fällig"
 											})]
 										}, eq.id)), newInquiries.map((inq) => {
 											const c = customers.find((cust) => cust.id === inq.customer_id);
 											return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 												onClick: () => navigate("M05_ANFRAGEN"),
-												className: "p-2 bg-white rounded-xl border border-slate-200 flex items-center justify-between cursor-pointer hover:border-[#3138A0]",
+												className: "p-3 bg-white rounded-xl border border-slate-200 flex items-center justify-between gap-2 cursor-pointer hover:border-[#3138A0]",
 												children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-													className: "flex items-center gap-2",
+													className: "flex items-center gap-2.5 min-w-0",
 													children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(MessageSquare, {
-														size: 14,
-														className: "text-[#3138A0]"
-													}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-														className: "font-semibold text-slate-800 block",
-														children: inq.title
-													}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-														className: "text-[10px] text-slate-500",
-														children: c?.name
-													})] })]
+														size: 17,
+														className: "text-[#3138A0] shrink-0"
+													}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+														className: "min-w-0",
+														children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+															className: "font-bold text-slate-900 block truncate",
+															children: inq.title
+														}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+															className: "text-xs text-slate-600",
+															children: c?.name
+														})]
+													})]
 												}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-													className: "text-[10px] font-bold text-[#9A1B8D] uppercase",
+													className: "text-xs font-bold text-[#9A1B8D] shrink-0",
 													children: "Neu"
 												})]
 											}, inq.id);
@@ -50179,7 +50210,7 @@ var PlanungView = () => {
 								})]
 							}),
 							/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
-								className: "grid grid-cols-7 gap-1",
+								className: "grid grid-cols-7 gap-1.5",
 								children: weekDays.map((wd) => {
 									const isSelected = selectedDate === wd.date;
 									const isToday = wd.date === todayIso;
@@ -50191,14 +50222,14 @@ var PlanungView = () => {
 											setSelectedDate(wd.date);
 											if (activeTab === "woche") setActiveTab("tag");
 										},
-										className: `py-1.5 px-1 flex flex-col items-center rounded-xl transition-all border ${isSelected ? "bg-[#3138A0] border-[#3138A0] text-white shadow-2xs" : isToday ? "bg-indigo-50/70 border-indigo-200 text-[#3138A0]" : "bg-slate-50 border-transparent text-slate-700 hover:bg-slate-100"}`,
+										className: `py-2 px-1 flex flex-col items-center rounded-xl transition-all border ${isSelected ? "bg-[#3138A0] border-[#3138A0] text-white shadow-2xs" : isToday ? "bg-indigo-50/80 border-indigo-200 text-[#3138A0]" : "bg-slate-50 border-transparent text-slate-700 hover:bg-slate-100"}`,
 										children: [
 											/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-												className: "text-[10px] font-semibold uppercase leading-none",
+												className: "text-[10px] font-bold uppercase leading-none",
 												children: wd.label
 											}),
 											/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-												className: "text-xs font-bold leading-tight mt-0.5",
+												className: "text-sm font-bold leading-tight mt-0.5 tabular-nums",
 												children: wd.dayNum
 											}),
 											/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
@@ -50217,15 +50248,15 @@ var PlanungView = () => {
 										/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
 											type: "button",
 											onClick: handlePrev,
-											className: "w-8 h-8 flex items-center justify-center text-slate-700 hover:bg-white rounded-lg transition-colors",
+											className: "w-9 h-9 flex items-center justify-center text-slate-800 hover:bg-white rounded-lg transition-colors",
 											"aria-label": "Zurück",
-											children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ChevronLeft, { size: 17 })
+											children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ChevronLeft, { size: 19 })
 										}),
 										/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", {
-											className: "relative cursor-pointer h-8 px-2 flex items-center gap-1 text-[11px] font-bold text-slate-800 hover:bg-white rounded-lg transition-colors",
+											className: "relative cursor-pointer h-9 px-2.5 flex items-center gap-1.5 text-xs font-bold text-slate-900 hover:bg-white rounded-lg transition-colors",
 											children: [
 												/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Calendar, {
-													size: 13,
+													size: 14,
 													className: "text-[#3138A0]"
 												}),
 												/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: formatShortDayDE(selectedDate) }),
@@ -50242,15 +50273,15 @@ var PlanungView = () => {
 										selectedDate !== todayIso && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
 											type: "button",
 											onClick: () => setSelectedDate(todayIso),
-											className: "h-8 px-2 text-[10px] font-bold text-[#3138A0] bg-white rounded-lg shadow-2xs",
+											className: "h-9 px-2.5 text-xs font-bold text-[#3138A0] bg-white rounded-lg shadow-2xs",
 											children: "Heute"
 										}),
 										/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
 											type: "button",
 											onClick: handleNext,
-											className: "w-8 h-8 flex items-center justify-center text-slate-700 hover:bg-white rounded-lg transition-colors",
+											className: "w-9 h-9 flex items-center justify-center text-slate-800 hover:bg-white rounded-lg transition-colors",
 											"aria-label": "Weiter",
-											children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ChevronRight, { size: 17 })
+											children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ChevronRight, { size: 19 })
 										})
 									]
 								}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
@@ -50261,19 +50292,19 @@ var PlanungView = () => {
 											/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
 												type: "button",
 												onClick: () => setSourceFilter("all"),
-												className: `h-8 px-2 rounded-lg text-[10px] font-bold transition-all ${sourceFilter === "all" ? "bg-white text-slate-900 shadow-2xs" : "text-slate-600"}`,
+												className: `h-9 px-2.5 rounded-lg text-xs font-bold transition-all ${sourceFilter === "all" ? "bg-white text-slate-950 shadow-2xs" : "text-slate-600"}`,
 												children: "Alle"
 											}),
 											/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
 												type: "button",
 												onClick: () => setSourceFilter("app"),
-												className: `h-8 px-2 rounded-lg text-[10px] font-bold transition-all ${sourceFilter === "app" ? "bg-[#3138A0] text-white shadow-2xs" : "text-[#3138A0]"}`,
+												className: `h-9 px-2.5 rounded-lg text-xs font-bold transition-all ${sourceFilter === "app" ? "bg-[#3138A0] text-white shadow-2xs" : "text-[#3138A0]"}`,
 												children: "App"
 											}),
 											/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
 												type: "button",
 												onClick: () => setSourceFilter("google"),
-												className: `h-8 px-2 rounded-lg text-[10px] font-bold transition-all ${sourceFilter === "google" ? "bg-[#0B8043] text-white shadow-2xs" : "text-[#0B8043]"}`,
+												className: `h-9 px-2.5 rounded-lg text-xs font-bold transition-all ${sourceFilter === "google" ? "bg-[#0B8043] text-white shadow-2xs" : "text-[#0B8043]"}`,
 												children: "Google"
 											})
 										]
@@ -50282,9 +50313,9 @@ var PlanungView = () => {
 										onClick: () => void loadCalendarEvents(true),
 										disabled: isLoadingCalendar,
 										title: "Google Kalender aktualisieren",
-										className: "w-9 h-9 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-[#0B8043] flex items-center justify-center shrink-0 transition-colors disabled:opacity-50",
+										className: "w-10 h-10 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-[#0B8043] flex items-center justify-center shrink-0 transition-colors disabled:opacity-50",
 										children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(RefreshCw, {
-											size: 14,
+											size: 16,
 											className: isLoadingCalendar ? "animate-spin" : ""
 										})
 									})]
@@ -50293,24 +50324,24 @@ var PlanungView = () => {
 						]
 					}),
 					/* @__PURE__ */ (0, import_jsx_runtime.jsx)(BottomActionBar, { children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-						className: "w-full max-w-[230px] flex items-center p-1 bg-slate-100 rounded-xl",
+						className: "w-full max-w-[248px] flex items-center p-1 bg-slate-100 rounded-2xl",
 						children: [
 							/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
 								type: "button",
 								onClick: () => setActiveTab("tag"),
-								className: `flex-1 py-1.5 text-xs font-bold rounded-lg transition-all ${activeTab === "tag" ? "bg-white text-[#3138A0] shadow-xs" : "text-slate-600 hover:text-slate-900"}`,
+								className: `flex-1 py-2 text-xs font-bold rounded-xl transition-all ${activeTab === "tag" ? "bg-white text-[#3138A0] shadow-xs" : "text-slate-600 hover:text-slate-950"}`,
 								children: "Tag"
 							}),
 							/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
 								type: "button",
 								onClick: () => setActiveTab("woche"),
-								className: `flex-1 py-1.5 text-xs font-bold rounded-lg transition-all ${activeTab === "woche" ? "bg-white text-[#3138A0] shadow-xs" : "text-slate-600 hover:text-slate-900"}`,
+								className: `flex-1 py-2 text-xs font-bold rounded-xl transition-all ${activeTab === "woche" ? "bg-white text-[#3138A0] shadow-xs" : "text-slate-600 hover:text-slate-950"}`,
 								children: "Woche"
 							}),
 							/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
 								type: "button",
 								onClick: () => setActiveTab("tour"),
-								className: `flex-1 py-1.5 text-xs font-bold rounded-lg transition-all ${activeTab === "tour" ? "bg-white text-[#3138A0] shadow-xs" : "text-slate-600 hover:text-slate-900"}`,
+								className: `flex-1 py-2 text-xs font-bold rounded-xl transition-all ${activeTab === "tour" ? "bg-white text-[#3138A0] shadow-xs" : "text-slate-600 hover:text-slate-950"}`,
 								children: "Tour"
 							})
 						]
@@ -50544,25 +50575,25 @@ var KundenView = () => {
 								setActiveTab("objekte");
 								setSelectedCustomerId(c.id);
 							},
-							className: "p-3.5 bg-white border border-slate-200 rounded-2xl shadow-2xs hover:border-[#3138A0] transition-colors cursor-pointer flex items-center justify-between gap-2.5",
+							className: "p-4 bg-white border border-slate-200 rounded-2xl shadow-2xs hover:border-[#3138A0] active:bg-slate-50 transition-colors cursor-pointer flex items-center justify-between gap-2.5",
 							children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 								className: "flex items-center gap-3 min-w-0 flex-1",
 								children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
-									className: "w-10 h-10 rounded-full bg-indigo-50 border border-indigo-100 flex items-center justify-center text-[#3138A0] font-bold text-xs shrink-0",
+									className: "w-11 h-11 rounded-full bg-indigo-50 border border-indigo-100 flex items-center justify-center text-[#3138A0] font-bold text-sm shrink-0",
 									children: c.name.slice(0, 2).toUpperCase()
 								}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 									className: "min-w-0 flex-1",
 									children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 										className: "flex items-center gap-1.5 flex-wrap",
 										children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("h3", {
-											className: "text-sm font-bold text-slate-900 leading-tight truncate",
+											className: "text-base font-bold text-slate-950 leading-snug truncate",
 											children: c.name
 										}), divRecip && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
-											className: "px-1.5 py-0.5 bg-indigo-50 text-[#3138A0] text-[10px] font-bold rounded-md truncate max-w-[130px]",
-											children: ["Sub → ", divRecip.name]
+											className: "text-xs font-semibold text-[#3138A0] truncate max-w-[140px]",
+											children: ["· Sub → ", divRecip.name]
 										})]
 									}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
-										className: "text-xs text-slate-500 mt-0.5 truncate",
+										className: "text-xs text-slate-600 mt-0.5 truncate",
 										children: [
 											customerProps.length,
 											" ",
@@ -50579,18 +50610,18 @@ var KundenView = () => {
 										target: "_blank",
 										rel: "noopener noreferrer",
 										onClick: (e) => e.stopPropagation(),
-										className: "w-9 h-9 rounded-xl bg-indigo-50 hover:bg-indigo-100 active:scale-95 text-[#3138A0] flex items-center justify-center transition-all",
+										className: "w-11 h-11 rounded-xl bg-indigo-50 hover:bg-indigo-100 active:scale-95 text-[#3138A0] flex items-center justify-center transition-all",
 										title: `Google Maps Navigation zu ${c.name}`,
 										"aria-label": `Navigation zu ${c.name}`,
-										children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Navigation, { size: 16 })
+										children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Navigation, { size: 19 })
 									}),
 									cleanPhone ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("a", {
 										href: `tel:${cleanPhone}`,
 										onClick: (e) => e.stopPropagation(),
-										className: "w-9 h-9 rounded-xl bg-slate-100 hover:bg-slate-200 active:scale-95 text-slate-700 flex items-center justify-center transition-all",
+										className: "w-11 h-11 rounded-xl bg-slate-100 hover:bg-slate-200 active:scale-95 text-slate-800 flex items-center justify-center transition-all",
 										title: `${c.name} anrufen`,
 										"aria-label": `${c.name} anrufen`,
-										children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Phone, { size: 16 })
+										children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Phone, { size: 19 })
 									}) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
 										type: "button",
 										onClick: (e) => {
@@ -50598,20 +50629,20 @@ var KundenView = () => {
 											setSelectedCustomerId(c.id);
 											setActiveModal("KUNDE_BEARBEITEN");
 										},
-										className: "w-9 h-9 rounded-xl bg-slate-100 hover:bg-slate-200 active:scale-95 text-slate-400 flex items-center justify-center transition-all",
+										className: "w-11 h-11 rounded-xl bg-slate-100 hover:bg-slate-200 active:scale-95 text-slate-400 flex items-center justify-center transition-all",
 										title: "Telefonnummer ergänzen",
 										"aria-label": "Telefonnummer ergänzen",
-										children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Phone, { size: 16 })
+										children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Phone, { size: 19 })
 									}),
 									hasWhatsApp ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("a", {
 										href: buildWhatsAppUrl(c.phone),
 										target: "_blank",
 										rel: "noopener noreferrer",
 										onClick: (e) => e.stopPropagation(),
-										className: "w-9 h-9 rounded-xl bg-emerald-50 hover:bg-emerald-100 active:scale-95 text-[#128C7E] flex items-center justify-center transition-all",
+										className: "w-11 h-11 rounded-xl bg-emerald-50 hover:bg-emerald-100 active:scale-95 text-[#128C7E] flex items-center justify-center transition-all",
 										title: `WhatsApp Nachricht an ${c.name}`,
 										"aria-label": `WhatsApp an ${c.name}`,
-										children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(MessageCircle, { size: 16 })
+										children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(MessageCircle, { size: 19 })
 									}) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
 										type: "button",
 										onClick: (e) => {
@@ -50619,14 +50650,10 @@ var KundenView = () => {
 											setSelectedCustomerId(c.id);
 											setActiveModal("KUNDE_BEARBEITEN");
 										},
-										className: "w-9 h-9 rounded-xl bg-slate-100 hover:bg-slate-200 active:scale-95 text-slate-400 flex items-center justify-center transition-all",
+										className: "w-11 h-11 rounded-xl bg-slate-100 hover:bg-slate-200 active:scale-95 text-slate-400 flex items-center justify-center transition-all",
 										title: "Telefonnummer für WhatsApp ergänzen",
 										"aria-label": "Telefonnummer für WhatsApp ergänzen",
-										children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(MessageCircle, { size: 16 })
-									}),
-									/* @__PURE__ */ (0, import_jsx_runtime.jsx)(ChevronRight, {
-										size: 15,
-										className: "text-slate-400 ml-0.5"
+										children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(MessageCircle, { size: 19 })
 									})
 								]
 							})]
@@ -50636,7 +50663,15 @@ var KundenView = () => {
 			}),
 			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 				className: "shrink-0 w-full mt-auto bg-white border-t border-slate-200/80 z-20 shadow-md",
-				children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(BottomActionBar, {}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)(BottomNav, {})]
+				children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(BottomActionBar, { children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
+					type: "button",
+					onClick: () => setActiveModal("KUNDE_ANLEGEN"),
+					className: "h-11 px-4 bg-[#3138A0] hover:bg-[#272d82] active:scale-97 text-white text-sm font-bold rounded-2xl flex items-center justify-center gap-1.5 shadow-xs transition-all whitespace-nowrap",
+					children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Plus, {
+						size: 18,
+						strokeWidth: 2.5
+					}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Kunde anlegen" })]
+				}) }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)(BottomNav, {})]
 			})
 		]
 	});
@@ -52044,46 +52079,46 @@ var KundenView = () => {
 						]
 					}),
 					/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-						className: "px-3 pt-1.5 pb-1 flex items-center justify-between gap-1",
+						className: "px-3 pt-2 pb-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] flex items-center gap-1.5",
 						children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-							className: "flex items-center gap-1 min-w-0",
+							className: "flex-1 grid grid-cols-4 gap-1.5 min-w-0",
 							children: [
 								/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("a", {
 									href: buildMapsNavigationUrl(primaryMapAddress),
 									target: "_blank",
 									rel: "noopener noreferrer",
-									className: "h-10 px-2.5 bg-indigo-50 hover:bg-indigo-100 active:scale-95 text-[#3138A0] font-semibold text-xs rounded-xl flex items-center gap-1 transition-colors shrink-0",
+									className: "h-12 px-1 bg-indigo-50 hover:bg-indigo-100 active:scale-95 text-[#3138A0] font-bold text-[11px] rounded-xl flex flex-col items-center justify-center gap-0.5 transition-all whitespace-nowrap",
 									title: "Direkte Google Maps Navigation zum Kunden",
-									children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Navigation, { size: 14 }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Route" })]
+									children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Navigation, { size: 17 }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Route" })]
 								}),
 								currentCustomer.phone ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("a", {
 									href: `tel:${currentCustomer.phone.replace(/\s+/g, "")}`,
-									className: "h-10 px-2.5 bg-slate-100 hover:bg-slate-200 active:scale-95 text-slate-700 font-semibold text-xs rounded-xl flex items-center gap-1 transition-colors shrink-0",
+									className: "h-12 px-1 bg-slate-100 hover:bg-slate-200 active:scale-95 text-slate-800 font-bold text-[11px] rounded-xl flex flex-col items-center justify-center gap-0.5 transition-all whitespace-nowrap",
 									title: "Kunden anrufen",
 									children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Phone, {
-										size: 14,
+										size: 17,
 										className: "text-[#3138A0]"
 									}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Anruf" })]
 								}) : /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
 									type: "button",
 									onClick: () => setActiveModal("KUNDE_BEARBEITEN"),
-									className: "h-10 px-2.5 bg-slate-100 hover:bg-slate-200 active:scale-95 text-slate-400 font-semibold text-xs rounded-xl flex items-center gap-1 transition-colors shrink-0",
+									className: "h-12 px-1 bg-slate-100 hover:bg-slate-200 active:scale-95 text-slate-400 font-bold text-[11px] rounded-xl flex flex-col items-center justify-center gap-0.5 transition-all whitespace-nowrap",
 									title: "Telefonnummer ergänzen",
-									children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Phone, { size: 14 }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Anruf" })]
+									children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Phone, { size: 17 }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Anruf" })]
 								}),
 								currentCustomer.phone && formatWhatsAppNumber(currentCustomer.phone).length > 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("a", {
 									href: buildWhatsAppUrl(currentCustomer.phone),
 									target: "_blank",
 									rel: "noopener noreferrer",
-									className: "h-10 px-2.5 bg-emerald-50 hover:bg-emerald-100 active:scale-95 text-[#128C7E] font-semibold text-xs rounded-xl flex items-center gap-1 transition-colors shrink-0",
+									className: "h-12 px-1 bg-emerald-50 hover:bg-emerald-100 active:scale-95 text-[#128C7E] font-bold text-[11px] rounded-xl flex flex-col items-center justify-center gap-0.5 transition-all whitespace-nowrap",
 									title: "WhatsApp Nachricht senden",
-									children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(MessageCircle, { size: 14 }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "WhatsApp" })]
+									children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(MessageCircle, { size: 17 }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "WhatsApp" })]
 								}) : /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
 									type: "button",
 									onClick: () => setActiveModal("KUNDE_BEARBEITEN"),
-									className: "h-10 px-2.5 bg-slate-100 hover:bg-slate-200 active:scale-95 text-slate-400 font-semibold text-xs rounded-xl flex items-center gap-1 transition-colors shrink-0",
+									className: "h-12 px-1 bg-slate-100 hover:bg-slate-200 active:scale-95 text-slate-400 font-bold text-[11px] rounded-xl flex flex-col items-center justify-center gap-0.5 transition-all whitespace-nowrap",
 									title: "Telefonnummer für WhatsApp ergänzen",
-									children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(MessageCircle, { size: 14 }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "WhatsApp" })]
+									children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(MessageCircle, { size: 17 }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "WhatsApp" })]
 								}),
 								/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
 									type: "button",
@@ -52091,30 +52126,33 @@ var KundenView = () => {
 										setSelectedPropertyId(customerProps[0]?.id || null);
 										setActiveModal("ARBEIT_NACHTRAGEN");
 									},
-									className: "h-10 px-2.5 bg-slate-100 hover:bg-slate-200 active:scale-95 text-slate-700 font-semibold text-xs rounded-xl flex items-center gap-1 transition-colors shrink-0",
+									className: "h-12 px-1 bg-slate-100 hover:bg-slate-200 active:scale-95 text-slate-800 font-bold text-[11px] rounded-xl flex flex-col items-center justify-center gap-0.5 transition-all whitespace-nowrap",
 									title: "Arbeit nachtragen (07:00 – 17:00)",
 									children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Briefcase, {
-										size: 14,
+										size: 17,
 										className: "text-[#3138A0]"
 									}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "+ Arbeit" })]
 								})
 							]
 						}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-							className: "flex items-center gap-0.5 shrink-0",
+							className: "flex items-center gap-1 shrink-0",
 							children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
 								type: "button",
 								onClick: () => setIsSearchOpen(true),
-								className: "w-10 h-10 flex items-center justify-center text-slate-700 hover:text-slate-900 active:bg-slate-100 rounded-full transition-colors shrink-0",
+								className: "w-11 h-12 flex items-center justify-center bg-slate-100 hover:bg-slate-200 active:scale-95 text-slate-800 rounded-xl transition-all shrink-0",
 								"aria-label": "Suche öffnen",
 								title: "Suche",
-								children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Search, { size: 20 })
+								children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Search, { size: 21 })
 							}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
 								type: "button",
 								onClick: () => setIsPlusMenuOpen(true),
-								className: "w-10 h-10 flex items-center justify-center text-slate-700 hover:text-slate-900 active:bg-slate-100 rounded-full transition-colors shrink-0",
+								className: "w-11 h-12 flex items-center justify-center bg-indigo-50 hover:bg-indigo-100 active:scale-95 text-[#3138A0] border border-indigo-200/80 rounded-xl transition-all shrink-0",
 								"aria-label": "Schnellmenü öffnen",
 								title: "Schnellmenü",
-								children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Plus, { size: 22 })
+								children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Plus, {
+									size: 23,
+									strokeWidth: 2.5
+								})
 							})]
 						})]
 					})
@@ -52128,7 +52166,7 @@ var InvoicePaperPreview = ({ data, isDraft = false }) => {
 	const cityLine = [data.recipientZip.trim(), data.recipientCity.trim()].filter(Boolean).join(" ");
 	const displayInvNo = data.invoiceNumber?.trim() || (isDraft ? "RE-Entwurf" : "");
 	return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-		className: "relative bg-white text-neutral-900 border border-neutral-300 rounded-lg shadow-xs px-4 pt-3 pb-4 font-sans text-[10px] leading-snug select-text overflow-hidden",
+		className: "invoice-a4-sheet relative bg-white text-neutral-900 border border-neutral-300 rounded-lg shadow-xs px-4 pt-3 pb-4 font-sans text-[10px] leading-snug select-text overflow-hidden",
 		children: [
 			/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "absolute left-0 top-[36%] w-1.5 h-[1.5px] bg-neutral-700" }),
 			/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "absolute left-0 top-[51%] w-2.5 h-[2px] bg-neutral-800" }),
@@ -54073,58 +54111,58 @@ var AbrechnungView = () => {
 				className: "flex-1 min-h-0 overflow-y-auto p-3 flex flex-col overscroll-contain",
 				children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(GuvPanel, {})
 			}) : /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-				className: "flex-1 min-h-0 overflow-y-auto p-3 flex flex-col gap-2 overscroll-contain",
+				className: "flex-1 min-h-0 overflow-y-auto p-3.5 flex flex-col gap-3 overscroll-contain",
 				children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-					className: "space-y-2",
+					className: "space-y-3",
 					children: [
 						/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 							className: "grid grid-cols-3 gap-2",
 							children: [
 								/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-									className: "py-2 px-2.5 bg-white border border-slate-200 rounded-xl shadow-2xs text-center",
+									className: "py-2.5 px-2.5 bg-white border border-slate-200 rounded-2xl shadow-2xs text-center",
 									children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-										className: "text-[10px] font-semibold text-slate-500 uppercase tracking-tight block",
+										className: "text-[11px] font-bold text-slate-500 uppercase tracking-tight block",
 										children: "Ausgestellt"
 									}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
-										className: "text-sm font-bold text-[#B4470B] block mt-0.5 font-mono",
+										className: "text-base font-bold text-[#B4470B] block mt-0.5 font-mono tabular-nums",
 										children: [issuedTotal.toFixed(0), " €"]
 									})]
 								}),
 								/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-									className: "py-2 px-2.5 bg-white border border-slate-200 rounded-xl shadow-2xs text-center",
+									className: "py-2.5 px-2.5 bg-white border border-slate-200 rounded-2xl shadow-2xs text-center",
 									children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-										className: "text-[10px] font-semibold text-slate-500 uppercase tracking-tight block",
+										className: "text-[11px] font-bold text-slate-500 uppercase tracking-tight block",
 										children: "Bezahlt"
 									}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
-										className: "text-sm font-bold text-[#2C7738] block mt-0.5 font-mono",
+										className: "text-base font-bold text-[#2C7738] block mt-0.5 font-mono tabular-nums",
 										children: [paidTotal.toFixed(0), " €"]
 									})]
 								}),
 								/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-									className: "py-2 px-2.5 bg-white border border-slate-200 rounded-xl shadow-2xs text-center",
+									className: "py-2.5 px-2.5 bg-white border border-slate-200 rounded-2xl shadow-2xs text-center",
 									children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-										className: "text-[10px] font-semibold text-slate-500 uppercase tracking-tight block",
+										className: "text-[11px] font-bold text-slate-500 uppercase tracking-tight block",
 										children: "Unbezahlt"
 									}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
-										className: "text-sm font-bold text-[#B4470B] block mt-0.5 font-mono",
+										className: "text-base font-bold text-[#B4470B] block mt-0.5 font-mono tabular-nums",
 										children: [openTotal.toFixed(0), " €"]
 									})]
 								})
 							]
 						}),
 						/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-							className: "bg-white border border-slate-200 rounded-xl shadow-2xs px-3 py-2.5 space-y-2",
+							className: "bg-white border border-slate-200 rounded-2xl shadow-2xs px-3.5 py-3 space-y-2.5",
 							children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 								className: "flex items-center justify-between",
 								children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("h3", {
-									className: "text-xs font-bold text-slate-900",
+									className: "text-sm font-bold text-slate-950",
 									children: "Unbezahlte Rechnungen"
 								}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-									className: `text-[11px] font-semibold px-2 py-0.5 rounded-md ${openPaymentInvoices.length > 0 ? "bg-fuchsia-50 text-[#9A1B8D]" : "bg-emerald-50 text-[#2C7738]"}`,
+									className: `text-xs font-bold px-2.5 py-0.5 rounded-lg ${openPaymentInvoices.length > 0 ? "bg-fuchsia-50 text-[#9A1B8D]" : "bg-emerald-50 text-[#2C7738]"}`,
 									children: openPaymentInvoices.length === 0 ? "Alle bezahlt" : `${openPaymentInvoices.length} offen`
 								})]
 							}), openPaymentInvoices.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
-								className: "space-y-1.5",
+								className: "space-y-2",
 								children: openPaymentInvoices.map((inv) => {
 									const paid = inv.payments.reduce((s, p) => s + p.amount, 0);
 									const openRest = Math.max(0, inv.total_amount - paid);
@@ -54133,50 +54171,43 @@ var AbrechnungView = () => {
 										deleteLabel: "Rechnung löschen",
 										children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 											onClick: () => setSelectedInvoiceId(inv.id),
-											className: "p-2 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between cursor-pointer hover:border-[#3138A0] transition-colors",
+											className: "p-2.5 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between cursor-pointer hover:border-[#3138A0] transition-colors",
 											children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 												className: "min-w-0 pr-2",
 												children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
-													className: "font-bold text-slate-900 block text-xs truncate",
+													className: "font-bold text-slate-950 block text-sm truncate",
 													children: [
 														inv.invoice_number,
 														" · ",
 														inv.billing_customer_name
 													]
 												}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
-													className: "text-[10px] text-[#9A1B8D] font-medium",
+													className: "text-xs text-[#9A1B8D] font-semibold",
 													children: ["Fällig am ", inv.due_date]
 												})]
 											}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-												className: "flex items-center gap-1.5 shrink-0",
-												children: [
-													/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
-														className: "font-bold text-xs text-[#B4470B]",
-														children: [
-															openRest.toLocaleString("de-DE", {
-																minimumFractionDigits: 0,
-																maximumFractionDigits: 2
-															}),
-															" ",
-															"€"
-														]
-													}),
-													/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
-														type: "button",
-														onClick: (e) => {
-															e.stopPropagation();
-															setSendingInvoiceId(inv.id);
-														},
-														className: "w-7 h-7 rounded-lg bg-white border border-slate-200 hover:bg-indigo-50 flex items-center justify-center text-[#3138A0] transition-colors",
-														title: "Rechnung versenden",
-														"aria-label": "Rechnung versenden",
-														children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Share2, { size: 13 })
-													}),
-													/* @__PURE__ */ (0, import_jsx_runtime.jsx)(ChevronRight, {
-														size: 15,
-														className: "text-slate-400"
-													})
-												]
+												className: "flex items-center gap-2 shrink-0",
+												children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
+													className: "font-bold text-sm text-[#B4470B] tabular-nums",
+													children: [
+														openRest.toLocaleString("de-DE", {
+															minimumFractionDigits: 0,
+															maximumFractionDigits: 2
+														}),
+														" ",
+														"€"
+													]
+												}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+													type: "button",
+													onClick: (e) => {
+														e.stopPropagation();
+														setSendingInvoiceId(inv.id);
+													},
+													className: "w-10 h-10 rounded-xl bg-white border border-slate-200 hover:bg-indigo-50 flex items-center justify-center text-[#3138A0] transition-colors",
+													title: "Rechnung versenden",
+													"aria-label": "Rechnung versenden",
+													children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Share2, { size: 16 })
+												})]
 											})]
 										})
 									}, inv.id);
@@ -54184,43 +54215,43 @@ var AbrechnungView = () => {
 							})]
 						}),
 						/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-							className: "bg-white border border-slate-200 rounded-xl shadow-2xs px-3 py-2.5 space-y-2",
+							className: "bg-white border border-slate-200 rounded-2xl shadow-2xs px-3.5 py-3 space-y-2.5",
 							children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 								className: "flex items-center justify-between",
 								children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-									className: "text-xs font-bold text-slate-900",
+									className: "text-sm font-bold text-slate-950",
 									children: "Alle Rechnungen"
 								}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
-									className: "text-[11px] text-slate-500",
+									className: "text-xs font-semibold text-slate-500",
 									children: [invoices.length, " Belege"]
 								})]
 							}), invoices.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
-								className: "text-xs text-slate-400 italic",
+								className: "text-sm text-slate-500 italic",
 								children: "Noch keine Rechnungen erstellt."
 							}) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
-								className: "space-y-1.5",
+								className: "space-y-2",
 								children: invoices.map((inv) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(SwipeToDeleteRow, {
 									onDelete: () => deleteInvoice(inv.id),
 									deleteLabel: "Eintrag löschen",
 									children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 										onClick: () => setSelectedInvoiceId(inv.id),
-										className: "py-2 px-2.5 bg-slate-50/70 hover:bg-slate-100 border border-slate-200/80 rounded-xl flex items-center justify-between cursor-pointer transition-colors text-xs",
+										className: "py-2.5 px-3 bg-slate-50/80 hover:bg-slate-100 border border-slate-200/90 rounded-xl flex items-center justify-between cursor-pointer transition-colors text-xs",
 										children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-											className: "flex items-center gap-2 min-w-0 pr-2",
+											className: "flex items-center gap-2.5 min-w-0 pr-2",
 											children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Receipt, {
-												size: 15,
+												size: 17,
 												className: `shrink-0 ${inv.is_storno ? "text-[#B42318]" : "text-[#3138A0]"}`
 											}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 												className: "min-w-0",
 												children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
-													className: "font-bold text-slate-900 block truncate leading-tight",
+													className: "font-bold text-slate-950 text-sm block truncate leading-snug",
 													children: [
 														inv.invoice_number,
 														" · ",
 														inv.billing_customer_name
 													]
 												}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
-													className: "text-[10px] text-slate-500",
+													className: "text-xs text-slate-600",
 													children: [
 														inv.issue_date,
 														" ",
@@ -54232,9 +54263,9 @@ var AbrechnungView = () => {
 											className: "flex items-center gap-1.5 shrink-0",
 											children: [
 												/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-													className: "text-right",
+													className: "text-right pr-1",
 													children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
-														className: `font-bold block leading-tight ${inv.is_storno ? "text-[#B42318]" : "text-slate-900"}`,
+														className: `font-bold text-sm block leading-tight tabular-nums ${inv.is_storno ? "text-[#B42318]" : "text-slate-950"}`,
 														children: [
 															inv.total_amount.toLocaleString("de-DE", {
 																minimumFractionDigits: 2,
@@ -54244,7 +54275,7 @@ var AbrechnungView = () => {
 															"€"
 														]
 													}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-														className: `text-[10px] font-semibold ${inv.status === "paid" ? "text-[#2C7738]" : inv.status === "cancelled" ? "text-slate-400" : "text-[#B4470B]"}`,
+														className: `text-[11px] font-bold ${inv.status === "paid" ? "text-[#2C7738]" : inv.status === "cancelled" ? "text-slate-400" : "text-[#B4470B]"}`,
 														children: inv.status === "paid" ? "Bezahlt" : inv.status === "cancelled" ? "Storniert" : inv.status === "partially_paid" ? "Teilbezahlt" : "Unbezahlt"
 													})]
 												}),
@@ -54254,10 +54285,10 @@ var AbrechnungView = () => {
 														e.stopPropagation();
 														setSendingInvoiceId(inv.id);
 													},
-													className: "w-8 h-8 rounded-lg bg-white border border-slate-200 hover:bg-indigo-50 flex items-center justify-center text-[#3138A0] transition-colors shrink-0",
+													className: "w-10 h-10 rounded-xl bg-white border border-slate-200 hover:bg-indigo-50 flex items-center justify-center text-[#3138A0] transition-colors shrink-0",
 													title: "Rechnung versenden",
 													"aria-label": "Rechnung versenden",
-													children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Share2, { size: 13 })
+													children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Share2, { size: 15 })
 												}),
 												/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
 													type: "button",
@@ -54265,10 +54296,10 @@ var AbrechnungView = () => {
 														e.stopPropagation();
 														openEditInvoiceModal(inv);
 													},
-													className: "w-8 h-8 rounded-lg bg-white border border-slate-200 hover:bg-slate-100 flex items-center justify-center text-[#3138A0] transition-colors shrink-0",
+													className: "w-10 h-10 rounded-xl bg-white border border-slate-200 hover:bg-slate-100 flex items-center justify-center text-[#3138A0] transition-colors shrink-0",
 													title: "Buchung bearbeiten",
 													"aria-label": "Buchung bearbeiten",
-													children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Pencil, { size: 13 })
+													children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Pencil, { size: 15 })
 												})
 											]
 										})]
@@ -54280,27 +54311,27 @@ var AbrechnungView = () => {
 				}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
 					className: "mt-auto pt-1",
 					children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-						className: "bg-white border border-slate-200 rounded-xl shadow-2xs px-3 py-2.5 space-y-2",
+						className: "bg-white border border-slate-200 rounded-2xl shadow-2xs px-3.5 py-3 space-y-2.5",
 						children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 							className: "flex items-center justify-between",
 							children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("h3", {
-								className: "text-xs font-bold text-slate-900",
+								className: "text-sm font-bold text-slate-950",
 								children: "Arbeiten ohne Rechnung"
 							}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-								className: `text-[11px] font-semibold px-2 py-0.5 rounded-md ${groupedOpenWork.length > 0 ? "bg-orange-50 text-[#B4470B]" : "bg-slate-100 text-slate-500"}`,
+								className: `text-xs font-bold px-2.5 py-0.5 rounded-lg ${groupedOpenWork.length > 0 ? "bg-orange-50 text-[#B4470B]" : "bg-slate-100 text-slate-600"}`,
 								children: groupedOpenWork.length === 0 ? "Keine" : `${groupedOpenWork.length} offen`
 							})]
 						}), groupedOpenWork.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
-							className: "space-y-1.5",
+							className: "space-y-2",
 							children: groupedOpenWork.map((g) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-								className: "p-2 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between",
+								className: "p-2.5 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between",
 								children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 									className: "min-w-0 pr-2",
 									children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-										className: "font-bold text-slate-900 block text-xs truncate",
+										className: "font-bold text-slate-950 block text-sm truncate",
 										children: g.customer.name
 									}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
-										className: "text-[10px] text-slate-500 block truncate",
+										className: "text-xs text-slate-600 block truncate",
 										children: [
 											g.records.length,
 											" ",
@@ -54315,7 +54346,7 @@ var AbrechnungView = () => {
 								}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 									className: "flex items-center gap-2 shrink-0",
 									children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
-										className: "font-bold text-xs text-[#B4470B]",
+										className: "font-bold text-sm text-[#B4470B] tabular-nums",
 										children: [
 											g.totalAmount.toLocaleString("de-DE", {
 												minimumFractionDigits: 0,
@@ -54329,7 +54360,7 @@ var AbrechnungView = () => {
 											setSelectedCustomerId(g.customer.id);
 											setActiveModal("RECHNUNG_VORBEREITEN");
 										},
-										className: "px-2.5 py-1.5 bg-[#3138A0] hover:bg-[#272d82] text-white text-[11px] font-semibold rounded-lg shadow-2xs transition-colors",
+										className: "px-3.5 h-10 bg-[#3138A0] hover:bg-[#272d82] text-white text-xs font-bold rounded-xl shadow-2xs transition-colors flex items-center justify-center",
 										children: "Abrechnen"
 									})]
 								})]
@@ -54675,20 +54706,20 @@ var AbrechnungView = () => {
 			/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
 				className: "shrink-0 w-full mt-auto bg-white border-t border-slate-200/80 z-20 shadow-md",
 				children: selectedInvoice ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-					className: "p-2.5 space-y-2",
+					className: "p-3 space-y-2 pb-[max(0.75rem,env(safe-area-inset-bottom))]",
 					children: [!selectedInvoice.is_storno && selectedInvoice.status !== "paid" && selectedInvoice.status !== "cancelled" && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-						className: "grid grid-cols-2 gap-1.5",
+						className: "grid grid-cols-2 gap-2",
 						children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
 							type: "button",
 							onClick: () => handlePayFull(selectedInvoice),
-							className: "h-10 bg-[#2C7738] hover:bg-[#235f2d] active:scale-98 text-white font-semibold rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-2xs transition-all",
-							children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(CircleCheckBig, { size: 15 }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Bezahlt (5s Undo)" })]
+							className: "h-12 bg-[#2C7738] hover:bg-[#235f2d] active:scale-98 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-2xs transition-all",
+							children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(CircleCheckBig, { size: 16 }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Bezahlt (5s Undo)" })]
 						}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
 							type: "button",
 							onClick: () => setPartialPayModalOpen(true),
-							className: "h-10 bg-slate-100 hover:bg-slate-200 active:scale-98 text-slate-800 font-semibold rounded-xl text-xs flex items-center justify-center gap-1.5 transition-all",
+							className: "h-12 bg-slate-100 hover:bg-slate-200 active:scale-98 text-slate-900 font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 transition-all",
 							children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(CreditCard, {
-								size: 14,
+								size: 16,
 								className: "text-[#3138A0]"
 							}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Teilzahlung" })]
 						})]
@@ -54698,8 +54729,8 @@ var AbrechnungView = () => {
 							/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
 								type: "button",
 								onClick: () => setSendingInvoiceId(selectedInvoice.id),
-								className: "flex-1 h-10 px-3 bg-[#3138A0] hover:bg-[#272d82] active:scale-98 text-white text-xs font-semibold rounded-xl flex items-center justify-center gap-1.5 shadow-2xs transition-all",
-								children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Share2, { size: 14 }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Senden" })]
+								className: "flex-1 h-12 px-3 bg-[#3138A0] hover:bg-[#272d82] active:scale-98 text-white text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 shadow-2xs transition-all",
+								children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Share2, { size: 16 }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Senden" })]
 							}),
 							/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
 								type: "button",
@@ -54707,51 +54738,51 @@ var AbrechnungView = () => {
 									const { blob, filename } = await generateInvoicePdfAsync(resolveInvoiceDisplayData(selectedInvoice, customers, workRecords));
 									await downloadOrSaveBlob(blob, filename, "application/pdf");
 								},
-								className: "h-10 px-2.5 bg-slate-100 hover:bg-slate-200 text-slate-800 font-semibold rounded-xl text-xs flex items-center justify-center gap-1 transition-colors shrink-0",
+								className: "h-12 px-3 bg-slate-100 hover:bg-slate-200 text-slate-900 font-bold rounded-xl text-xs flex items-center justify-center gap-1 transition-colors shrink-0",
 								title: "Als PDF herunterladen",
 								children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Download, {
-									size: 14,
+									size: 16,
 									className: "text-[#3138A0]"
 								}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "PDF" })]
 							}),
 							/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
 								type: "button",
 								onClick: () => openEditInvoiceModal(selectedInvoice),
-								className: "h-10 px-2.5 bg-slate-100 hover:bg-slate-200 text-slate-800 font-semibold rounded-xl text-xs flex items-center justify-center gap-1 transition-colors shrink-0",
+								className: "h-12 px-3 bg-slate-100 hover:bg-slate-200 text-slate-900 font-bold rounded-xl text-xs flex items-center justify-center gap-1 transition-colors shrink-0",
 								title: "Beleg bearbeiten",
 								children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Pencil, {
-									size: 14,
+									size: 16,
 									className: "text-[#3138A0]"
 								}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Ändern" })]
 							}),
 							!selectedInvoice.is_storno && selectedInvoice.status !== "cancelled" && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
 								type: "button",
 								onClick: () => setStornoModalOpen(true),
-								className: "h-10 px-2.5 bg-amber-50 hover:bg-amber-100 text-[#B4470B] font-semibold rounded-xl text-xs flex items-center justify-center gap-1 transition-colors shrink-0",
+								className: "h-12 px-3 bg-amber-50 hover:bg-amber-100 text-[#B4470B] font-bold rounded-xl text-xs flex items-center justify-center gap-1 transition-colors shrink-0",
 								title: "Rechnung stornieren",
-								children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Ban, { size: 14 }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Storno" })]
+								children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Ban, { size: 16 }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Storno" })]
 							}),
 							/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
 								type: "button",
 								onClick: () => deleteInvoice(selectedInvoice.id),
-								className: "w-10 h-10 bg-red-50 hover:bg-red-100 text-[#B42318] font-semibold rounded-xl flex items-center justify-center transition-colors shrink-0",
+								className: "w-12 h-12 bg-red-50 hover:bg-red-100 text-[#B42318] font-bold rounded-xl flex items-center justify-center transition-colors shrink-0",
 								title: "Beleg löschen",
 								"aria-label": "Beleg löschen",
-								children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Trash2, { size: 15 })
+								children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Trash2, { size: 17 })
 							})
 						]
 					})]
 				}) : /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(BottomActionBar, { children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-					className: "w-full max-w-[240px] flex items-center p-1 bg-slate-100 rounded-xl",
+					className: "w-full max-w-[260px] flex items-center p-1 bg-slate-100 rounded-2xl",
 					children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
 						type: "button",
 						onClick: () => setMainTab("rechnungen"),
-						className: `flex-1 py-1.5 text-xs font-bold rounded-lg transition-all ${mainTab === "rechnungen" ? "bg-white text-[#3138A0] shadow-xs" : "text-slate-600 hover:text-slate-900"}`,
+						className: `flex-1 py-2 text-xs font-bold rounded-xl transition-all ${mainTab === "rechnungen" ? "bg-white text-[#3138A0] shadow-xs" : "text-slate-600 hover:text-slate-950"}`,
 						children: "Rechnungen"
 					}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
 						type: "button",
 						onClick: () => setMainTab("guv"),
-						className: `flex-1 py-1.5 text-xs font-bold rounded-lg transition-all ${mainTab === "guv" ? "bg-white text-[#2C7738] shadow-xs" : "text-slate-600 hover:text-slate-900"}`,
+						className: `flex-1 py-2 text-xs font-bold rounded-xl transition-all ${mainTab === "guv" ? "bg-white text-[#2C7738] shadow-xs" : "text-slate-600 hover:text-slate-950"}`,
 						children: "Gewinn & Verlust"
 					})]
 				}) }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)(BottomNav, {})] })
@@ -58238,86 +58269,87 @@ var PlusMenuModal = () => {
 	const contextInfo = getContextInfo();
 	const actions = getActions();
 	return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-		className: "absolute inset-0 z-50 bg-black/40 backdrop-blur-2xs flex flex-col justify-end animate-fade-in",
+		className: "absolute inset-0 z-50 bg-black/45 backdrop-blur-2xs flex flex-col justify-end animate-fade-in",
 		children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
 			className: "flex-1",
 			onClick: () => setIsPlusMenuOpen(false)
 		}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-			className: "bg-white rounded-t-3xl border-t border-slate-200 shadow-2xl p-4 max-h-[85%] flex flex-col animate-slide-up",
+			className: "bg-white rounded-t-3xl border-t border-slate-200 shadow-2xl px-4 pt-3 pb-5 max-h-[88%] flex flex-col animate-slide-up",
 			children: [
+				/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "w-11 h-1.5 bg-slate-300 rounded-full mx-auto mb-2.5 shrink-0" }),
 				/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 					className: "flex items-center justify-between pb-3 border-b border-slate-100",
 					children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("h2", {
-						className: "text-base font-bold text-slate-900 leading-tight",
+						className: "text-lg font-bold text-slate-950 leading-tight",
 						children: contextInfo.title
 					}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
-						className: "text-[11px] text-slate-500",
+						className: "text-xs text-slate-600 mt-0.5",
 						children: contextInfo.subtitle
 					})] }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
 						onClick: () => setIsPlusMenuOpen(false),
-						className: "w-9 h-9 flex items-center justify-center text-slate-500 hover:text-slate-800 rounded-full hover:bg-slate-100 transition-colors",
+						className: "w-11 h-11 flex items-center justify-center text-slate-600 hover:text-slate-900 rounded-full hover:bg-slate-100 active:scale-95 transition-all",
 						"aria-label": "Schließen",
-						children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(X, { size: 20 })
+						children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(X, { size: 22 })
 					})]
 				}),
 				/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-					className: "pt-3 pb-3 border-b border-slate-100",
+					className: "pt-3 pb-3.5 border-b border-slate-100",
 					children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-						className: "text-[10px] font-semibold text-slate-400 uppercase tracking-wider block mb-1.5",
+						className: "text-xs font-semibold text-slate-500 tracking-wide block mb-2",
 						children: "Direkt öffnen"
 					}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-						className: "grid grid-cols-3 gap-2",
+						className: "grid grid-cols-3 gap-2.5",
 						children: [
 							/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
 								onClick: () => handleTileClick("M08_ARBEITEN"),
-								className: `p-2.5 rounded-xl flex flex-col items-center text-center transition-all group border ${currentScreen === "M08_ARBEITEN" ? "bg-indigo-50/80 border-[#3138A0]/40" : "bg-slate-50 hover:bg-indigo-50/50 border-slate-200"}`,
+								className: `p-3 rounded-2xl flex flex-col items-center text-center transition-all active:scale-97 group border ${currentScreen === "M08_ARBEITEN" ? "bg-indigo-50/90 border-[#3138A0]/50" : "bg-slate-50 hover:bg-indigo-50/50 border-slate-200"}`,
 								children: [
 									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
-										className: "w-8 h-8 rounded-full bg-white shadow-2xs border border-slate-200 flex items-center justify-center text-[#3138A0] mb-1",
-										children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Briefcase, { size: 15 })
+										className: "w-10 h-10 rounded-full bg-white shadow-2xs border border-slate-200 flex items-center justify-center text-[#3138A0] mb-1.5",
+										children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Briefcase, { size: 19 })
 									}),
 									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-										className: "text-xs font-bold text-slate-800 leading-tight",
+										className: "text-sm font-bold text-slate-900 leading-tight",
 										children: "Arbeiten"
 									}),
 									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-										className: "text-[9px] text-slate-400 mt-0.5",
+										className: "text-[11px] text-slate-500 mt-0.5",
 										children: "Aufzeichnung"
 									})
 								]
 							}),
 							/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
 								onClick: () => handleTileClick("M09_LCR"),
-								className: `p-2.5 rounded-xl flex flex-col items-center text-center transition-all group border ${currentScreen === "M09_LCR" ? "bg-indigo-50/80 border-[#3138A0]/40" : "bg-slate-50 hover:bg-indigo-50/50 border-slate-200"}`,
+								className: `p-3 rounded-2xl flex flex-col items-center text-center transition-all active:scale-97 group border ${currentScreen === "M09_LCR" ? "bg-indigo-50/90 border-[#3138A0]/50" : "bg-slate-50 hover:bg-indigo-50/50 border-slate-200"}`,
 								children: [
 									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
-										className: "w-8 h-8 rounded-full bg-white shadow-2xs border border-slate-200 flex items-center justify-center text-[#3138A0] mb-1",
-										children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Bookmark, { size: 15 })
+										className: "w-10 h-10 rounded-full bg-white shadow-2xs border border-slate-200 flex items-center justify-center text-[#3138A0] mb-1.5",
+										children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Bookmark, { size: 19 })
 									}),
 									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-										className: "text-xs font-bold text-slate-800 leading-tight",
+										className: "text-sm font-bold text-slate-900 leading-tight",
 										children: "L.C.R."
 									}),
 									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-										className: "text-[9px] text-slate-400 mt-0.5",
+										className: "text-[11px] text-slate-500 mt-0.5",
 										children: "Kennzeichnung"
 									})
 								]
 							}),
 							/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
 								onClick: () => handleTileClick("M10_GERAETE"),
-								className: `p-2.5 rounded-xl flex flex-col items-center text-center transition-all group border ${currentScreen === "M10_GERAETE" ? "bg-indigo-50/80 border-[#3138A0]/40" : "bg-slate-50 hover:bg-indigo-50/50 border-slate-200"}`,
+								className: `p-3 rounded-2xl flex flex-col items-center text-center transition-all active:scale-97 group border ${currentScreen === "M10_GERAETE" ? "bg-indigo-50/90 border-[#3138A0]/50" : "bg-slate-50 hover:bg-indigo-50/50 border-slate-200"}`,
 								children: [
 									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
-										className: "w-8 h-8 rounded-full bg-white shadow-2xs border border-slate-200 flex items-center justify-center text-[#3138A0] mb-1",
-										children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Wrench, { size: 15 })
+										className: "w-10 h-10 rounded-full bg-white shadow-2xs border border-slate-200 flex items-center justify-center text-[#3138A0] mb-1.5",
+										children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Wrench, { size: 19 })
 									}),
 									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-										className: "text-xs font-bold text-slate-800 leading-tight",
+										className: "text-sm font-bold text-slate-900 leading-tight",
 										children: "Geräte"
 									}),
 									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-										className: "text-[9px] text-slate-400 mt-0.5",
+										className: "text-[11px] text-slate-500 mt-0.5",
 										children: "Wartung"
 									})
 								]
@@ -58326,34 +58358,37 @@ var PlusMenuModal = () => {
 					})]
 				}),
 				/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-					className: "flex-1 overflow-y-auto pt-2 pb-2",
+					className: "flex-1 overflow-y-auto pt-3 pb-2",
 					children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-						className: "flex items-center justify-between mb-1.5 px-1",
+						className: "flex items-center justify-between mb-2 px-1",
 						children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-							className: "text-[10px] font-semibold text-slate-400 uppercase tracking-wider block",
+							className: "text-xs font-semibold text-slate-500 tracking-wide block",
 							children: "Passende Aktionen"
 						}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
-							className: "text-[10px] text-[#3138A0] font-medium flex items-center gap-1",
-							children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Sparkles, { size: 11 }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Kontextbezogen" })]
+							className: "text-xs text-[#3138A0] font-semibold flex items-center gap-1",
+							children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Sparkles, { size: 13 }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Kontextbezogen" })]
 						})]
 					}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
-						className: "space-y-1.5",
+						className: "space-y-2",
 						children: actions.map((act) => {
 							const Icon = act.icon;
 							return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
 								onClick: () => handleAction(act.key),
-								className: `w-full min-h-[48px] py-2 px-3 flex items-center justify-between text-left rounded-xl transition-all ${act.isPrimary ? "bg-indigo-50/70 border border-indigo-200 text-slate-900 shadow-2xs hover:bg-indigo-100/60" : "hover:bg-slate-50 active:bg-slate-100 border border-transparent text-slate-700"}`,
+								className: `w-full min-h-[54px] py-2.5 px-3.5 flex items-center justify-between text-left rounded-2xl transition-all active:scale-99 ${act.isPrimary ? "bg-indigo-50/80 border border-indigo-200 text-slate-950 shadow-2xs hover:bg-indigo-100/70" : "hover:bg-slate-50 active:bg-slate-100 border border-slate-100 text-slate-800"}`,
 								children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-									className: "flex items-center gap-3",
+									className: "flex items-center gap-3 min-w-0 pr-2",
 									children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
-										className: `w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${act.isPrimary ? "bg-[#3138A0] text-white shadow-2xs" : "bg-slate-100 text-[#3138A0]"}`,
-										children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Icon, { size: 16 })
-									}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-										className: `text-xs block leading-tight ${act.isPrimary ? "font-bold text-[#3138A0]" : "font-medium text-slate-800"}`,
-										children: act.label
-									}) })]
+										className: `w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${act.isPrimary ? "bg-[#3138A0] text-white shadow-2xs" : "bg-slate-100 text-[#3138A0]"}`,
+										children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Icon, { size: 19 })
+									}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+										className: "min-w-0",
+										children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+											className: `text-sm block leading-snug ${act.isPrimary ? "font-bold text-[#3138A0]" : "font-semibold text-slate-900"}`,
+											children: act.label
+										})
+									})]
 								}), act.isPrimary && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-									className: "text-[10px] font-bold text-[#3138A0] bg-white px-2 py-0.5 rounded-full border border-indigo-100 shrink-0",
+									className: "text-xs font-bold text-[#3138A0] bg-white px-2.5 py-1 rounded-full border border-indigo-100 shrink-0",
 									children: "Empfohlen"
 								})]
 							}, act.key);
@@ -58361,9 +58396,9 @@ var PlusMenuModal = () => {
 					})]
 				}),
 				/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
-					className: "pt-2 border-t border-slate-100 text-center",
+					className: "pt-2.5 border-t border-slate-100 text-center",
 					children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
-						className: "text-[11px] text-slate-400",
+						className: "text-xs text-slate-500",
 						children: "Öffnen allein speichert nichts · Keine Datennebenwirkungen"
 					})
 				})
@@ -58380,228 +58415,229 @@ var ThreeDotsMenuModal = () => {
 		navigate(screen);
 	};
 	return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-		className: "absolute inset-0 z-50 bg-black/40 backdrop-blur-2xs flex flex-col justify-end animate-fade-in",
+		className: "absolute inset-0 z-50 bg-black/45 backdrop-blur-2xs flex flex-col justify-end animate-fade-in",
 		children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
 			className: "flex-1",
 			onClick: () => setIsThreeDotsMenuOpen(false)
 		}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-			className: "bg-white rounded-t-3xl border-t border-slate-200 shadow-2xl p-4 max-h-[88%] flex flex-col animate-slide-up",
+			className: "bg-white rounded-t-3xl border-t border-slate-200 shadow-2xl px-4 pt-3 pb-5 max-h-[90%] flex flex-col animate-slide-up",
 			children: [
+				/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "w-11 h-1.5 bg-slate-300 rounded-full mx-auto mb-2.5 shrink-0" }),
 				/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-					className: "flex items-center justify-between pb-2 border-b border-slate-100",
+					className: "flex items-center justify-between pb-2.5 border-b border-slate-100",
 					children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("h2", {
-						className: "text-base font-bold text-slate-900 leading-tight",
+						className: "text-lg font-bold text-slate-950 leading-tight",
 						children: "Menü"
 					}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
-						className: "text-[11px] text-slate-500",
+						className: "text-xs text-slate-600 mt-0.5",
 						children: "Alle Bereiche und Abläufe"
 					})] }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
 						onClick: () => setIsThreeDotsMenuOpen(false),
-						className: "w-9 h-9 flex items-center justify-center text-slate-500 hover:text-slate-800 rounded-full hover:bg-slate-100 transition-colors",
+						className: "w-11 h-11 flex items-center justify-center text-slate-600 hover:text-slate-900 rounded-full hover:bg-slate-100 active:scale-95 transition-all",
 						"aria-label": "Schließen",
-						children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(X, { size: 20 })
+						children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(X, { size: 22 })
 					})]
 				}),
 				/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-					className: "flex-1 overflow-y-auto py-2 space-y-4",
+					className: "flex-1 overflow-y-auto py-3 space-y-4",
 					children: [
 						/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
-							className: "flex items-center gap-1.5 text-xs font-bold text-[#3138A0] uppercase tracking-wider mb-1 px-1",
+							className: "flex items-center gap-1.5 text-xs font-bold text-[#3138A0] tracking-wide mb-1.5 px-1",
 							children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Vorgänge" })
 						}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-							className: "bg-slate-50 border border-slate-200/80 rounded-xl divide-y divide-slate-100 overflow-hidden",
+							className: "bg-slate-50 border border-slate-200/80 rounded-2xl divide-y divide-slate-200/70 overflow-hidden",
 							children: [
 								/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
 									onClick: () => handleSelect("M05_ANFRAGEN"),
-									className: "w-full min-h-[48px] px-3 py-2 flex items-center justify-between hover:bg-indigo-50/50 active:bg-indigo-100/50 transition-colors text-left",
+									className: "w-full min-h-[54px] px-3.5 py-2.5 flex items-center justify-between hover:bg-indigo-50/60 active:bg-indigo-100/60 transition-colors text-left",
 									children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-										className: "flex items-center gap-2.5",
+										className: "flex items-center gap-3",
 										children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(MessageSquare, {
-											size: 17,
-											className: "text-[#3138A0]"
+											size: 20,
+											className: "text-[#3138A0] shrink-0"
 										}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-											className: "text-sm font-semibold text-slate-900 block leading-tight",
+											className: "text-sm font-bold text-slate-950 block leading-tight",
 											children: "Anfragen"
 										}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-											className: "text-[11px] text-slate-500",
+											className: "text-xs text-slate-600",
 											children: "Anliegen prüfen & weiterleiten"
 										})] })]
 									}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ChevronRight, {
-										size: 16,
-										className: "text-slate-400"
+										size: 18,
+										className: "text-slate-400 shrink-0"
 									})]
 								}),
 								/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
 									onClick: () => handleSelect("M06_ANGEBOTE"),
-									className: "w-full min-h-[48px] px-3 py-2 flex items-center justify-between hover:bg-indigo-50/50 active:bg-indigo-100/50 transition-colors text-left",
+									className: "w-full min-h-[54px] px-3.5 py-2.5 flex items-center justify-between hover:bg-indigo-50/60 active:bg-indigo-100/60 transition-colors text-left",
 									children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-										className: "flex items-center gap-2.5",
+										className: "flex items-center gap-3",
 										children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(FileText, {
-											size: 17,
-											className: "text-[#3138A0]"
+											size: 20,
+											className: "text-[#3138A0] shrink-0"
 										}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-											className: "text-sm font-semibold text-slate-900 block leading-tight",
+											className: "text-sm font-bold text-slate-950 block leading-tight",
 											children: "Angebote"
 										}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-											className: "text-[11px] text-slate-500",
+											className: "text-xs text-slate-600",
 											children: "Positionen, Preise & Freigaben"
 										})] })]
 									}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ChevronRight, {
-										size: 16,
-										className: "text-slate-400"
+										size: 18,
+										className: "text-slate-400 shrink-0"
 									})]
 								}),
 								/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
 									onClick: () => handleSelect("M07_AUFTRAEGE"),
-									className: "w-full min-h-[48px] px-3 py-2 flex items-center justify-between hover:bg-indigo-50/50 active:bg-indigo-100/50 transition-colors text-left",
+									className: "w-full min-h-[54px] px-3.5 py-2.5 flex items-center justify-between hover:bg-indigo-50/60 active:bg-indigo-100/60 transition-colors text-left",
 									children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-										className: "flex items-center gap-2.5",
+										className: "flex items-center gap-3",
 										children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(SquareCheckBig, {
-											size: 17,
-											className: "text-[#3138A0]"
+											size: 20,
+											className: "text-[#3138A0] shrink-0"
 										}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-											className: "text-sm font-semibold text-slate-900 block leading-tight",
+											className: "text-sm font-bold text-slate-950 block leading-tight",
 											children: "Aufträge"
 										}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-											className: "text-[11px] text-slate-500",
+											className: "text-xs text-slate-600",
 											children: "Einsätze & Touren planen"
 										})] })]
 									}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ChevronRight, {
-										size: 16,
-										className: "text-slate-400"
+										size: 18,
+										className: "text-slate-400 shrink-0"
 									})]
 								}),
 								/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
 									onClick: () => handleSelect("M08_ARBEITEN"),
-									className: "w-full min-h-[48px] px-3 py-2 flex items-center justify-between hover:bg-indigo-50/50 active:bg-indigo-100/50 transition-colors text-left",
+									className: "w-full min-h-[54px] px-3.5 py-2.5 flex items-center justify-between hover:bg-indigo-50/60 active:bg-indigo-100/60 transition-colors text-left",
 									children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-										className: "flex items-center gap-2.5",
+										className: "flex items-center gap-3",
 										children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Briefcase, {
-											size: 17,
-											className: "text-[#3138A0]"
+											size: 20,
+											className: "text-[#3138A0] shrink-0"
 										}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-											className: "text-sm font-semibold text-slate-900 block leading-tight",
+											className: "text-sm font-bold text-slate-950 block leading-tight",
 											children: "Arbeiten"
 										}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-											className: "text-[11px] text-slate-500",
+											className: "text-xs text-slate-600",
 											children: "Originalaufzeichnungen & Zeiten"
 										})] })]
 									}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ChevronRight, {
-										size: 16,
-										className: "text-slate-400"
+										size: 18,
+										className: "text-slate-400 shrink-0"
 									})]
 								}),
 								/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
 									onClick: () => handleSelect("M09_LCR"),
-									className: "w-full min-h-[48px] px-3 py-2 flex items-center justify-between hover:bg-indigo-50/50 active:bg-indigo-100/50 transition-colors text-left",
+									className: "w-full min-h-[54px] px-3.5 py-2.5 flex items-center justify-between hover:bg-indigo-50/60 active:bg-indigo-100/60 transition-colors text-left",
 									children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-										className: "flex items-center gap-2.5",
+										className: "flex items-center gap-3",
 										children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Bookmark, {
-											size: 17,
-											className: "text-[#3138A0]"
+											size: 20,
+											className: "text-[#3138A0] shrink-0"
 										}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-											className: "text-sm font-semibold text-slate-900 block leading-tight",
+											className: "text-sm font-bold text-slate-950 block leading-tight",
 											children: "L.C.R."
 										}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-											className: "text-[11px] text-slate-500",
+											className: "text-xs text-slate-600",
 											children: "Gekennzeichnete Originale ansehen"
 										})] })]
 									}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ChevronRight, {
-										size: 16,
-										className: "text-slate-400"
+										size: 18,
+										className: "text-slate-400 shrink-0"
 									})]
 								})
 							]
 						})] }),
 						/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
-							className: "flex items-center gap-1.5 text-xs font-bold text-[#2C7738] uppercase tracking-wider mb-1 px-1",
+							className: "flex items-center gap-1.5 text-xs font-bold text-[#2C7738] tracking-wide mb-1.5 px-1",
 							children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Betrieb" })
 						}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-							className: "bg-slate-50 border border-slate-200/80 rounded-xl divide-y divide-slate-100 overflow-hidden",
+							className: "bg-slate-50 border border-slate-200/80 rounded-2xl divide-y divide-slate-200/70 overflow-hidden",
 							children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
 								onClick: () => handleSelect("M10_GERAETE"),
-								className: "w-full min-h-[48px] px-3 py-2 flex items-center justify-between hover:bg-emerald-50/50 active:bg-emerald-100/50 transition-colors text-left",
+								className: "w-full min-h-[54px] px-3.5 py-2.5 flex items-center justify-between hover:bg-emerald-50/60 active:bg-emerald-100/60 transition-colors text-left",
 								children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-									className: "flex items-center gap-2.5",
+									className: "flex items-center gap-3",
 									children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Wrench, {
-										size: 17,
-										className: "text-[#2C7738]"
+										size: 20,
+										className: "text-[#2C7738] shrink-0"
 									}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-										className: "text-sm font-semibold text-slate-900 block leading-tight",
+										className: "text-sm font-bold text-slate-950 block leading-tight",
 										children: "Geräte"
 									}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-										className: "text-[11px] text-slate-500",
+										className: "text-xs text-slate-600",
 										children: "Stammdaten & Wartungsintervalle"
 									})] })]
 								}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ChevronRight, {
-									size: 16,
-									className: "text-slate-400"
+									size: 18,
+									className: "text-slate-400 shrink-0"
 								})]
 							}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
 								onClick: () => handleSelect("M11_MATERIAL"),
-								className: "w-full min-h-[48px] px-3 py-2 flex items-center justify-between hover:bg-emerald-50/50 active:bg-emerald-100/50 transition-colors text-left",
+								className: "w-full min-h-[54px] px-3.5 py-2.5 flex items-center justify-between hover:bg-emerald-50/60 active:bg-emerald-100/60 transition-colors text-left",
 								children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-									className: "flex items-center gap-2.5",
+									className: "flex items-center gap-3",
 									children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Package, {
-										size: 17,
-										className: "text-[#2C7738]"
+										size: 20,
+										className: "text-[#2C7738] shrink-0"
 									}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-										className: "text-sm font-semibold text-slate-900 block leading-tight",
+										className: "text-sm font-bold text-slate-950 block leading-tight",
 										children: "Material"
 									}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-										className: "text-[11px] text-slate-500",
+										className: "text-xs text-slate-600",
 										children: "Produkte, Preise & Verbrauch"
 									})] })]
 								}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ChevronRight, {
-									size: 16,
-									className: "text-slate-400"
+									size: 18,
+									className: "text-slate-400 shrink-0"
 								})]
 							})]
 						})] }),
 						/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
-							className: "flex items-center gap-1.5 text-xs font-bold text-[#5D6178] uppercase tracking-wider mb-1 px-1",
+							className: "flex items-center gap-1.5 text-xs font-bold text-[#5D6178] tracking-wide mb-1.5 px-1",
 							children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "App" })
 						}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-							className: "bg-slate-50 border border-slate-200/80 rounded-xl divide-y divide-slate-100 overflow-hidden",
+							className: "bg-slate-50 border border-slate-200/80 rounded-2xl divide-y divide-slate-200/70 overflow-hidden",
 							children: [
 								/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
 									onClick: () => handleSelect("M12_SICHERUNG"),
-									className: "w-full min-h-[48px] px-3 py-2 flex items-center justify-between hover:bg-slate-100/70 active:bg-slate-200/50 transition-colors text-left",
+									className: "w-full min-h-[54px] px-3.5 py-2.5 flex items-center justify-between hover:bg-slate-100/80 active:bg-slate-200/60 transition-colors text-left",
 									children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-										className: "flex items-center gap-2.5",
+										className: "flex items-center gap-3",
 										children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(HardDrive, {
-											size: 17,
-											className: "text-[#5D6178]"
+											size: 20,
+											className: "text-[#5D6178] shrink-0"
 										}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-											className: "text-sm font-semibold text-slate-900 block leading-tight",
+											className: "text-sm font-bold text-slate-950 block leading-tight",
 											children: "Sicherung"
 										}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-											className: "text-[11px] text-slate-500",
+											className: "text-xs text-slate-600",
 											children: "Eine Zieldatei fortlaufend ergänzen"
 										})] })]
 									}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ChevronRight, {
-										size: 16,
-										className: "text-slate-400"
+										size: 18,
+										className: "text-slate-400 shrink-0"
 									})]
 								}),
 								/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
 									onClick: () => handleSelect("M13_EINSTELLUNGEN"),
-									className: "w-full min-h-[48px] px-3 py-2 flex items-center justify-between hover:bg-slate-100/70 active:bg-slate-200/50 transition-colors text-left",
+									className: "w-full min-h-[54px] px-3.5 py-2.5 flex items-center justify-between hover:bg-slate-100/80 active:bg-slate-200/60 transition-colors text-left",
 									children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-										className: "flex items-center gap-2.5",
+										className: "flex items-center gap-3",
 										children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Settings, {
-											size: 17,
-											className: "text-[#5D6178]"
+											size: 20,
+											className: "text-[#5D6178] shrink-0"
 										}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-											className: "text-sm font-semibold text-slate-900 block leading-tight",
+											className: "text-sm font-bold text-slate-950 block leading-tight",
 											children: "Einstellungen"
 										}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-											className: "text-[11px] text-slate-500",
+											className: "text-xs text-slate-600",
 											children: "Vorgaben, Rechnungsdaten & MCP"
 										})] })]
 									}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ChevronRight, {
-										size: 16,
-										className: "text-slate-400"
+										size: 18,
+										className: "text-slate-400 shrink-0"
 									})]
 								}),
 								/* @__PURE__ */ (0, import_jsx_runtime.jsx)(PWAInstallCard, { compact: true })
@@ -58610,9 +58646,9 @@ var ThreeDotsMenuModal = () => {
 					]
 				}),
 				/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
-					className: "pt-2 border-t border-slate-100 text-center",
+					className: "pt-2.5 border-t border-slate-100 text-center",
 					children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
-						className: "text-[11px] text-slate-400",
+						className: "text-xs text-slate-500",
 						children: "Ein Menüaufruf startet weder Zeiterfassung noch Sicherung, Rechnung oder Datenänderung."
 					})
 				})
@@ -58657,13 +58693,13 @@ var SucheModal = () => {
 		className: "absolute inset-0 z-50 bg-white flex flex-col animate-fade-in",
 		children: [
 			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-				className: "p-3 border-b border-slate-200 flex items-center gap-2",
+				className: "p-3.5 border-b border-slate-200 flex items-center gap-2.5",
 				children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-					className: "flex-1 h-12 bg-slate-100 rounded-full px-3.5 flex items-center gap-2 border border-slate-200/80 focus-within:bg-white focus-within:border-[#3138A0] focus-within:ring-2 focus-within:ring-indigo-100 transition-all",
+					className: "flex-1 h-12 bg-slate-100 rounded-2xl px-3.5 flex items-center gap-2.5 border border-slate-200 focus-within:bg-white focus-within:border-[#3138A0] focus-within:ring-2 focus-within:ring-indigo-100 transition-all",
 					children: [
 						/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Search, {
-							size: 18,
-							className: "text-slate-400 shrink-0"
+							size: 20,
+							className: "text-slate-500 shrink-0"
 						}),
 						/* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
 							type: "text",
@@ -58671,37 +58707,38 @@ var SucheModal = () => {
 							value: searchQuery,
 							onChange: (e) => setSearchQuery(e.target.value),
 							placeholder: "Kunden, Termine, Arbeiten suchen...",
-							className: "flex-1 bg-transparent border-none outline-hidden text-sm text-slate-900 placeholder:text-slate-400"
+							className: "flex-1 bg-transparent border-none outline-hidden text-base text-slate-950 placeholder:text-slate-400"
 						}),
 						searchQuery && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
 							onClick: () => setSearchQuery(""),
-							className: "p-1 text-slate-400 hover:text-slate-600 rounded-full",
-							children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(X, { size: 15 })
+							className: "w-9 h-9 flex items-center justify-center text-slate-500 hover:text-slate-800 rounded-full",
+							"aria-label": "Suchtext löschen",
+							children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(X, { size: 18 })
 						}),
 						/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
 							onClick: simulateSpeech,
-							className: `p-1.5 rounded-full transition-colors ${isListening ? "text-[#B42318] bg-red-50 animate-pulse" : "text-slate-500 hover:text-[#3138A0]"}`,
+							className: `w-10 h-10 flex items-center justify-center rounded-xl transition-colors ${isListening ? "text-[#B42318] bg-red-50 animate-pulse" : "text-slate-600 hover:text-[#3138A0]"}`,
 							title: "Spracheingabe",
-							children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Mic, { size: 17 })
+							children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Mic, { size: 20 })
 						})
 					]
 				}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
 					onClick: () => setIsSearchOpen(false),
-					className: "px-3 h-12 flex items-center justify-center text-sm font-semibold text-slate-600 hover:text-slate-900 active:scale-95 transition-all",
+					className: "px-3.5 h-12 flex items-center justify-center text-sm font-bold text-[#3138A0] hover:bg-indigo-50 rounded-xl active:scale-95 transition-all",
 					children: "Fertig"
 				})]
 			}),
 			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-				className: "px-3 py-2 bg-slate-50 border-b border-slate-200 flex items-center gap-1.5 overflow-x-auto no-scrollbar shrink-0",
+				className: "px-3.5 py-2.5 bg-slate-50 border-b border-slate-200 flex items-center gap-2 overflow-x-auto no-scrollbar shrink-0",
 				children: [
 					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
 						onClick: () => setFilterType("all"),
-						className: `px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap transition-colors ${filterType === "all" ? "bg-[#3138A0] text-white shadow-2xs" : "bg-white border border-slate-200 text-slate-600 hover:bg-slate-100"}`,
+						className: `px-3.5 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-colors ${filterType === "all" ? "bg-[#3138A0] text-white shadow-2xs" : "bg-white border border-slate-200 text-slate-700 hover:bg-slate-100"}`,
 						children: "Alle"
 					}),
 					/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
 						onClick: () => setFilterType("customers"),
-						className: `px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap transition-colors ${filterType === "customers" ? "bg-[#3138A0] text-white shadow-2xs" : "bg-white border border-slate-200 text-slate-600 hover:bg-slate-100"}`,
+						className: `px-3.5 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-colors ${filterType === "customers" ? "bg-[#3138A0] text-white shadow-2xs" : "bg-white border border-slate-200 text-slate-700 hover:bg-slate-100"}`,
 						children: [
 							"Kunden (",
 							matchingCustomers.length,
@@ -58710,7 +58747,7 @@ var SucheModal = () => {
 					}),
 					/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
 						onClick: () => setFilterType("appointments"),
-						className: `px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap transition-colors ${filterType === "appointments" ? "bg-[#3138A0] text-white shadow-2xs" : "bg-white border border-slate-200 text-slate-600 hover:bg-slate-100"}`,
+						className: `px-3.5 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-colors ${filterType === "appointments" ? "bg-[#3138A0] text-white shadow-2xs" : "bg-white border border-slate-200 text-slate-700 hover:bg-slate-100"}`,
 						children: [
 							"Termine (",
 							matchingAppointments.length,
@@ -58719,7 +58756,7 @@ var SucheModal = () => {
 					}),
 					/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
 						onClick: () => setFilterType("work"),
-						className: `px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap transition-colors ${filterType === "work" ? "bg-[#3138A0] text-white shadow-2xs" : "bg-white border border-slate-200 text-slate-600 hover:bg-slate-100"}`,
+						className: `px-3.5 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-colors ${filterType === "work" ? "bg-[#3138A0] text-white shadow-2xs" : "bg-white border border-slate-200 text-slate-700 hover:bg-slate-100"}`,
 						children: [
 							"Arbeiten (",
 							matchingWork.length,
@@ -58728,7 +58765,7 @@ var SucheModal = () => {
 					}),
 					/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
 						onClick: () => setFilterType("equipment"),
-						className: `px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap transition-colors ${filterType === "equipment" ? "bg-[#3138A0] text-white shadow-2xs" : "bg-white border border-slate-200 text-slate-600 hover:bg-slate-100"}`,
+						className: `px-3.5 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-colors ${filterType === "equipment" ? "bg-[#3138A0] text-white shadow-2xs" : "bg-white border border-slate-200 text-slate-700 hover:bg-slate-100"}`,
 						children: [
 							"Geräte & Zubehör (",
 							matchingEquipment.length,
@@ -58738,137 +58775,146 @@ var SucheModal = () => {
 				]
 			}),
 			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-				className: "flex-1 overflow-y-auto p-4 space-y-4",
+				className: "flex-1 overflow-y-auto p-4 space-y-5",
 				children: [
 					(filterType === "all" || filterType === "customers") && matchingCustomers.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-						className: "text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-2",
+						className: "text-xs font-bold text-slate-500 uppercase tracking-wider block mb-2",
 						children: "Kunden"
 					}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
-						className: "space-y-1.5",
+						className: "space-y-2",
 						children: matchingCustomers.map((c) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
 							onClick: () => handleOpenCustomer(c.id),
-							className: "w-full p-3 bg-white border border-slate-200 rounded-xl flex items-center justify-between hover:border-[#3138A0] transition-colors text-left shadow-2xs",
+							className: "w-full p-3.5 bg-white border border-slate-200 rounded-2xl flex items-center justify-between hover:border-[#3138A0] transition-colors text-left shadow-2xs",
 							children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-								className: "flex items-center gap-2.5",
+								className: "flex items-center gap-3 min-w-0",
 								children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
-									className: "w-8 h-8 rounded-full bg-indigo-50 border border-indigo-100 flex items-center justify-center text-[#3138A0] shrink-0 font-bold text-xs",
+									className: "w-10 h-10 rounded-full bg-indigo-50 border border-indigo-100 flex items-center justify-center text-[#3138A0] shrink-0 font-bold text-sm",
 									children: c.name.slice(0, 2).toUpperCase()
-								}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-									className: "font-bold text-slate-900 block text-xs leading-tight",
-									children: c.name
-								}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
-									className: "text-[11px] text-slate-500",
-									children: [
-										c.city,
-										" · ",
-										c.phone
-									]
-								})] })]
+								}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+									className: "min-w-0",
+									children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+										className: "font-bold text-slate-950 block text-sm leading-snug truncate",
+										children: c.name
+									}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
+										className: "text-xs text-slate-600 block truncate",
+										children: [
+											c.city,
+											" · ",
+											c.phone
+										]
+									})]
+								})]
 							}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ChevronRight, {
-								size: 16,
-								className: "text-slate-400"
+								size: 18,
+								className: "text-slate-400 shrink-0"
 							})]
 						}, c.id))
 					})] }),
 					(filterType === "all" || filterType === "appointments") && matchingAppointments.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-						className: "text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-2",
+						className: "text-xs font-bold text-slate-500 uppercase tracking-wider block mb-2",
 						children: "Termine"
 					}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
-						className: "space-y-1.5",
+						className: "space-y-2",
 						children: matchingAppointments.map((a) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
 							onClick: () => handleOpenNav("M02_PLANUNG"),
-							className: "w-full p-3 bg-white border border-slate-200 rounded-xl flex items-center justify-between hover:border-[#3138A0] transition-colors text-left shadow-2xs",
+							className: "w-full p-3.5 bg-white border border-slate-200 rounded-2xl flex items-center justify-between hover:border-[#3138A0] transition-colors text-left shadow-2xs",
 							children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-								className: "flex items-center gap-2.5",
+								className: "flex items-center gap-3 min-w-0",
 								children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Calendar, {
-									size: 18,
+									size: 20,
 									className: "text-[#3138A0] shrink-0"
-								}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-									className: "font-bold text-slate-900 block text-xs leading-tight",
-									children: a.title || "Termin"
-								}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
-									className: "text-[11px] text-slate-500",
-									children: [
-										a.date,
-										" ",
-										a.start_time ? `· ${a.start_time} Uhr` : "· Ohne Uhrzeit"
-									]
-								})] })]
+								}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+									className: "min-w-0",
+									children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+										className: "font-bold text-slate-950 block text-sm leading-snug truncate",
+										children: a.title || "Termin"
+									}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
+										className: "text-xs text-slate-600 block truncate",
+										children: [
+											a.date,
+											" ",
+											a.start_time ? `· ${a.start_time} Uhr` : "· Ohne Uhrzeit"
+										]
+									})]
+								})]
 							}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ChevronRight, {
-								size: 16,
-								className: "text-slate-400"
+								size: 18,
+								className: "text-slate-400 shrink-0"
 							})]
 						}, a.id))
 					})] }),
 					(filterType === "all" || filterType === "work") && matchingWork.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-						className: "text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-2",
+						className: "text-xs font-bold text-slate-500 uppercase tracking-wider block mb-2",
 						children: "Arbeitsaufzeichnungen"
 					}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
-						className: "space-y-1.5",
+						className: "space-y-2",
 						children: matchingWork.map((w) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
 							onClick: () => handleOpenNav("M08_ARBEITEN"),
-							className: "w-full p-3 bg-white border border-slate-200 rounded-xl flex items-center justify-between hover:border-[#3138A0] transition-colors text-left shadow-2xs",
+							className: "w-full p-3.5 bg-white border border-slate-200 rounded-2xl flex items-center justify-between hover:border-[#3138A0] transition-colors text-left shadow-2xs",
 							children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-								className: "flex items-center gap-2.5",
+								className: "flex items-center gap-3 min-w-0",
 								children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Briefcase, {
-									size: 18,
+									size: 20,
 									className: "text-[#3138A0] shrink-0"
-								}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-									className: "flex items-center gap-1.5",
-									children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-										className: "font-bold text-slate-900 text-xs",
-										children: w.title
-									}), w.is_lcr && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-										className: "px-1.5 py-0.2 bg-indigo-100 text-[#3138A0] text-[9px] font-bold rounded",
-										children: "L.C.R."
+								}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+									className: "min-w-0",
+									children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+										className: "flex items-center gap-1.5",
+										children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+											className: "font-bold text-slate-950 text-sm truncate",
+											children: w.title
+										}), w.is_lcr && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+											className: "px-1.5 py-0.5 bg-indigo-100 text-[#3138A0] text-[10px] font-bold rounded shrink-0",
+											children: "L.C.R."
+										})]
+									}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
+										className: "text-xs text-slate-600",
+										children: [
+											w.work_date,
+											" · ",
+											w.hours,
+											" Std."
+										]
 									})]
-								}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
-									className: "text-[11px] text-slate-500",
-									children: [
-										w.work_date,
-										" · ",
-										w.hours,
-										" Std."
-									]
-								})] })]
+								})]
 							}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
-								className: "font-bold text-xs text-[#B4470B]",
+								className: "font-bold text-sm text-[#B4470B] shrink-0 pl-2",
 								children: [(w.accounting_amount || 0).toFixed(2), " €"]
 							})]
 						}, w.id))
 					})] }),
 					(filterType === "all" || filterType === "equipment") && matchingEquipment.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-						className: "text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-2",
+						className: "text-xs font-bold text-slate-500 uppercase tracking-wider block mb-2",
 						children: "Geräte & Zubehör"
 					}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
-						className: "space-y-1.5",
+						className: "space-y-2",
 						children: matchingEquipment.map((e) => {
 							const isZubehoer = e.item_type === "zubehoer";
 							return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
 								onClick: () => handleOpenNav("M10_GERAETE"),
-								className: "w-full p-3 bg-white border border-slate-200 rounded-xl flex items-center justify-between hover:border-[#3138A0] transition-colors text-left shadow-2xs",
+								className: "w-full p-3.5 bg-white border border-slate-200 rounded-2xl flex items-center justify-between hover:border-[#3138A0] transition-colors text-left shadow-2xs",
 								children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-									className: "flex items-center gap-2.5 min-w-0",
+									className: "flex items-center gap-3 min-w-0",
 									children: [e.photo ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("img", {
 										src: e.photo,
 										alt: e.name,
-										className: "w-9 h-9 rounded-lg object-cover border border-slate-200 shrink-0"
+										className: "w-10 h-10 rounded-xl object-cover border border-slate-200 shrink-0"
 									}) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
-										className: `w-9 h-9 rounded-lg flex items-center justify-center shrink-0 border ${isZubehoer ? "bg-indigo-50 border-indigo-100 text-[#3138A0]" : "bg-emerald-50 border-emerald-100 text-[#2C7738]"}`,
-										children: isZubehoer ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Package, { size: 16 }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Wrench, { size: 16 })
+										className: `w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border ${isZubehoer ? "bg-indigo-50 border-indigo-100 text-[#3138A0]" : "bg-emerald-50 border-emerald-100 text-[#2C7738]"}`,
+										children: isZubehoer ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Package, { size: 18 }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Wrench, { size: 18 })
 									}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 										className: "min-w-0",
 										children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 											className: "flex items-center gap-1.5",
 											children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-												className: "font-bold text-slate-900 truncate text-xs leading-tight",
+												className: "font-bold text-slate-950 truncate text-sm leading-snug",
 												children: e.name
 											}), isZubehoer && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-												className: "px-1.5 py-0.5 bg-indigo-50 text-[#3138A0] text-[9px] font-bold rounded shrink-0",
+												className: "px-1.5 py-0.5 bg-indigo-50 text-[#3138A0] text-[10px] font-bold rounded shrink-0",
 												children: "Zubehör"
 											})]
 										}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
-											className: "text-[11px] text-slate-500 block truncate",
+											className: "text-xs text-slate-600 block truncate",
 											children: [
 												e.model || getCategoryLabel(e.category),
 												" ·",
@@ -58878,7 +58924,7 @@ var SucheModal = () => {
 										})]
 									})]
 								}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ChevronRight, {
-									size: 16,
+									size: 18,
 									className: "text-slate-400 shrink-0"
 								})]
 							}, e.id);
