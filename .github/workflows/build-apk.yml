@@ -1,0 +1,101 @@
+name: Android APK Build (Pixel 10 Pro - Kotlin)
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-apk:
+    name: Build Signed Kotlin APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Repository auschecken
+        uses: actions/checkout@v4
+
+      - name: Node.js 22 einrichten
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Abhängigkeiten installieren & Offline-Assets erzeugen
+        run: |
+          npm install
+          npm run build:apk-assets
+
+      - name: Java JDK 17 einrichten
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Android SDK einrichten
+        uses: android-actions/setup-android@v3
+
+      - name: Gradle 8.10.2 einrichten
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+
+      - name: Release-Keystore vorbereiten
+        id: keystore
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          KEYSTORE_FILE="$RUNNER_TEMP/hafner-release.keystore"
+          if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_FILE"
+            STORE_PASS="${ANDROID_KEYSTORE_PASSWORD:-hafner2026}"
+            ALIAS_NAME="${ANDROID_KEY_ALIAS:-hafner_key}"
+            KEY_PASS="${ANDROID_KEY_PASSWORD:-hafner2026}"
+          else
+            STORE_PASS="hafner2026"
+            ALIAS_NAME="hafner_key"
+            KEY_PASS="hafner2026"
+            keytool -genkeypair -v \
+              -keystore "$KEYSTORE_FILE" \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -alias "$ALIAS_NAME" \
+              -storepass "$STORE_PASS" \
+              -keypass "$KEY_PASS" \
+              -dname "CN=Hafner Gruenraum Handwerk, OU=Mobile, O=Hafner, L=Oesterreich, ST=AT, C=AT"
+          fi
+          echo "KEYSTORE_PATH=$KEYSTORE_FILE" >> "$GITHUB_ENV"
+          echo "KEYSTORE_PASSWORD=$STORE_PASS" >> "$GITHUB_ENV"
+          echo "KEY_ALIAS=$ALIAS_NAME" >> "$GITHUB_ENV"
+          echo "KEY_PASSWORD=$KEY_PASS" >> "$GITHUB_ENV"
+
+      - name: Native Kotlin Android APK kompilieren (Release)
+        working-directory: android
+        run: gradle assembleRelease --no-daemon --stacktrace
+
+      - name: Signierte APK benennen
+        run: |
+          mkdir -p build-output
+          APK_PATH=$(find android/app/build/outputs/apk/release -name "*.apk" | head -n 1)
+          if [ -z "$APK_PATH" ]; then
+            echo "Keine Release-APK gefunden!"
+            exit 1
+          fi
+          cp "$APK_PATH" build-output/Hafner-Gruenraum-Pixel10Pro.apk
+          ls -lh build-output/Hafner-Gruenraum-Pixel10Pro.apk
+
+      - name: APK als GitHub Artifact hochladen
+        uses: actions/upload-artifact@v4
+        with:
+          name: Hafner-Gruenraum-Pixel10Pro-APK
+          path: build-output/Hafner-Gruenraum-Pixel10Pro.apk
+          if-no-files-found: error
+          retention-days: 90

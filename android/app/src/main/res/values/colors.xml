@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="ic_launcher_background">#02061A</color>
+    <color name="hafner_midnight">#02061A</color>
+    <color name="hafner_surface">#FFFFFF</color>
+    <color name="hafner_canvas">#F8F9FA</color>
+</resources>
