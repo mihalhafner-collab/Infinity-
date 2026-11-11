@@ -29,7 +29,7 @@ export const Header: React.FC<HeaderProps> = ({
   };
 
   return (
-    <header className="h-[60px] px-4 bg-white border-b border-slate-200/90 flex items-center justify-between shrink-0 sticky top-0 z-20">
+    <header className="h-[56px] px-4 bg-white border-b border-slate-200/90 flex items-center justify-between shrink-0 sticky top-0 z-20">
       <div className="flex items-center gap-2 min-w-0">
         {shouldShowBack && (
           <button

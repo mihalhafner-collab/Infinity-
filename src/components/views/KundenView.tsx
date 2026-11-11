@@ -1936,7 +1936,7 @@ export const KundenView: React.FC = () => {
         </div>
 
         {/* Zeile 2: Klare Pixel 10 Pro Direktbedienung (Route, Anruf, WhatsApp, + Arbeit, Suche & Schnellmenü) */}
-        <div className="px-3 pt-2 pb-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] flex items-center gap-1.5">
+        <div className="px-3 py-2 flex items-center gap-1.5">
           <div className="flex-1 grid grid-cols-4 gap-1.5 min-w-0">
             <a
               href={buildMapsNavigationUrl(primaryMapAddress)}

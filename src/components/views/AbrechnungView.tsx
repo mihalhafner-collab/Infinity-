@@ -1118,7 +1118,7 @@ export const AbrechnungView: React.FC = () => {
       <div className="shrink-0 w-full mt-auto bg-white border-t border-slate-200/80 z-20 shadow-md">
         {selectedInvoice ? (
           /* Detailansicht Beleg: alle Aktionen & Eingabeoptionen kompakt im unteren Bereich */
-          <div className="p-3 space-y-2 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+          <div className="p-3 space-y-2">
             {!selectedInvoice.is_storno &&
               selectedInvoice.status !== 'paid' &&
               selectedInvoice.status !== 'cancelled' && (

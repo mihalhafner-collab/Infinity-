@@ -24,7 +24,7 @@ export const BottomNav: React.FC = () => {
   };
 
   return (
-    <nav className="min-h-[62px] pb-[env(safe-area-inset-bottom)] bg-white border-t border-slate-200/90 grid grid-cols-4 items-center shrink-0 z-20 px-1.5 select-none">
+    <nav className="h-[60px] bg-white border-t border-slate-200/90 grid grid-cols-4 items-center shrink-0 z-20 px-1.5 select-none">
       {navItems.map((item) => {
         const Icon = item.icon;
         const isActive =
@@ -36,7 +36,7 @@ export const BottomNav: React.FC = () => {
           <button
             key={item.id}
             onClick={() => handleNav(item.id)}
-            className={`h-full min-h-[56px] flex flex-col items-center justify-center py-1 transition-all active:scale-95 ${
+            className={`h-full flex flex-col items-center justify-center py-1 transition-all active:scale-95 ${
               isActive ? 'text-[#3138A0]' : 'text-slate-600 hover:text-slate-900'
             }`}
             aria-label={item.label}
