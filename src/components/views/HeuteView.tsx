@@ -9,8 +9,6 @@ import {
   ChevronDown,
   Clock,
   AlertTriangle,
-  Calendar,
-  CheckCircle2,
   Wrench,
   MessageSquare
 } from 'lucide-react';
@@ -71,41 +69,48 @@ export const HeuteView: React.FC = () => {
       {/* Main Scroll Area */}
       <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-4 overscroll-contain">
         {/* Date & Weather Row (ILL-001) */}
-        <div className="flex items-start justify-between">
+        <div className="flex items-start justify-between gap-3">
           <div>
-            <h2 className="text-xl font-bold text-slate-900 tracking-tight leading-tight">
+            <h2 className="text-2xl font-bold text-slate-950 tracking-tight leading-tight">
               {todayLabel}
             </h2>
-            <div className="flex items-center gap-1.5 text-xs text-slate-500 mt-0.5">
-              <span>{todayApps.length} {todayApps.length === 1 ? 'Termin' : 'Termine'}</span>
+            <div className="flex items-center gap-1.5 text-sm text-slate-600 mt-1 tabular-nums">
+              <span>
+                {todayApps.length} {todayApps.length === 1 ? 'Termin' : 'Termine'}
+              </span>
               <span>·</span>
-              <span>{todayApps.reduce((sum, a) => sum + ((a.duration_minutes || 60) / 60), 0).toFixed(0)} Std. geplant</span>
+              <span>
+                {todayApps
+                  .reduce((sum, a) => sum + (a.duration_minutes || 60) / 60, 0)
+                  .toFixed(0)}{' '}
+                Std. geplant
+              </span>
             </div>
           </div>
 
           {/* Weather Widget */}
-          <div className="flex items-center gap-1.5 px-2.5 py-1.5 bg-white border border-slate-200/80 rounded-xl shadow-2xs text-xs font-semibold text-slate-800">
-            <Sun size={16} className="text-amber-500" />
+          <div className="flex items-center gap-2 px-3 py-2 bg-white border border-slate-200/90 rounded-2xl shadow-2xs text-sm font-bold text-slate-900 tabular-nums shrink-0">
+            <Sun size={18} className="text-amber-500" />
             <span>12°</span>
           </div>
         </div>
 
         {/* Dein Tag / Tagestour Teaser */}
-        <div className="flex items-center justify-between text-xs font-semibold px-0.5">
-          <span className="text-slate-500 uppercase tracking-wider text-[11px]">Dein Tag</span>
+        <div className="flex items-center justify-between text-sm font-semibold px-0.5">
+          <span className="text-slate-600 tracking-wide text-xs font-bold">Dein Tag</span>
           <button
             onClick={handleOpenTour}
-            className="text-[#3138A0] hover:underline flex items-center gap-0.5"
+            className="min-h-[44px] -my-2 px-2 text-[#3138A0] font-bold hover:underline flex items-center gap-0.5 rounded-xl active:bg-indigo-50/70"
           >
             <span>Tagestour</span>
-            <ChevronRight size={14} />
+            <ChevronRight size={16} />
           </button>
         </div>
 
         {/* Termine heute Liste */}
-        <div className="space-y-2.5">
+        <div className="space-y-3">
           {todayApps.length === 0 ? (
-            <div className="p-4 bg-white border border-slate-200 rounded-2xl text-center text-xs text-slate-500">
+            <div className="p-5 bg-white border border-slate-200 rounded-2xl text-center text-sm text-slate-600">
               Keine Termine für heute eingetragen.
             </div>
           ) : (
@@ -117,26 +122,26 @@ export const HeuteView: React.FC = () => {
                 <div
                   key={app.id}
                   onClick={() => handleOpenCustomer(app.customer_id)}
-                  className="p-3.5 bg-white border border-slate-200 rounded-2xl shadow-2xs hover:border-[#3138A0] transition-colors cursor-pointer"
+                  className="p-4 bg-white border border-slate-200 rounded-2xl shadow-2xs hover:border-[#3138A0] active:bg-slate-50 transition-colors cursor-pointer"
                 >
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex items-start gap-3">
-                      <div className="flex flex-col text-xs font-bold text-slate-700 font-mono shrink-0 pt-0.5">
+                  <div className="flex items-start justify-between gap-2.5">
+                    <div className="flex items-start gap-3.5 min-w-0">
+                      <div className="flex flex-col text-sm font-bold text-slate-800 font-mono tabular-nums shrink-0 pt-0.5">
                         <span>{app.start_time || 'Ohne Zeit'}</span>
                         {app.end_time && (
-                          <span className="text-slate-400 font-normal">{app.end_time}</span>
+                          <span className="text-xs text-slate-500 font-normal">{app.end_time}</span>
                         )}
                       </div>
-                      <div>
-                        <h3 className="text-sm font-bold text-slate-900 leading-tight">
+                      <div className="min-w-0">
+                        <h3 className="text-base font-bold text-slate-950 leading-snug">
                           {app.title || 'Termin'}
                         </h3>
-                        <p className="text-xs text-slate-500 mt-0.5">
+                        <p className="text-sm text-slate-600 mt-0.5">
                           {cust ? cust.name : 'Ohne Kunde'}
                           {app.duration_minutes ? ` · ${app.duration_minutes} Min.` : ''}
                         </p>
                         {app.address && (
-                          <p className="text-[11px] text-slate-400 mt-0.5 truncate">
+                          <p className="text-xs text-slate-500 mt-0.5 truncate">
                             {app.address}
                           </p>
                         )}
@@ -145,11 +150,11 @@ export const HeuteView: React.FC = () => {
 
                     <div className="shrink-0">
                       {isNext ? (
-                        <span className="px-2 py-0.5 bg-indigo-50 border border-indigo-100 text-[#3138A0] text-[10px] font-bold rounded-md">
+                        <span className="text-xs font-bold text-[#3138A0]">
                           Als Nächstes
                         </span>
                       ) : (
-                        <span className="px-2 py-0.5 bg-slate-100 text-slate-600 text-[10px] font-semibold rounded-md">
+                        <span className="text-xs font-semibold text-slate-500">
                           Geplant
                         </span>
                       )}
@@ -162,60 +167,70 @@ export const HeuteView: React.FC = () => {
         </div>
 
         {/* Section: Zu erledigen (Aufklappbare Gruppen gem. REQ-004) */}
-        <div className="pt-2">
-          <div className="flex items-center justify-between text-xs font-semibold px-0.5 mb-2">
-            <span className="text-slate-500 uppercase tracking-wider text-[11px]">Zu erledigen</span>
-            <span className="text-[11px] text-slate-400">
+        <div className="pt-1">
+          <div className="flex items-center justify-between text-xs font-bold px-0.5 mb-2.5">
+            <span className="text-slate-600 tracking-wide">Zu erledigen</span>
+            <span className="text-slate-500 font-semibold tabular-nums">
               {openWork.length + dueEquipments.length + newInquiries.length}{' '}
-              {openWork.length + dueEquipments.length + newInquiries.length === 1 ? 'Hinweis' : 'Hinweise'}
+              {openWork.length + dueEquipments.length + newInquiries.length === 1
+                ? 'Hinweis'
+                : 'Hinweise'}
             </span>
           </div>
 
-          <div className="space-y-2">
+          <div className="space-y-2.5">
             {/* Offene Stunden Gruppe */}
             <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-2xs">
               <button
                 onClick={() => setOpenHoursExpanded(!openHoursExpanded)}
-                className="w-full min-h-[48px] p-3 flex items-center justify-between hover:bg-slate-50 transition-colors text-left"
+                className="w-full min-h-[58px] p-3.5 flex items-center justify-between hover:bg-slate-50 active:bg-slate-100/70 transition-colors text-left"
               >
-                <div className="flex items-center gap-2.5">
-                  <div className="w-8 h-8 rounded-full bg-orange-50 flex items-center justify-center text-[#B4470B]">
-                    <Clock size={16} />
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-full bg-orange-50 flex items-center justify-center text-[#B4470B] shrink-0">
+                    <Clock size={19} />
                   </div>
                   <div>
-                    <span className="text-xs font-bold text-slate-900 block leading-tight">
+                    <span className="text-sm font-bold text-slate-950 block leading-tight">
                       Offene Stunden
                     </span>
-                    <span className="text-[11px] text-slate-500">
+                    <span className="text-xs text-slate-600 tabular-nums">
                       {openHoursSum} Std. · {openAmountSum.toFixed(0)} €
                     </span>
                   </div>
                 </div>
-                <div className="flex items-center gap-1.5">
-                  <span className="text-xs font-bold text-[#B4470B] px-1.5 py-0.5 bg-orange-50 rounded-md">
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className="text-sm font-bold text-[#B4470B] tabular-nums">
                     {openAmountSum.toFixed(0)} €
                   </span>
-                  {openHoursExpanded ? <ChevronDown size={16} className="text-slate-400" /> : <ChevronRight size={16} className="text-slate-400" />}
+                  {openHoursExpanded ? (
+                    <ChevronDown size={18} className="text-slate-500" />
+                  ) : (
+                    <ChevronRight size={18} className="text-slate-500" />
+                  )}
                 </div>
               </button>
 
               {openHoursExpanded && (
-                <div className="p-3 bg-slate-50/70 border-t border-slate-100 text-xs">
+                <div className="p-3.5 bg-slate-50/70 border-t border-slate-100 text-sm">
                   {openWork.length === 0 ? (
-                    <p className="py-2 text-center text-slate-400 italic">Keine offenen Arbeitsstunden vorhanden.</p>
+                    <p className="py-2 text-center text-slate-500 italic">
+                      Keine offenen Arbeitsstunden vorhanden.
+                    </p>
                   ) : (
-                    <div className="divide-y divide-slate-100">
+                    <div className="divide-y divide-slate-200/70">
                       {openWork.map((w) => {
                         const c = customers.find((cust) => cust.id === w.customer_id);
                         return (
-                          <div key={w.id} className="py-2 flex items-center justify-between">
-                            <div>
-                              <span className="font-semibold text-slate-800 block">{w.title}</span>
-                              <span className="text-[11px] text-slate-500">
+                          <div key={w.id} className="py-2.5 flex items-center justify-between gap-2">
+                            <div className="min-w-0">
+                              <span className="font-bold text-slate-900 block truncate">
+                                {w.title}
+                              </span>
+                              <span className="text-xs text-slate-600 tabular-nums">
                                 {c?.name} · {w.hours} Std.
                               </span>
                             </div>
-                            <span className="font-bold text-[#B4470B]">
+                            <span className="font-bold text-[#B4470B] tabular-nums shrink-0">
                               {(w.accounting_amount || 0).toFixed(2)} €
                             </span>
                           </div>
@@ -223,7 +238,7 @@ export const HeuteView: React.FC = () => {
                       })}
                       <button
                         onClick={() => navigate('M04_ABRECHNUNG')}
-                        className="w-full mt-2 pt-2 text-center text-xs font-bold text-[#3138A0] hover:underline"
+                        className="w-full min-h-[44px] mt-2 pt-2 text-center text-sm font-bold text-[#3138A0] hover:underline"
                       >
                         Zur Abrechnung wechseln →
                       </button>
@@ -237,49 +252,59 @@ export const HeuteView: React.FC = () => {
             <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-2xs">
               <button
                 onClick={() => setTasksExpanded(!tasksExpanded)}
-                className="w-full min-h-[48px] p-3 flex items-center justify-between hover:bg-slate-50 transition-colors text-left"
+                className="w-full min-h-[58px] p-3.5 flex items-center justify-between hover:bg-slate-50 active:bg-slate-100/70 transition-colors text-left"
               >
-                <div className="flex items-center gap-2.5">
-                  <div className="w-8 h-8 rounded-full bg-fuchsia-50 flex items-center justify-center text-[#9A1B8D]">
-                    <AlertTriangle size={16} />
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-full bg-fuchsia-50 flex items-center justify-center text-[#9A1B8D] shrink-0">
+                    <AlertTriangle size={19} />
                   </div>
                   <div>
-                    <span className="text-xs font-bold text-slate-900 block leading-tight">
+                    <span className="text-sm font-bold text-slate-950 block leading-tight">
                       Fällig & neu
                     </span>
-                    <span className="text-[11px] text-slate-500">
+                    <span className="text-xs text-slate-600 tabular-nums">
                       {dueEquipments.length} Wartung · {newInquiries.length} neue Anfrage
                     </span>
                   </div>
                 </div>
-                <div className="flex items-center gap-1.5">
-                  <span className="text-xs font-bold text-[#9A1B8D] px-1.5 py-0.5 bg-fuchsia-50 rounded-md">
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className="text-sm font-bold text-[#9A1B8D] tabular-nums">
                     {dueEquipments.length + newInquiries.length}
                   </span>
-                  {tasksExpanded ? <ChevronDown size={16} className="text-slate-400" /> : <ChevronRight size={16} className="text-slate-400" />}
+                  {tasksExpanded ? (
+                    <ChevronDown size={18} className="text-slate-500" />
+                  ) : (
+                    <ChevronRight size={18} className="text-slate-500" />
+                  )}
                 </div>
               </button>
 
               {tasksExpanded && (
-                <div className="p-3 bg-slate-50/70 border-t border-slate-100 text-xs">
+                <div className="p-3.5 bg-slate-50/70 border-t border-slate-100 text-sm">
                   {dueEquipments.length === 0 && newInquiries.length === 0 ? (
-                    <p className="py-2 text-center text-slate-400 italic">Keine fälligen Aufgaben oder Anfragen.</p>
+                    <p className="py-2 text-center text-slate-500 italic">
+                      Keine fälligen Aufgaben oder Anfragen.
+                    </p>
                   ) : (
-                    <div className="space-y-2">
+                    <div className="space-y-2.5">
                       {dueEquipments.map((eq) => (
                         <div
                           key={eq.id}
                           onClick={() => navigate('M10_GERAETE')}
-                          className="p-2 bg-white rounded-xl border border-slate-200 flex items-center justify-between cursor-pointer hover:border-[#9A1B8D]"
+                          className="p-3 bg-white rounded-xl border border-slate-200 flex items-center justify-between gap-2 cursor-pointer hover:border-[#9A1B8D]"
                         >
-                          <div className="flex items-center gap-2">
-                            <Wrench size={14} className="text-[#9A1B8D]" />
-                            <div>
-                              <span className="font-semibold text-slate-800 block">{eq.name}</span>
-                              <span className="text-[10px] text-slate-500">Wartung fällig: {eq.maintenance_plan}</span>
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <Wrench size={17} className="text-[#9A1B8D] shrink-0" />
+                            <div className="min-w-0">
+                              <span className="font-bold text-slate-900 block truncate">
+                                {eq.name}
+                              </span>
+                              <span className="text-xs text-slate-600">
+                                Wartung fällig: {eq.maintenance_plan}
+                              </span>
                             </div>
                           </div>
-                          <span className="text-[10px] font-bold text-[#9A1B8D] uppercase">Fällig</span>
+                          <span className="text-xs font-bold text-[#9A1B8D] shrink-0">Fällig</span>
                         </div>
                       ))}
 
@@ -289,16 +314,18 @@ export const HeuteView: React.FC = () => {
                           <div
                             key={inq.id}
                             onClick={() => navigate('M05_ANFRAGEN')}
-                            className="p-2 bg-white rounded-xl border border-slate-200 flex items-center justify-between cursor-pointer hover:border-[#3138A0]"
+                            className="p-3 bg-white rounded-xl border border-slate-200 flex items-center justify-between gap-2 cursor-pointer hover:border-[#3138A0]"
                           >
-                            <div className="flex items-center gap-2">
-                              <MessageSquare size={14} className="text-[#3138A0]" />
-                              <div>
-                                <span className="font-semibold text-slate-800 block">{inq.title}</span>
-                                <span className="text-[10px] text-slate-500">{c?.name}</span>
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              <MessageSquare size={17} className="text-[#3138A0] shrink-0" />
+                              <div className="min-w-0">
+                                <span className="font-bold text-slate-900 block truncate">
+                                  {inq.title}
+                                </span>
+                                <span className="text-xs text-slate-600">{c?.name}</span>
                               </div>
                             </div>
-                            <span className="text-[10px] font-bold text-[#9A1B8D] uppercase">Neu</span>
+                            <span className="text-xs font-bold text-[#9A1B8D] shrink-0">Neu</span>
                           </div>
                         );
                       })}

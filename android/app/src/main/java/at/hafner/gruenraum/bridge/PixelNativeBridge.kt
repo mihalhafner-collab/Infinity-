@@ -104,4 +104,11 @@ class PixelNativeBridge(
         }
         return true
     }
+
+    @JavascriptInterface
+    fun setCanGoBackInApp(canGoBack: Boolean) {
+        activity.runOnUiThread {
+            activity.updateCanGoBackInApp(canGoBack)
+        }
+    }
 }

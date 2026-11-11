@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useApp } from '../../context/AppContext.tsx';
+import { useApp, usePixelBackLayer } from '../../context/AppContext.tsx';
 import { Header } from '../common/Header.tsx';
 import { BottomActionBar } from '../common/BottomActionBar.tsx';
 import { BottomNav } from '../common/BottomNav.tsx';
@@ -34,6 +34,8 @@ export const GeraeteView: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'alle' | 'geraet' | 'zubehoer'>('alle');
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState<string>('all');
   const [previewPhoto, setPreviewPhoto] = useState<{ src: string; title: string } | null>(null);
+
+  usePixelBackLayer(Boolean(previewPhoto), () => setPreviewPhoto(null));
 
   const geraeteItems = equipments.filter((e) => (e.item_type || 'geraet') === 'geraet');
   const zubehoerItems = equipments.filter((e) => e.item_type === 'zubehoer');

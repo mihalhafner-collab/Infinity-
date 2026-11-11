@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useApp } from '../../context/AppContext.tsx';
+import { useApp, usePixelBackLayer } from '../../context/AppContext.tsx';
 import { Header } from '../common/Header.tsx';
 import { BottomActionBar } from '../common/BottomActionBar.tsx';
 import { BottomNav } from '../common/BottomNav.tsx';
@@ -58,6 +58,12 @@ export const VorgaengeView: React.FC = () => {
   const [newOrderCustomTitle, setNewOrderCustomTitle] = useState('');
   const [newOrderStatus, setNewOrderStatus] = useState<Order['status']>('in_arbeit');
   const [newOrderNotes, setNewOrderNotes] = useState('');
+
+  usePixelBackLayer(orderSelectionMode, () => {
+    setOrderSelectionMode(false);
+    setSelectedOrderIds([]);
+  });
+  usePixelBackLayer(showNewOrderForm, () => setShowNewOrderForm(false));
 
   // Determine subview based on currentScreen
   let activeTab: 'anfragen' | 'angebote' | 'auftraege' = 'anfragen';

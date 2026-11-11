@@ -1023,7 +1023,7 @@ export const PlanungView: React.FC = () => {
           )}
 
           {/* 7-Tage-Schnellwahl (Mo–So) mit App- & Google-Indikatorpunkten */}
-          <div className="grid grid-cols-7 gap-1">
+          <div className="grid grid-cols-7 gap-1.5">
             {weekDays.map((wd) => {
               const isSelected = selectedDate === wd.date;
               const isToday = wd.date === todayIso;
@@ -1040,18 +1040,18 @@ export const PlanungView: React.FC = () => {
                       setActiveTab('tag');
                     }
                   }}
-                  className={`py-1.5 px-1 flex flex-col items-center rounded-xl transition-all border ${
+                  className={`py-2 px-1 flex flex-col items-center rounded-xl transition-all border ${
                     isSelected
                       ? 'bg-[#3138A0] border-[#3138A0] text-white shadow-2xs'
                       : isToday
-                        ? 'bg-indigo-50/70 border-indigo-200 text-[#3138A0]'
+                        ? 'bg-indigo-50/80 border-indigo-200 text-[#3138A0]'
                         : 'bg-slate-50 border-transparent text-slate-700 hover:bg-slate-100'
                   }`}
                 >
-                  <span className="text-[10px] font-semibold uppercase leading-none">
+                  <span className="text-[10px] font-bold uppercase leading-none">
                     {wd.label}
                   </span>
-                  <span className="text-xs font-bold leading-tight mt-0.5">{wd.dayNum}</span>
+                  <span className="text-sm font-bold leading-tight mt-0.5 tabular-nums">{wd.dayNum}</span>
                   <div className="flex items-center gap-0.5 h-1.5 mt-0.5">
                     {hasApp && (
                       <span
@@ -1080,14 +1080,14 @@ export const PlanungView: React.FC = () => {
               <button
                 type="button"
                 onClick={handlePrev}
-                className="w-8 h-8 flex items-center justify-center text-slate-700 hover:bg-white rounded-lg transition-colors"
+                className="w-9 h-9 flex items-center justify-center text-slate-800 hover:bg-white rounded-lg transition-colors"
                 aria-label="Zurück"
               >
-                <ChevronLeft size={17} />
+                <ChevronLeft size={19} />
               </button>
 
-              <label className="relative cursor-pointer h-8 px-2 flex items-center gap-1 text-[11px] font-bold text-slate-800 hover:bg-white rounded-lg transition-colors">
-                <Calendar size={13} className="text-[#3138A0]" />
+              <label className="relative cursor-pointer h-9 px-2.5 flex items-center gap-1.5 text-xs font-bold text-slate-900 hover:bg-white rounded-lg transition-colors">
+                <Calendar size={14} className="text-[#3138A0]" />
                 <span>{formatShortDayDE(selectedDate)}</span>
                 <input
                   type="date"
@@ -1103,7 +1103,7 @@ export const PlanungView: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setSelectedDate(todayIso)}
-                  className="h-8 px-2 text-[10px] font-bold text-[#3138A0] bg-white rounded-lg shadow-2xs"
+                  className="h-9 px-2.5 text-xs font-bold text-[#3138A0] bg-white rounded-lg shadow-2xs"
                 >
                   Heute
                 </button>
@@ -1112,10 +1112,10 @@ export const PlanungView: React.FC = () => {
               <button
                 type="button"
                 onClick={handleNext}
-                className="w-8 h-8 flex items-center justify-center text-slate-700 hover:bg-white rounded-lg transition-colors"
+                className="w-9 h-9 flex items-center justify-center text-slate-800 hover:bg-white rounded-lg transition-colors"
                 aria-label="Weiter"
               >
-                <ChevronRight size={17} />
+                <ChevronRight size={19} />
               </button>
             </div>
 
@@ -1125,9 +1125,9 @@ export const PlanungView: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setSourceFilter('all')}
-                  className={`h-8 px-2 rounded-lg text-[10px] font-bold transition-all ${
+                  className={`h-9 px-2.5 rounded-lg text-xs font-bold transition-all ${
                     sourceFilter === 'all'
-                      ? 'bg-white text-slate-900 shadow-2xs'
+                      ? 'bg-white text-slate-950 shadow-2xs'
                       : 'text-slate-600'
                   }`}
                 >
@@ -1136,7 +1136,7 @@ export const PlanungView: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setSourceFilter('app')}
-                  className={`h-8 px-2 rounded-lg text-[10px] font-bold transition-all ${
+                  className={`h-9 px-2.5 rounded-lg text-xs font-bold transition-all ${
                     sourceFilter === 'app'
                       ? 'bg-[#3138A0] text-white shadow-2xs'
                       : 'text-[#3138A0]'
@@ -1147,7 +1147,7 @@ export const PlanungView: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setSourceFilter('google')}
-                  className={`h-8 px-2 rounded-lg text-[10px] font-bold transition-all ${
+                  className={`h-9 px-2.5 rounded-lg text-xs font-bold transition-all ${
                     sourceFilter === 'google'
                       ? 'bg-[#0B8043] text-white shadow-2xs'
                       : 'text-[#0B8043]'
@@ -1163,9 +1163,9 @@ export const PlanungView: React.FC = () => {
                   onClick={() => void loadCalendarEvents(true)}
                   disabled={isLoadingCalendar}
                   title="Google Kalender aktualisieren"
-                  className="w-9 h-9 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-[#0B8043] flex items-center justify-center shrink-0 transition-colors disabled:opacity-50"
+                  className="w-10 h-10 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-[#0B8043] flex items-center justify-center shrink-0 transition-colors disabled:opacity-50"
                 >
-                  <RefreshCw size={14} className={isLoadingCalendar ? 'animate-spin' : ''} />
+                  <RefreshCw size={16} className={isLoadingCalendar ? 'animate-spin' : ''} />
                 </button>
               )}
             </div>
@@ -1174,14 +1174,14 @@ export const PlanungView: React.FC = () => {
 
         {/* Ansicht-Umschalter [Tag | Woche | Tour] direkt in der unteren Aktionsleiste zwischen Suche & Plus */}
         <BottomActionBar>
-          <div className="w-full max-w-[230px] flex items-center p-1 bg-slate-100 rounded-xl">
+          <div className="w-full max-w-[248px] flex items-center p-1 bg-slate-100 rounded-2xl">
             <button
               type="button"
               onClick={() => setActiveTab('tag')}
-              className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-all ${
+              className={`flex-1 py-2 text-xs font-bold rounded-xl transition-all ${
                 activeTab === 'tag'
                   ? 'bg-white text-[#3138A0] shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
+                  : 'text-slate-600 hover:text-slate-950'
               }`}
             >
               Tag
@@ -1189,10 +1189,10 @@ export const PlanungView: React.FC = () => {
             <button
               type="button"
               onClick={() => setActiveTab('woche')}
-              className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-all ${
+              className={`flex-1 py-2 text-xs font-bold rounded-xl transition-all ${
                 activeTab === 'woche'
                   ? 'bg-white text-[#3138A0] shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
+                  : 'text-slate-600 hover:text-slate-950'
               }`}
             >
               Woche
@@ -1200,10 +1200,10 @@ export const PlanungView: React.FC = () => {
             <button
               type="button"
               onClick={() => setActiveTab('tour')}
-              className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-all ${
+              className={`flex-1 py-2 text-xs font-bold rounded-xl transition-all ${
                 activeTab === 'tour'
                   ? 'bg-white text-[#3138A0] shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
+                  : 'text-slate-600 hover:text-slate-950'
               }`}
             >
               Tour

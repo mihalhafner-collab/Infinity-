@@ -1,12 +1,45 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
-import {defineConfig} from 'vite';
+import {defineConfig, type Plugin} from 'vite';
 import {VitePWA} from 'vite-plugin-pwa';
+
+function disableHmrWebSocketPlugin(): Plugin {
+  let hmrDisabled = false;
+  return {
+    name: 'disable-hmr-websocket-when-disabled',
+    enforce: 'post',
+    configResolved(resolved) {
+      hmrDisabled =
+        process.env.DISABLE_HMR === 'true' ||
+        resolved.server.hmr === false ||
+        resolved.server.ws === false;
+    },
+    transform(code, id) {
+      if (!hmrDisabled || !id.includes('vite/dist/client/client.mjs')) {
+        return null;
+      }
+      return {
+        code: code
+          .replace('console.debug("[vite] connecting...");', '/* HMR disabled */')
+          .replace(
+            'transport.connect(createHMRHandler(handleMessage));',
+            '/* HMR WebSocket disabled */'
+          )
+          .replace(
+            'setupForwardConsoleHandler(transport, forwardConsole);',
+            '/* Console forward disabled */'
+          ),
+        map: null,
+      };
+    },
+  };
+}
 
 export default defineConfig(() => {
   return {
     plugins: [
+      disableHmrWebSocketPlugin(),
       react(),
       tailwindcss(),
       VitePWA({
@@ -91,8 +124,7 @@ export default defineConfig(() => {
           ],
         },
         devOptions: {
-          enabled: true,
-          type: 'module',
+          enabled: false,
         },
       }),
     ],

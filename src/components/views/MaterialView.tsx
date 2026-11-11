@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useApp } from '../../context/AppContext.tsx';
+import { useApp, usePixelBackLayer } from '../../context/AppContext.tsx';
 import { Header } from '../common/Header.tsx';
 import { BottomActionBar } from '../common/BottomActionBar.tsx';
 import { BottomNav } from '../common/BottomNav.tsx';
@@ -14,6 +14,8 @@ export const MaterialView: React.FC = () => {
   const [price, setPrice] = useState('12');
   const [category, setCategory] = useState('Verbrauchsmaterial');
   const [notes, setNotes] = useState('');
+
+  usePixelBackLayer(isAdding, () => setIsAdding(false));
 
   const handleCreate = () => {
     if (!name.trim()) return;

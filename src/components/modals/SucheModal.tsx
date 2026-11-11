@@ -83,92 +83,93 @@ export const SucheModal: React.FC = () => {
   return (
     <div className="absolute inset-0 z-50 bg-white flex flex-col animate-fade-in">
       {/* Search Header */}
-      <div className="p-3 border-b border-slate-200 flex items-center gap-2">
-        <div className="flex-1 h-12 bg-slate-100 rounded-full px-3.5 flex items-center gap-2 border border-slate-200/80 focus-within:bg-white focus-within:border-[#3138A0] focus-within:ring-2 focus-within:ring-indigo-100 transition-all">
-          <Search size={18} className="text-slate-400 shrink-0" />
+      <div className="p-3.5 border-b border-slate-200 flex items-center gap-2.5">
+        <div className="flex-1 h-12 bg-slate-100 rounded-2xl px-3.5 flex items-center gap-2.5 border border-slate-200 focus-within:bg-white focus-within:border-[#3138A0] focus-within:ring-2 focus-within:ring-indigo-100 transition-all">
+          <Search size={20} className="text-slate-500 shrink-0" />
           <input
             type="text"
             autoFocus
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="Kunden, Termine, Arbeiten suchen..."
-            className="flex-1 bg-transparent border-none outline-hidden text-sm text-slate-900 placeholder:text-slate-400"
+            className="flex-1 bg-transparent border-none outline-hidden text-base text-slate-950 placeholder:text-slate-400"
           />
           {searchQuery && (
             <button
               onClick={() => setSearchQuery('')}
-              className="p-1 text-slate-400 hover:text-slate-600 rounded-full"
+              className="w-9 h-9 flex items-center justify-center text-slate-500 hover:text-slate-800 rounded-full"
+              aria-label="Suchtext löschen"
             >
-              <X size={15} />
+              <X size={18} />
             </button>
           )}
           <button
             onClick={simulateSpeech}
-            className={`p-1.5 rounded-full transition-colors ${
-              isListening ? 'text-[#B42318] bg-red-50 animate-pulse' : 'text-slate-500 hover:text-[#3138A0]'
+            className={`w-10 h-10 flex items-center justify-center rounded-xl transition-colors ${
+              isListening ? 'text-[#B42318] bg-red-50 animate-pulse' : 'text-slate-600 hover:text-[#3138A0]'
             }`}
             title="Spracheingabe"
           >
-            <Mic size={17} />
+            <Mic size={20} />
           </button>
         </div>
 
         <button
           onClick={() => setIsSearchOpen(false)}
-          className="px-3 h-12 flex items-center justify-center text-sm font-semibold text-slate-600 hover:text-slate-900 active:scale-95 transition-all"
+          className="px-3.5 h-12 flex items-center justify-center text-sm font-bold text-[#3138A0] hover:bg-indigo-50 rounded-xl active:scale-95 transition-all"
         >
           Fertig
         </button>
       </div>
 
-      {/* Filter Chips (Page 56) */}
-      <div className="px-3 py-2 bg-slate-50 border-b border-slate-200 flex items-center gap-1.5 overflow-x-auto no-scrollbar shrink-0">
+      {/* Filter Chips */}
+      <div className="px-3.5 py-2.5 bg-slate-50 border-b border-slate-200 flex items-center gap-2 overflow-x-auto no-scrollbar shrink-0">
         <button
           onClick={() => setFilterType('all')}
-          className={`px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap transition-colors ${
+          className={`px-3.5 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-colors ${
             filterType === 'all'
               ? 'bg-[#3138A0] text-white shadow-2xs'
-              : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-100'
+              : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-100'
           }`}
         >
           Alle
         </button>
         <button
           onClick={() => setFilterType('customers')}
-          className={`px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap transition-colors ${
+          className={`px-3.5 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-colors ${
             filterType === 'customers'
               ? 'bg-[#3138A0] text-white shadow-2xs'
-              : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-100'
+              : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-100'
           }`}
         >
           Kunden ({matchingCustomers.length})
         </button>
         <button
           onClick={() => setFilterType('appointments')}
-          className={`px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap transition-colors ${
+          className={`px-3.5 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-colors ${
             filterType === 'appointments'
               ? 'bg-[#3138A0] text-white shadow-2xs'
-              : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-100'
+              : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-100'
           }`}
         >
           Termine ({matchingAppointments.length})
         </button>
         <button
           onClick={() => setFilterType('work')}
-          className={`px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap transition-colors ${
+          className={`px-3.5 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-colors ${
             filterType === 'work'
               ? 'bg-[#3138A0] text-white shadow-2xs'
-              : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-100'
+              : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-100'
           }`}
         >
           Arbeiten ({matchingWork.length})
         </button>
         <button
           onClick={() => setFilterType('equipment')}
-          className={`px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap transition-colors ${
+          className={`px-3.5 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-colors ${
             filterType === 'equipment'
               ? 'bg-[#3138A0] text-white shadow-2xs'
-              : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-100'
+              : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-100'
           }`}
         >
           Geräte & Zubehör ({matchingEquipment.length})
@@ -176,34 +177,34 @@ export const SucheModal: React.FC = () => {
       </div>
 
       {/* Results Feed */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+      <div className="flex-1 overflow-y-auto p-4 space-y-5">
         {/* Kunden Treffer */}
         {(filterType === 'all' || filterType === 'customers') && matchingCustomers.length > 0 && (
           <div>
-            <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-2">
+            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-2">
               Kunden
             </span>
-            <div className="space-y-1.5">
+            <div className="space-y-2">
               {matchingCustomers.map((c) => (
                 <button
                   key={c.id}
                   onClick={() => handleOpenCustomer(c.id)}
-                  className="w-full p-3 bg-white border border-slate-200 rounded-xl flex items-center justify-between hover:border-[#3138A0] transition-colors text-left shadow-2xs"
+                  className="w-full p-3.5 bg-white border border-slate-200 rounded-2xl flex items-center justify-between hover:border-[#3138A0] transition-colors text-left shadow-2xs"
                 >
-                  <div className="flex items-center gap-2.5">
-                    <div className="w-8 h-8 rounded-full bg-indigo-50 border border-indigo-100 flex items-center justify-center text-[#3138A0] shrink-0 font-bold text-xs">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-10 h-10 rounded-full bg-indigo-50 border border-indigo-100 flex items-center justify-center text-[#3138A0] shrink-0 font-bold text-sm">
                       {c.name.slice(0, 2).toUpperCase()}
                     </div>
-                    <div>
-                      <span className="font-bold text-slate-900 block text-xs leading-tight">
+                    <div className="min-w-0">
+                      <span className="font-bold text-slate-950 block text-sm leading-snug truncate">
                         {c.name}
                       </span>
-                      <span className="text-[11px] text-slate-500">
+                      <span className="text-xs text-slate-600 block truncate">
                         {c.city} · {c.phone}
                       </span>
                     </div>
                   </div>
-                  <ChevronRight size={16} className="text-slate-400" />
+                  <ChevronRight size={18} className="text-slate-400 shrink-0" />
                 </button>
               ))}
             </div>
@@ -213,28 +214,28 @@ export const SucheModal: React.FC = () => {
         {/* Termine Treffer */}
         {(filterType === 'all' || filterType === 'appointments') && matchingAppointments.length > 0 && (
           <div>
-            <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-2">
+            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-2">
               Termine
             </span>
-            <div className="space-y-1.5">
+            <div className="space-y-2">
               {matchingAppointments.map((a) => (
                 <button
                   key={a.id}
                   onClick={() => handleOpenNav('M02_PLANUNG')}
-                  className="w-full p-3 bg-white border border-slate-200 rounded-xl flex items-center justify-between hover:border-[#3138A0] transition-colors text-left shadow-2xs"
+                  className="w-full p-3.5 bg-white border border-slate-200 rounded-2xl flex items-center justify-between hover:border-[#3138A0] transition-colors text-left shadow-2xs"
                 >
-                  <div className="flex items-center gap-2.5">
-                    <Calendar size={18} className="text-[#3138A0] shrink-0" />
-                    <div>
-                      <span className="font-bold text-slate-900 block text-xs leading-tight">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <Calendar size={20} className="text-[#3138A0] shrink-0" />
+                    <div className="min-w-0">
+                      <span className="font-bold text-slate-950 block text-sm leading-snug truncate">
                         {a.title || 'Termin'}
                       </span>
-                      <span className="text-[11px] text-slate-500">
+                      <span className="text-xs text-slate-600 block truncate">
                         {a.date} {a.start_time ? `· ${a.start_time} Uhr` : '· Ohne Uhrzeit'}
                       </span>
                     </div>
                   </div>
-                  <ChevronRight size={16} className="text-slate-400" />
+                  <ChevronRight size={18} className="text-slate-400 shrink-0" />
                 </button>
               ))}
             </div>
@@ -244,35 +245,35 @@ export const SucheModal: React.FC = () => {
         {/* Arbeiten Treffer */}
         {(filterType === 'all' || filterType === 'work') && matchingWork.length > 0 && (
           <div>
-            <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-2">
+            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-2">
               Arbeitsaufzeichnungen
             </span>
-            <div className="space-y-1.5">
+            <div className="space-y-2">
               {matchingWork.map((w) => (
                 <button
                   key={w.id}
                   onClick={() => handleOpenNav('M08_ARBEITEN')}
-                  className="w-full p-3 bg-white border border-slate-200 rounded-xl flex items-center justify-between hover:border-[#3138A0] transition-colors text-left shadow-2xs"
+                  className="w-full p-3.5 bg-white border border-slate-200 rounded-2xl flex items-center justify-between hover:border-[#3138A0] transition-colors text-left shadow-2xs"
                 >
-                  <div className="flex items-center gap-2.5">
-                    <Briefcase size={18} className="text-[#3138A0] shrink-0" />
-                    <div>
+                  <div className="flex items-center gap-3 min-w-0">
+                    <Briefcase size={20} className="text-[#3138A0] shrink-0" />
+                    <div className="min-w-0">
                       <div className="flex items-center gap-1.5">
-                        <span className="font-bold text-slate-900 text-xs">
+                        <span className="font-bold text-slate-950 text-sm truncate">
                           {w.title}
                         </span>
                         {w.is_lcr && (
-                          <span className="px-1.5 py-0.2 bg-indigo-100 text-[#3138A0] text-[9px] font-bold rounded">
+                          <span className="px-1.5 py-0.5 bg-indigo-100 text-[#3138A0] text-[10px] font-bold rounded shrink-0">
                             L.C.R.
                           </span>
                         )}
                       </div>
-                      <span className="text-[11px] text-slate-500">
+                      <span className="text-xs text-slate-600">
                         {w.work_date} · {w.hours} Std.
                       </span>
                     </div>
                   </div>
-                  <span className="font-bold text-xs text-[#B4470B]">
+                  <span className="font-bold text-sm text-[#B4470B] shrink-0 pl-2">
                     {(w.accounting_amount || 0).toFixed(2)} €
                   </span>
                 </button>
@@ -284,48 +285,48 @@ export const SucheModal: React.FC = () => {
         {/* Geräte & Zubehör Treffer */}
         {(filterType === 'all' || filterType === 'equipment') && matchingEquipment.length > 0 && (
           <div>
-            <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-2">
+            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-2">
               Geräte & Zubehör
             </span>
-            <div className="space-y-1.5">
+            <div className="space-y-2">
               {matchingEquipment.map((e) => {
                 const isZubehoer = e.item_type === 'zubehoer';
                 return (
                   <button
                     key={e.id}
                     onClick={() => handleOpenNav('M10_GERAETE')}
-                    className="w-full p-3 bg-white border border-slate-200 rounded-xl flex items-center justify-between hover:border-[#3138A0] transition-colors text-left shadow-2xs"
+                    className="w-full p-3.5 bg-white border border-slate-200 rounded-2xl flex items-center justify-between hover:border-[#3138A0] transition-colors text-left shadow-2xs"
                   >
-                    <div className="flex items-center gap-2.5 min-w-0">
+                    <div className="flex items-center gap-3 min-w-0">
                       {e.photo ? (
                         <img
                           src={e.photo}
                           alt={e.name}
-                          className="w-9 h-9 rounded-lg object-cover border border-slate-200 shrink-0"
+                          className="w-10 h-10 rounded-xl object-cover border border-slate-200 shrink-0"
                         />
                       ) : (
                         <div
-                          className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 border ${
+                          className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border ${
                             isZubehoer
                               ? 'bg-indigo-50 border-indigo-100 text-[#3138A0]'
                               : 'bg-emerald-50 border-emerald-100 text-[#2C7738]'
                           }`}
                         >
-                          {isZubehoer ? <Package size={16} /> : <Wrench size={16} />}
+                          {isZubehoer ? <Package size={18} /> : <Wrench size={18} />}
                         </div>
                       )}
                       <div className="min-w-0">
                         <div className="flex items-center gap-1.5">
-                          <span className="font-bold text-slate-900 truncate text-xs leading-tight">
+                          <span className="font-bold text-slate-950 truncate text-sm leading-snug">
                             {e.name}
                           </span>
                           {isZubehoer && (
-                            <span className="px-1.5 py-0.5 bg-indigo-50 text-[#3138A0] text-[9px] font-bold rounded shrink-0">
+                            <span className="px-1.5 py-0.5 bg-indigo-50 text-[#3138A0] text-[10px] font-bold rounded shrink-0">
                               Zubehör
                             </span>
                           )}
                         </div>
-                        <span className="text-[11px] text-slate-500 block truncate">
+                        <span className="text-xs text-slate-600 block truncate">
                           {e.model || getCategoryLabel(e.category)} ·{' '}
                           {isZubehoer
                             ? e.quantity != null
@@ -337,7 +338,7 @@ export const SucheModal: React.FC = () => {
                         </span>
                       </div>
                     </div>
-                    <ChevronRight size={16} className="text-slate-400 shrink-0" />
+                    <ChevronRight size={18} className="text-slate-400 shrink-0" />
                   </button>
                 );
               })}

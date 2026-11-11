@@ -29,6 +29,7 @@ interface HafnerNativeInterface {
   ) => void;
   restoreVerifiedZipBackup: (requestId: string, pickExternalFile: boolean) => void;
   openExternalUrl: (url: string) => boolean;
+  setCanGoBackInApp?: (canGoBack: boolean) => void;
 }
 
 declare global {
@@ -227,6 +228,15 @@ export function registerNativeBackHandler(handler: () => boolean): () => void {
       delete window.__hafnerNativeBack;
     }
   };
+}
+
+export function syncNativeCanGoBack(canGoBack: boolean): void {
+  if (!isNativeAndroidApp()) return;
+  try {
+    window.HafnerNative?.setCanGoBackInApp?.(canGoBack);
+  } catch {
+    // Ignore if running on older bridge
+  }
 }
 
 const REMOTE_SERVER_URL_KEY = 'hafner_remote_mcp_base_url';
