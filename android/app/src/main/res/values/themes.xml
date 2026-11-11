@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.HafnerGruenraum" parent="Theme.Material3.Light.NoActionBar">
+        <item name="android:statusBarColor">@color/hafner_surface</item>
+        <item name="android:navigationBarColor">@color/hafner_surface</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+        <item name="android:windowBackground">@color/hafner_midnight</item>
+    </style>
+</resources>
