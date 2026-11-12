@@ -1,0 +1,14 @@
+node_modules
+dist
+data
+Infinity
+android
+build-output
+.git
+.github
+.aistudio
+*.log
+*.keystore
+*.jks
+.env*
+!.env.example

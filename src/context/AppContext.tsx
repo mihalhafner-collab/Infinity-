@@ -710,6 +710,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     let eventSource: EventSource | null = null;
 
     const connectEventStream = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+        eventSource?.close();
+        eventSource = null;
+        return;
+      }
       const eventsEndpoint = resolveBackendEndpoint('/api/internal/events');
       if (!eventsEndpoint.url || cancelled) return;
       eventSource?.close();
@@ -856,14 +861,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       });
     };
 
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        eventSource?.close();
+        eventSource = null;
+      } else {
+        void initSync();
+      }
+    };
+
     void initSync();
     window.addEventListener('online', handleBrowserOnline);
     window.addEventListener('offline', handleBrowserOffline);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
 
     return () => {
       cancelled = true;
       window.removeEventListener('online', handleBrowserOnline);
       window.removeEventListener('offline', handleBrowserOffline);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
       eventSource?.close();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
