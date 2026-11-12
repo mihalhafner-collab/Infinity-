@@ -5,6 +5,15 @@ import { BottomActionBar } from '../common/BottomActionBar.tsx';
 import { BottomNav } from '../common/BottomNav.tsx';
 import {
   Sun,
+  Moon,
+  CloudSun,
+  Cloud,
+  CloudFog,
+  CloudRain,
+  CloudSnow,
+  CloudLightning,
+  RefreshCw,
+  MapPin,
   ChevronRight,
   ChevronDown,
   Clock,
@@ -12,6 +21,31 @@ import {
   Wrench,
   MessageSquare
 } from 'lucide-react';
+import {
+  WeatherIconKind,
+  useSmartphoneWeather
+} from '../../services/weatherService.ts';
+
+function renderWeatherIcon(kind: WeatherIconKind, size = 18): React.ReactNode {
+  switch (kind) {
+    case 'sun':
+      return <Sun size={size} className="text-amber-500 shrink-0" />;
+    case 'moon':
+      return <Moon size={size} className="text-indigo-500 shrink-0" />;
+    case 'cloud-sun':
+      return <CloudSun size={size} className="text-amber-500 shrink-0" />;
+    case 'cloud':
+      return <Cloud size={size} className="text-slate-500 shrink-0" />;
+    case 'fog':
+      return <CloudFog size={size} className="text-slate-400 shrink-0" />;
+    case 'rain':
+      return <CloudRain size={size} className="text-sky-600 shrink-0" />;
+    case 'snow':
+      return <CloudSnow size={size} className="text-sky-400 shrink-0" />;
+    case 'storm':
+      return <CloudLightning size={size} className="text-purple-600 shrink-0" />;
+  }
+}
 
 export const HeuteView: React.FC = () => {
   const {
@@ -24,6 +58,8 @@ export const HeuteView: React.FC = () => {
     setSelectedCustomerId
   } = useApp();
 
+  const { weather, refreshWeather } = useSmartphoneWeather();
+  const [weatherDetailsOpen, setWeatherDetailsOpen] = useState(false);
   const [openHoursExpanded, setOpenHoursExpanded] = useState(false);
   const [tasksExpanded, setTasksExpanded] = useState(false);
 
@@ -88,12 +124,77 @@ export const HeuteView: React.FC = () => {
             </div>
           </div>
 
-          {/* Weather Widget */}
-          <div className="flex items-center gap-2 px-3 py-2 bg-white border border-slate-200/90 rounded-2xl shadow-2xs text-sm font-bold text-slate-900 tabular-nums shrink-0">
-            <Sun size={18} className="text-amber-500" />
-            <span>12°</span>
-          </div>
+          {/* Live Open-Meteo Smartphone Weather Widget */}
+          <button
+            type="button"
+            onClick={() => {
+              if (weather.data) {
+                setWeatherDetailsOpen((prev) => !prev);
+              } else {
+                void refreshWeather(true);
+              }
+            }}
+            title="Live-Wetter am Smartphone-Standort (Open-Meteo)"
+            className="min-h-[42px] flex items-center gap-2 px-3 py-2 bg-white border border-slate-200/90 rounded-2xl shadow-2xs text-sm font-bold text-slate-900 tabular-nums shrink-0 active:bg-slate-50 transition-colors"
+          >
+            {weather.data ? (
+              <>
+                {renderWeatherIcon(weather.data.iconKind, 18)}
+                <span>{weather.data.temperatureC}°</span>
+              </>
+            ) : weather.status === 'loading' ? (
+              <>
+                <RefreshCw size={16} className="text-slate-400 animate-spin shrink-0" />
+                <span className="text-xs text-slate-500">Wetter…</span>
+              </>
+            ) : (
+              <>
+                <MapPin size={16} className="text-[#3138A0] shrink-0" />
+                <span className="text-xs text-[#3138A0]">Wetter</span>
+              </>
+            )}
+          </button>
         </div>
+
+        {/* Kompakte Live-Tagesvorhersage bei Tipp auf das Wetter-Badge */}
+        {weatherDetailsOpen && weather.data && (
+          <div className="px-3.5 py-2.5 bg-white border border-slate-200/90 rounded-2xl shadow-2xs flex items-center justify-between gap-2 text-xs text-slate-700">
+            <div className="flex items-center gap-2 min-w-0 flex-wrap">
+              <span className="font-bold text-slate-900">{weather.data.conditionLabel}</span>
+              {weather.data.tempMaxC !== null && weather.data.tempMinC !== null && (
+                <span className="text-slate-600 tabular-nums">
+                  · H: {weather.data.tempMaxC}° / T: {weather.data.tempMinC}°
+                </span>
+              )}
+              {weather.data.precipProbabilityMax !== null && (
+                <span className="text-sky-700 font-semibold tabular-nums">
+                  · Regen {weather.data.precipProbabilityMax}%
+                </span>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => void refreshWeather(true)}
+              className="p-1.5 rounded-lg text-slate-500 hover:text-[#3138A0] active:bg-slate-100 shrink-0"
+              title="Wetter aktualisieren"
+            >
+              <RefreshCw size={14} className={weather.status === 'loading' ? 'animate-spin' : ''} />
+            </button>
+          </div>
+        )}
+
+        {!weather.data && weather.status === 'permission_needed' && (
+          <div className="px-3.5 py-2 bg-amber-50/80 border border-amber-200 rounded-xl flex items-center justify-between gap-2 text-xs text-amber-900">
+            <span>Standortfreigabe für Live-Wetter erforderlich.</span>
+            <button
+              type="button"
+              onClick={() => void refreshWeather(true)}
+              className="font-bold text-[#3138A0] shrink-0 underline"
+            >
+              Freigeben
+            </button>
+          </div>
+        )}
 
         {/* Dein Tag / Tagestour Teaser */}
         <div className="flex items-center justify-between text-sm font-semibold px-0.5">

@@ -1,37 +1,121 @@
-import { getApp, getApps, initializeApp } from 'firebase/app';
 import {
   GoogleAuthProvider,
   User,
-  getAuth,
+  getRedirectResult,
   onAuthStateChanged,
-  signInWithPopup
+  signInWithPopup,
+  signInWithRedirect
 } from 'firebase/auth';
-import firebaseConfig from '../../firebase-applet-config.json';
+import { auth } from './firebaseClient.ts';
+import { isNativeAndroidApp } from './nativeBridge.ts';
 
 export const SCOPES = [
   'https://www.googleapis.com/auth/gmail.send',
   'https://www.googleapis.com/auth/calendar.events.readonly'
 ];
 
-const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
-const auth = getAuth(app);
+const OAUTH_RETURN_SCREEN_KEY = 'hafner_oauth_return_screen';
 
 const provider = new GoogleAuthProvider();
 for (const scope of SCOPES) {
   provider.addScope(scope);
 }
+provider.setCustomParameters({ prompt: 'select_account' });
 
 // In-Memory-Caching für das OAuth-Access-Token (niemals in localStorage/sessionStorage speichern)
 let isSigningIn = false;
 let cachedAccessToken: string | null = null;
 let currentUser: User | null = null;
+let lastRedirectAuthError: string | null = null;
 
-type GmailAuthListener = (state: { user: User | null; hasToken: boolean }) => void;
+type GmailAuthListener = (state: {
+  user: User | null;
+  hasToken: boolean;
+  error?: string | null;
+}) => void;
 const listeners = new Set<GmailAuthListener>();
 
 function notifyListeners() {
-  const snapshot = { user: currentUser, hasToken: Boolean(cachedAccessToken) };
+  const snapshot = {
+    user: currentUser,
+    hasToken: Boolean(cachedAccessToken),
+    error: lastRedirectAuthError
+  };
   listeners.forEach((fn) => fn(snapshot));
+}
+
+function formatFirebaseAuthError(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err || '');
+  if (raw.includes('auth/popup-closed-by-user') || raw.includes('auth/cancelled-popup-request')) {
+    return 'Google-Anmeldung wurde abgebrochen.';
+  }
+  if (raw.includes('auth/popup-blocked')) {
+    return 'Anmeldefenster wurde vom Browser blockiert. Bitte Popups erlauben oder direkt in Chrome öffnen.';
+  }
+  if (raw.includes('auth/network-request-failed')) {
+    return 'Netzwerkverbindung zu Google unterbrochen. Bitte Internetverbindung prüfen und erneut versuchen.';
+  }
+  return raw || 'Google-Anmeldung fehlgeschlagen.';
+}
+
+function shouldUseRedirectFlow(): boolean {
+  if (typeof window === 'undefined') return false;
+  // Innerhalb eines iFrames (z. B. AI Studio Vorschau) muss zwingend Popup verwendet werden,
+  // da Google accounts.google.com nicht in iFrames einbetten lässt.
+  if (window.self !== window.top) {
+    return false;
+  }
+  const isStandalonePwa =
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(display-mode: standalone)').matches;
+  const isAndroidMobile =
+    typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent);
+  return isStandalonePwa || isAndroidMobile;
+}
+
+export function rememberOAuthReturnScreen(screenId: string): void {
+  if (typeof window === 'undefined') return;
+  try {
+    sessionStorage.setItem(OAUTH_RETURN_SCREEN_KEY, screenId);
+  } catch {
+    // Ignore storage restriction
+  }
+}
+
+export function consumeOAuthReturnScreen(): string | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const val = sessionStorage.getItem(OAUTH_RETURN_SCREEN_KEY);
+    if (val) {
+      sessionStorage.removeItem(OAUTH_RETURN_SCREEN_KEY);
+    }
+    return val;
+  } catch {
+    return null;
+  }
+}
+
+// Verarbeite eventuelle Rückkehr von signInWithRedirect auf dem Pixel 10 Pro (Standalone-PWA / Chrome)
+if (typeof window !== 'undefined' && !isNativeAndroidApp()) {
+  isSigningIn = true;
+  getRedirectResult(auth)
+    .then((result) => {
+      if (result) {
+        const credential = GoogleAuthProvider.credentialFromResult(result);
+        if (credential?.accessToken) {
+          cachedAccessToken = credential.accessToken;
+          currentUser = result.user;
+          lastRedirectAuthError = null;
+        }
+      }
+    })
+    .catch((err: unknown) => {
+      lastRedirectAuthError = formatFirebaseAuthError(err);
+    })
+    .finally(() => {
+      isSigningIn = false;
+      notifyListeners();
+    });
 }
 
 onAuthStateChanged(auth, (user: User | null) => {
@@ -46,7 +130,11 @@ onAuthStateChanged(auth, (user: User | null) => {
 
 export const subscribeGmailAuth = (listener: GmailAuthListener): (() => void) => {
   listeners.add(listener);
-  listener({ user: currentUser, hasToken: Boolean(cachedAccessToken) });
+  listener({
+    user: currentUser,
+    hasToken: Boolean(cachedAccessToken),
+    error: lastRedirectAuthError
+  });
   return () => {
     listeners.delete(listener);
   };
@@ -71,7 +159,24 @@ export const initAuth = (
   });
 };
 
-export const googleSignIn = async (): Promise<{ user: User; accessToken: string } | null> => {
+export const googleSignIn = async (
+  returnScreenId?: string
+): Promise<{ user: User; accessToken: string } | null> => {
+  if (isNativeAndroidApp()) {
+    return null;
+  }
+
+  lastRedirectAuthError = null;
+  if (returnScreenId) {
+    rememberOAuthReturnScreen(returnScreenId);
+  }
+
+  if (shouldUseRedirectFlow()) {
+    isSigningIn = true;
+    await signInWithRedirect(auth, provider);
+    return null;
+  }
+
   try {
     isSigningIn = true;
     const result = await signInWithPopup(auth, provider);
@@ -80,10 +185,23 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
       throw new Error('Kein Zugriffstoken von Google erhalten. Bitte Berechtigung bestätigen.');
     }
 
+    consumeOAuthReturnScreen();
     cachedAccessToken = credential.accessToken;
     currentUser = result.user;
     notifyListeners();
     return { user: result.user, accessToken: cachedAccessToken };
+  } catch (err: unknown) {
+    const rawMsg = err instanceof Error ? err.message : String(err || '');
+    // Automatischer Fallback auf Redirect, falls Popup in Top-Level-Fenster blockiert wurde
+    if (
+      typeof window !== 'undefined' &&
+      window.self === window.top &&
+      (rawMsg.includes('auth/popup-blocked') || rawMsg.includes('auth/network-request-failed'))
+    ) {
+      await signInWithRedirect(auth, provider);
+      return null;
+    }
+    throw new Error(formatFirebaseAuthError(err));
   } finally {
     isSigningIn = false;
   }
@@ -102,6 +220,7 @@ export const logoutGmail = async (): Promise<void> => {
   await auth.signOut();
   cachedAccessToken = null;
   currentUser = null;
+  lastRedirectAuthError = null;
   notifyListeners();
 };
 

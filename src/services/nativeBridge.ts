@@ -55,6 +55,7 @@ interface HafnerNativeInterface {
     recipientEmail: string
   ) => boolean;
   readDeviceCalendar: (requestId: string, startDateIso: string, endDateIso: string) => void;
+  readDeviceLocation?: (requestId: string) => void;
   runVerifiedZipBackup: (
     requestId: string,
     jsonPayload: string,
@@ -339,6 +340,25 @@ export async function readNativeDeviceCalendar(
     window.HafnerNative?.readDeviceCalendar(reqId, startDateIso, endDateIso);
   });
   return JSON.parse(rawJson) as GoogleCalendarNormalizedItem[];
+}
+
+export async function readNativeDeviceLocation(): Promise<{
+  latitude: number;
+  longitude: number;
+} | null> {
+  if (!isNativeAndroidApp() || !window.HafnerNative?.readDeviceLocation) {
+    return null;
+  }
+  const reqId = nextRequestId('loc');
+  const rawJson = await new Promise<string>((resolve, reject) => {
+    pendingCallbacks.set(reqId, { resolve, reject });
+    window.HafnerNative?.readDeviceLocation?.(reqId);
+  });
+  const parsed = JSON.parse(rawJson) as { latitude?: number; longitude?: number };
+  if (typeof parsed.latitude === 'number' && typeof parsed.longitude === 'number') {
+    return { latitude: parsed.latitude, longitude: parsed.longitude };
+  }
+  return null;
 }
 
 export interface NativeVerifiedBackupResult {

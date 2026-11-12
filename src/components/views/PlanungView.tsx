@@ -14,6 +14,7 @@ import {
   GoogleCalendarNormalizedItem,
   fetchGoogleCalendarEvents
 } from '../../services/googleCalendarService.ts';
+import { isNativeAndroidApp } from '../../services/nativeBridge.ts';
 import {
   AlertTriangle,
   Calendar,
@@ -137,24 +138,31 @@ export const PlanungView: React.FC = () => {
   const [selectedDate, setSelectedDate] = useState<string>(todayIso);
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>('all');
 
+  const isNativeAndroid = isNativeAndroidApp();
+
   // Google Calendar Auth & Events state
   const [googleUser, setGoogleUser] = useState<FirebaseUser | null>(null);
   const [hasGoogleToken, setHasGoogleToken] = useState(false);
+  const [nativeCalendarConnected, setNativeCalendarConnected] = useState(false);
   const [isSigningIn, setIsSigningIn] = useState(false);
   const [isLoadingCalendar, setIsLoadingCalendar] = useState(false);
   const [calendarError, setCalendarError] = useState<string | null>(null);
   const [googleEvents, setGoogleEvents] = useState<GoogleCalendarNormalizedItem[]>([]);
 
   useEffect(() => {
-    const unsub = subscribeGmailAuth(({ user, hasToken }) => {
+    if (isNativeAndroid) return;
+    const unsub = subscribeGmailAuth(({ user, hasToken, error }) => {
       setGoogleUser(user);
       setHasGoogleToken(hasToken);
+      if (error) {
+        setCalendarError(error);
+      }
       if (!hasToken) {
         setGoogleEvents([]);
       }
     });
     return unsub;
-  }, []);
+  }, [isNativeAndroid]);
 
   const weekMondayIso = useMemo(() => getMondayOfIsoWeek(selectedDate), [selectedDate]);
 
@@ -175,36 +183,46 @@ export const PlanungView: React.FC = () => {
 
   const loadCalendarEvents = useCallback(
     async (forceRefresh = false) => {
-      if (!hasGoogleToken) return;
+      if (!isNativeAndroid && !hasGoogleToken) return;
       setIsLoadingCalendar(true);
       setCalendarError(null);
       try {
         const items = await fetchGoogleCalendarEvents(fetchStartIso, fetchEndIso, forceRefresh);
         setGoogleEvents(items);
+        if (isNativeAndroid) {
+          setNativeCalendarConnected(true);
+        }
       } catch (err: unknown) {
         const msg =
           err instanceof Error
             ? err.message
             : 'Kalendertermine konnten nicht abgerufen werden.';
         setCalendarError(msg);
+        if (isNativeAndroid) {
+          setNativeCalendarConnected(false);
+        }
       } finally {
         setIsLoadingCalendar(false);
       }
     },
-    [hasGoogleToken, fetchStartIso, fetchEndIso]
+    [isNativeAndroid, hasGoogleToken, fetchStartIso, fetchEndIso]
   );
 
   useEffect(() => {
-    if (hasGoogleToken) {
+    if (isNativeAndroid || hasGoogleToken) {
       void loadCalendarEvents(false);
     }
-  }, [hasGoogleToken, loadCalendarEvents]);
+  }, [isNativeAndroid, hasGoogleToken, loadCalendarEvents]);
 
   const handleConnectGoogle = async () => {
+    if (isNativeAndroid) {
+      await loadCalendarEvents(true);
+      return;
+    }
     setIsSigningIn(true);
     setCalendarError(null);
     try {
-      await googleSignIn();
+      await googleSignIn('M02_PLANUNG');
     } catch (err: unknown) {
       const msg =
         err instanceof Error ? err.message : 'Google-Anmeldung wurde abgebrochen.';
@@ -213,6 +231,8 @@ export const PlanungView: React.FC = () => {
       setIsSigningIn(false);
     }
   };
+
+  const isCalendarConnected = isNativeAndroid ? nativeCalendarConnected : hasGoogleToken;
 
   const importedGoogleKeys = useMemo(() => {
     const keys = new Set<string>();
@@ -422,14 +442,29 @@ export const PlanungView: React.FC = () => {
             <span>·</span>
             <span className="inline-flex items-center gap-1 font-semibold text-[#0B8043]">
               <span className="w-2 h-2 rounded-full bg-[#0B8043]" />
-              Google: {hasGoogleToken ? activeScopeGoogleCount : 'nicht verbunden'}
+              Google: {isCalendarConnected ? activeScopeGoogleCount : 'nicht verbunden'}
             </span>
           </div>
 
-          {hasGoogleToken && googleUser && (
-            <span className="text-[10px] text-[#0B8043] font-semibold truncate max-w-[140px]">
-              {isLoadingCalendar ? 'Synchronisiere…' : googleUser.email}
-            </span>
+          {isCalendarConnected && (
+            <button
+              type="button"
+              onClick={() => void loadCalendarEvents(true)}
+              disabled={isLoadingCalendar}
+              className="inline-flex items-center gap-1 text-[10px] text-[#0B8043] font-semibold truncate max-w-[165px] hover:underline disabled:opacity-60"
+            >
+              <RefreshCw
+                size={11}
+                className={`shrink-0 ${isLoadingCalendar ? 'animate-spin' : ''}`}
+              />
+              <span className="truncate">
+                {isLoadingCalendar
+                  ? 'Synchronisiere…'
+                  : isNativeAndroid
+                    ? 'Pixel Kalender'
+                    : googleUser?.email || 'Verbunden'}
+              </span>
+            </button>
           )}
         </div>
 
@@ -1006,18 +1041,30 @@ export const PlanungView: React.FC = () => {
       {/* ==================== UNTEN: KOMPLETTE BEDIENUNG (PIXEL 10 PRO DAUMENZONE) ==================== */}
       <div className="shrink-0 w-full mt-auto bg-white border-t border-slate-200 z-20 shadow-[0_-4px_16px_rgba(15,23,42,0.06)]">
         <div className="px-3 pt-2.5 pb-2 space-y-2 border-b border-slate-100">
-          {/* Google-Anmeldung direkt in der Daumenzone, solange noch nicht verbunden */}
-          {!hasGoogleToken && sourceFilter !== 'app' && (
+          {/* Google- / Pixel-Kalender-Anmeldung direkt in der Daumenzone, solange noch nicht verbunden */}
+          {!isCalendarConnected && sourceFilter !== 'app' && (
             <div className="p-2 bg-emerald-50/60 border border-emerald-200/80 rounded-xl flex items-center justify-between gap-2">
               <span className="text-[11px] font-semibold text-[#0B8043] leading-tight">
-                Google Kalender verbinden:
+                {isNativeAndroid ? 'Pixel System-Kalender:' : 'Google Kalender verbinden:'}
               </span>
               <div className="shrink-0">
-                <GoogleSignInButton
-                  onClick={handleConnectGoogle}
-                  disabled={isSigningIn}
-                  label={isSigningIn ? 'Verbinde…' : 'Sign in with Google'}
-                />
+                {isNativeAndroid ? (
+                  <button
+                    type="button"
+                    onClick={handleConnectGoogle}
+                    disabled={isLoadingCalendar}
+                    className="h-9 px-3.5 rounded-full bg-[#0B8043] text-white text-xs font-bold flex items-center gap-1.5 shadow-2xs active:opacity-90 disabled:opacity-60"
+                  >
+                    <Calendar size={14} />
+                    <span>{isLoadingCalendar ? 'Lade…' : 'Kalender freigeben'}</span>
+                  </button>
+                ) : (
+                  <GoogleSignInButton
+                    onClick={handleConnectGoogle}
+                    disabled={isSigningIn}
+                    label={isSigningIn ? 'Verbinde…' : 'Sign in with Google'}
+                  />
+                )}
               </div>
             </div>
           )}

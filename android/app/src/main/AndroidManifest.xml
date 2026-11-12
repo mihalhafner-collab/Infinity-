@@ -4,6 +4,7 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.READ_CALENDAR" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
 
     <!-- Android 11+ / Pixel 10 Pro (Android 15/16) Package Visibility für Direktaktionen -->
     <queries>
@@ -12,6 +13,7 @@
         <package android:name="com.google.android.gm" />
         <package android:name="com.google.android.apps.maps" />
         <package android:name="com.google.android.apps.messaging" />
+        <package android:name="com.google.android.apps.weather" />
 
         <intent>
             <action android:name="android.intent.action.DIAL" />

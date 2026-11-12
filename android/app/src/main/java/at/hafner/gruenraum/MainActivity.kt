@@ -2,11 +2,16 @@ package at.hafner.gruenraum
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
+import android.location.Location
+import android.location.LocationManager
 import android.net.Uri
 import android.os.Bundle
+import android.os.CancellationSignal
+import android.webkit.GeolocationPermissions
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
@@ -65,6 +70,9 @@ class MainActivity : AppCompatActivity() {
 
     private var pendingDocSave: PendingDocSave? = null
     private var pendingCalendarQuery: PendingCalendarQuery? = null
+    private var pendingLocationRequestId: String? = null
+    private var pendingWebGeoOrigin: String? = null
+    private var pendingWebGeoCallback: GeolocationPermissions.Callback? = null
     private var pendingBackupWrite: PendingBackupWrite? = null
     private var pendingRestoreRequestId: String? = null
 
@@ -183,6 +191,33 @@ class MainActivity : AppCompatActivity() {
         executeCalendarQueryOnBackground(pending)
     }
 
+    private val locationPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        val webCallback = pendingWebGeoCallback
+        val webOrigin = pendingWebGeoOrigin
+        pendingWebGeoCallback = null
+        pendingWebGeoOrigin = null
+        if (webCallback != null && webOrigin != null) {
+            webCallback.invoke(webOrigin, granted, false)
+        }
+
+        val reqId = pendingLocationRequestId
+        pendingLocationRequestId = null
+        if (reqId == null) return@registerForActivityResult
+
+        if (!granted) {
+            dispatchNativeCallback(
+                reqId,
+                false,
+                "PERMISSION_DENIED: Bitte Standortfreigabe am Pixel 10 Pro erlauben, um Live-Wetter zu laden."
+            )
+            return@registerForActivityResult
+        }
+
+        resolveNativeLocationAndDispatch(reqId)
+    }
+
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -269,6 +304,7 @@ class MainActivity : AppCompatActivity() {
             javaScriptEnabled = true
             domStorageEnabled = true
             databaseEnabled = true
+            setGeolocationEnabled(true)
             allowFileAccess = false
             allowContentAccess = true
             mediaPlaybackRequiresUserGesture = false
@@ -309,6 +345,24 @@ class MainActivity : AppCompatActivity() {
         }
 
         webView.webChromeClient = object : WebChromeClient() {
+            override fun onGeolocationPermissionsShowPrompt(
+                origin: String?,
+                callback: GeolocationPermissions.Callback?
+            ) {
+                if (origin == null || callback == null) return
+                val hasLocPerm = ContextCompat.checkSelfPermission(
+                    this@MainActivity,
+                    Manifest.permission.ACCESS_COARSE_LOCATION
+                ) == PackageManager.PERMISSION_GRANTED
+                if (hasLocPerm) {
+                    callback.invoke(origin, true, false)
+                } else {
+                    pendingWebGeoOrigin = origin
+                    pendingWebGeoCallback = callback
+                    locationPermissionLauncher.launch(Manifest.permission.ACCESS_COARSE_LOCATION)
+                }
+            }
+
             override fun onShowFileChooser(
                 webView: WebView?,
                 filePathCallback: ValueCallback<Array<Uri>>?,
@@ -454,6 +508,115 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }.start()
+    }
+
+    fun requestDeviceLocation(requestId: String) {
+        val hasPerm = ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.ACCESS_COARSE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+
+        if (hasPerm) {
+            resolveNativeLocationAndDispatch(requestId)
+        } else {
+            pendingLocationRequestId = requestId
+            locationPermissionLauncher.launch(Manifest.permission.ACCESS_COARSE_LOCATION)
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun resolveNativeLocationAndDispatch(requestId: String) {
+        try {
+            val lm = getSystemService(Context.LOCATION_SERVICE) as LocationManager
+            val nowMs = System.currentTimeMillis()
+            val maxAgeMs = 30L * 60L * 1000L
+
+            val providers = listOf(
+                LocationManager.FUSED_PROVIDER,
+                LocationManager.NETWORK_PROVIDER,
+                LocationManager.GPS_PROVIDER
+            )
+
+            var bestRecent: Location? = null
+            for (provider in providers) {
+                val loc = runCatching { lm.getLastKnownLocation(provider) }.getOrNull() ?: continue
+                if (nowMs - loc.time <= maxAgeMs) {
+                    if (bestRecent == null || loc.time > bestRecent.time) {
+                        bestRecent = loc
+                    }
+                }
+            }
+
+            if (bestRecent != null) {
+                val payload = JSONObject().apply {
+                    put("latitude", bestRecent.latitude)
+                    put("longitude", bestRecent.longitude)
+                }.toString()
+                dispatchNativeCallback(requestId, true, payload)
+                return
+            }
+
+            val activeProvider = providers.firstOrNull { p ->
+                runCatching { lm.isProviderEnabled(p) }.getOrDefault(false)
+            }
+            if (activeProvider == null) {
+                dispatchNativeCallback(
+                    requestId,
+                    false,
+                    "Standortdienst auf dem Pixel 10 Pro ist deaktiviert."
+                )
+                return
+            }
+
+            val cancelSignal = CancellationSignal()
+            var completed = false
+            window.decorView.postDelayed({
+                if (!completed) {
+                    completed = true
+                    cancelSignal.cancel()
+                    val fallback = providers.firstNotNullOfOrNull { p ->
+                        runCatching { lm.getLastKnownLocation(p) }.getOrNull()
+                    }
+                    if (fallback != null) {
+                        val payload = JSONObject().apply {
+                            put("latitude", fallback.latitude)
+                            put("longitude", fallback.longitude)
+                        }.toString()
+                        dispatchNativeCallback(requestId, true, payload)
+                    } else {
+                        dispatchNativeCallback(
+                            requestId,
+                            false,
+                            "Smartphone-Standort konnte nicht rechtzeitig ermittelt werden."
+                        )
+                    }
+                }
+            }, 8000L)
+
+            lm.getCurrentLocation(activeProvider, cancelSignal, mainExecutor) { loc ->
+                if (completed) return@getCurrentLocation
+                completed = true
+                if (loc != null) {
+                    val payload = JSONObject().apply {
+                        put("latitude", loc.latitude)
+                        put("longitude", loc.longitude)
+                    }.toString()
+                    dispatchNativeCallback(requestId, true, payload)
+                } else {
+                    dispatchNativeCallback(
+                        requestId,
+                        false,
+                        "Kein aktueller Smartphone-Standort verfügbar."
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            dispatchNativeCallback(
+                requestId,
+                false,
+                e.message ?: "Standortabfrage fehlgeschlagen."
+            )
+        }
     }
 
     fun requestVerifiedZipBackup(

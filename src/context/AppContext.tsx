@@ -40,6 +40,7 @@ import {
   syncNativeCanGoBack
 } from '../services/nativeBridge.ts';
 import { validateFirestoreBootConnection } from '../services/firebaseClient.ts';
+import { consumeOAuthReturnScreen } from '../services/gmailService.ts';
 
 // Re-export canonical data contracts (DATA-02, DATA-04, DATA-09, DATA-10, M11) directly from AppContext
 export type {
@@ -261,8 +262,21 @@ const defaultTaxSettings: TaxSettings = {
 const AppContext = createContext<AppContextType | null>(null);
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [currentScreen, setCurrentScreen] = useState<ScreenId>('M01_HEUTE');
-  const [screenHistory, setScreenHistory] = useState<ScreenId[]>(['M01_HEUTE']);
+  const [initialBootScreen] = useState<ScreenId>(() => {
+    const returned = consumeOAuthReturnScreen();
+    if (
+      returned === 'M02_PLANUNG' ||
+      returned === 'M13_EINSTELLUNGEN' ||
+      returned === 'M04_ABRECHNUNG'
+    ) {
+      return returned;
+    }
+    return 'M01_HEUTE';
+  });
+  const [currentScreen, setCurrentScreen] = useState<ScreenId>(initialBootScreen);
+  const [screenHistory, setScreenHistory] = useState<ScreenId[]>(
+    initialBootScreen === 'M01_HEUTE' ? ['M01_HEUTE'] : ['M01_HEUTE', initialBootScreen]
+  );
   const [returnStack, setReturnStack] = useState<ReturnNavEntry[]>([]);
   const [localBackLayers, setLocalBackLayers] = useState<
     Array<{ id: string; onBackRef: React.MutableRefObject<() => void> }>

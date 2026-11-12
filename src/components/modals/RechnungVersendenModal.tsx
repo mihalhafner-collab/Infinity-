@@ -241,7 +241,7 @@ export const RechnungVersendenModal: React.FC = () => {
     setErrorMessage(null);
     setIsLoggingIn(true);
     try {
-      await googleSignIn();
+      await googleSignIn('M04_ABRECHNUNG');
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Google-Anmeldung fehlgeschlagen.';
       setErrorMessage(msg);

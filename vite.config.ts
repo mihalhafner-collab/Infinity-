@@ -91,8 +91,12 @@ export default defineConfig(() => {
             '**/Eisbaer-Konzept-*.pdf',
           ],
           maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
-          navigateFallbackDenylist: [/^\/api\//, /^\/mcp/],
+          navigateFallbackDenylist: [/^\/api\//, /^\/mcp/, /^\/__\//],
           runtimeCaching: [
+            {
+              urlPattern: /^https?:\/\/[^/]+\/__\/(auth|firebase)\/.*/i,
+              handler: 'NetworkOnly',
+            },
             {
               urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,
               handler: 'CacheFirst',

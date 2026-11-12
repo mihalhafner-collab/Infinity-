@@ -23,6 +23,7 @@ import {
   logoutGmail,
   subscribeGmailAuth
 } from '../../services/gmailService.ts';
+import { useSmartphoneWeather } from '../../services/weatherService.ts';
 import { useApp } from '../../context/AppContext.tsx';
 import {
   NativeMcpSyncStatus,
@@ -91,9 +92,11 @@ interface McpClientConfigInfo {
 
 export const EinstellungenView: React.FC = () => {
   const { appSyncStatus, flushPendingAppSync } = useApp();
+  const { weather, refreshWeather } = useSmartphoneWeather();
   const [gmailUser, setGmailUser] = useState<FirebaseUser | null>(null);
   const [gmailHasToken, setGmailHasToken] = useState(false);
   const [gmailConnecting, setGmailConnecting] = useState(false);
+  const [gmailAuthError, setGmailAuthError] = useState<string | null>(null);
 
   const isNativeAndroid = isNativeAndroidApp();
 
@@ -161,9 +164,12 @@ export const EinstellungenView: React.FC = () => {
   };
 
   useEffect(() => {
-    const unsubGmail = subscribeGmailAuth(({ user, hasToken }) => {
+    const unsubGmail = subscribeGmailAuth(({ user, hasToken, error }) => {
       setGmailUser(user);
       setGmailHasToken(hasToken);
+      if (error) {
+        setGmailAuthError(error);
+      }
     });
 
     const unsubNativeStatus = subscribeNativeMcpStatus((status) => {
@@ -618,18 +624,30 @@ export const EinstellungenView: React.FC = () => {
                 </div>
 
                 {!gmailHasToken && !isNativeAndroid && (
-                  <GoogleSignInButton
-                    onClick={async () => {
-                      setGmailConnecting(true);
-                      try {
-                        await googleSignIn();
-                      } finally {
-                        setGmailConnecting(false);
-                      }
-                    }}
-                    disabled={gmailConnecting}
-                    label={gmailConnecting ? 'Verbinde...' : 'Sign in with Google'}
-                  />
+                  <div className="space-y-1.5">
+                    <GoogleSignInButton
+                      onClick={async () => {
+                        setGmailConnecting(true);
+                        setGmailAuthError(null);
+                        try {
+                          await googleSignIn('M13_EINSTELLUNGEN');
+                        } catch (err: unknown) {
+                          setGmailAuthError(
+                            err instanceof Error ? err.message : 'Google-Anmeldung fehlgeschlagen.'
+                          );
+                        } finally {
+                          setGmailConnecting(false);
+                        }
+                      }}
+                      disabled={gmailConnecting}
+                      label={gmailConnecting ? 'Verbinde...' : 'Sign in with Google'}
+                    />
+                    {gmailAuthError && (
+                      <p className="text-[10px] text-[#B42318] font-medium leading-snug">
+                        {gmailAuthError}
+                      </p>
+                    )}
+                  </div>
                 )}
               </div>
 
@@ -661,18 +679,65 @@ export const EinstellungenView: React.FC = () => {
                 )}
               </div>
 
-              {/* Wetter */}
-              <div className="p-2.5 bg-white border border-slate-200 rounded-xl flex items-center justify-between">
-                <div className="flex items-center gap-2.5">
-                  <CloudSun size={17} className="text-amber-500" />
-                  <div>
-                    <span className="font-bold text-slate-800 block text-xs">Wetter</span>
-                    <span className="text-[10px] text-slate-500">12°C · Vorhersage aktiv</span>
+              {/* Wetter (Open-Meteo · Smartphone-Standort) */}
+              <div className="p-2.5 bg-white border border-slate-200 rounded-xl flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <CloudSun size={17} className="text-amber-500 shrink-0" />
+                  <div className="min-w-0">
+                    <span className="font-bold text-slate-800 block text-xs">
+                      Wetter (Open-Meteo · Smartphone-Standort)
+                    </span>
+                    <span className="text-[10px] text-slate-500 block truncate">
+                      {weather.data
+                        ? `${weather.data.temperatureC}°C · ${weather.data.conditionLabel}${
+                            weather.data.tempMaxC !== null && weather.data.tempMinC !== null
+                              ? ` (H: ${weather.data.tempMaxC}° / T: ${weather.data.tempMinC}°)`
+                              : ''
+                          }${
+                            weather.data.precipProbabilityMax !== null
+                              ? ` · Regen ${weather.data.precipProbabilityMax}%`
+                              : ''
+                          }`
+                        : weather.status === 'loading'
+                          ? 'Smartphone-Standort & Live-Wetter werden abgerufen…'
+                          : weather.errorMessage || 'Standortfreigabe am Smartphone erforderlich'}
+                    </span>
                   </div>
                 </div>
-                <span className="text-[10px] font-bold text-[#2C7738] bg-emerald-50 px-2 py-0.5 rounded-md">
-                  Verbunden
-                </span>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  {weather.status === 'live' ? (
+                    <span className="text-[10px] font-bold text-[#2C7738] bg-emerald-50 px-2 py-0.5 rounded-md">
+                      Live
+                    </span>
+                  ) : weather.status === 'cached' ? (
+                    <span className="text-[10px] font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded-md">
+                      Cache
+                    </span>
+                  ) : weather.status === 'loading' ? (
+                    <span className="text-[10px] font-bold text-slate-600 bg-slate-100 px-2 py-0.5 rounded-md">
+                      Lädt…
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => void refreshWeather(true)}
+                      className="text-[10px] font-bold text-[#3138A0] bg-indigo-50 px-2 py-1 rounded-md active:bg-indigo-100"
+                    >
+                      Freigeben
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => void refreshWeather(true)}
+                    className="p-1 rounded-md text-slate-400 hover:text-slate-700 active:bg-slate-100"
+                    title="Wetter neu laden"
+                  >
+                    <RefreshCw
+                      size={13}
+                      className={weather.status === 'loading' ? 'animate-spin' : ''}
+                    />
+                  </button>
+                </div>
               </div>
 
               {/* Privates ChatGPT-MCP-Plugin & Hintergrund-Sync */}

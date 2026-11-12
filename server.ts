@@ -549,6 +549,55 @@ async function startServer() {
     next();
   });
 
+  // ==================== SAME-ORIGIN FIREBASE AUTH PROXY (FÜR ANDROID PWA & MOBILE CHROME) ====================
+  const FIREBASE_AUTH_ORIGIN = 'https://gen-lang-client-0369636054.firebaseapp.com';
+  app.use(['/__/auth', '/__/firebase'], async (req, res) => {
+    try {
+      const targetUrl = `${FIREBASE_AUTH_ORIGIN}${req.originalUrl}`;
+      const upstreamHeaders: Record<string, string> = {};
+      if (typeof req.headers.accept === 'string') {
+        upstreamHeaders['accept'] = req.headers.accept;
+      }
+      if (typeof req.headers['accept-language'] === 'string') {
+        upstreamHeaders['accept-language'] = req.headers['accept-language'];
+      }
+      if (typeof req.headers['user-agent'] === 'string') {
+        upstreamHeaders['user-agent'] = req.headers['user-agent'];
+      }
+
+      const upstream = await fetch(targetUrl, {
+        method: req.method === 'HEAD' ? 'HEAD' : 'GET',
+        headers: upstreamHeaders,
+        redirect: 'manual'
+      });
+
+      res.status(upstream.status);
+      const passthroughHeaders = [
+        'content-type',
+        'cache-control',
+        'location',
+        'etag',
+        'last-modified'
+      ];
+      for (const headerName of passthroughHeaders) {
+        const val = upstream.headers.get(headerName);
+        if (val) {
+          res.setHeader(headerName, val);
+        }
+      }
+
+      if (req.method === 'HEAD') {
+        res.end();
+        return;
+      }
+
+      const buf = Buffer.from(await upstream.arrayBuffer());
+      res.send(buf);
+    } catch {
+      res.status(502).type('text/plain').send('Firebase Auth Proxy vorübergehend nicht erreichbar.');
+    }
+  });
+
   app.use(express.json({ limit: '30mb' }));
   app.use(express.urlencoded({ extended: false }));
 
