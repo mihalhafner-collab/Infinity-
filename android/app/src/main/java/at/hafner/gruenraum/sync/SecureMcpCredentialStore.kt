@@ -14,17 +14,24 @@ import javax.crypto.spec.GCMParameterSpec
 
 data class McpCredentials(
     val baseUrl: String,
-    val token: String
+    val token: String,
+    val adminToken: String = ""
 ) {
     val isConfigured: Boolean
         get() = (baseUrl.startsWith("https://") || baseUrl.startsWith("http://localhost") || baseUrl.startsWith("http://127.0.0.1")) &&
             token.length >= 16
 
+    val effectiveMcpToken: String
+        get() = adminToken.trim().ifBlank { token.trim() }
+
     val maskedToken: String
-        get() = if (token.length < 14) {
-            ""
-        } else {
-            "${token.take(8)}••••••••••••${token.takeLast(4)}"
+        get() {
+            val source = effectiveMcpToken
+            return if (source.length < 14) {
+                ""
+            } else {
+                "${source.take(8)}••••••••••••${source.takeLast(4)}"
+            }
         }
 }
 
@@ -32,7 +39,7 @@ data class McpCredentials(
  * Hardware-geschützte Speicherung der MCP-Zugangsdaten im Android Keystore (Titan M2 auf Pixel 10 Pro).
  * - Die Serveradresse wird automatisch aus BuildConfig.DEFAULT_MCP_BASE_URL vorbelegt.
  * - In der APK selbst ist KEIN dauerhaft gültiger Admin- oder Synchronisationsschlüssel enthalten;
- *   der Geräteschlüssel entsteht erst nach der einmaligen Kopplung (/api/pair/exchange).
+ *   der Geräteschlüssel entsteht erst nach der automatischen Kopplung (/api/pair/exchange).
  */
 class SecureMcpCredentialStore(private val context: Context) {
 
@@ -51,24 +58,29 @@ class SecureMcpCredentialStore(private val context: Context) {
                 val obj = JSONObject(jsonStr)
                 val storedUrl = sanitizeBaseUrl(obj.optString("baseUrl", ""))
                 val storedToken = obj.optString("token", "").trim()
+                val storedAdminToken = obj.optString("adminToken", "").trim()
                 return McpCredentials(
                     baseUrl = storedUrl.ifBlank { defaultBaseUrl() },
-                    token = storedToken
+                    token = storedToken,
+                    adminToken = storedAdminToken
                 )
             } catch (_: Exception) {
                 // Bei Keystore-Rotation auf Standard-URL ohne Token zurückfallen
             }
         }
-        return McpCredentials(baseUrl = defaultBaseUrl(), token = "")
+        return McpCredentials(baseUrl = defaultBaseUrl(), token = "", adminToken = "")
     }
 
     @Synchronized
-    fun saveCredentials(baseUrl: String, token: String): McpCredentials {
+    fun saveCredentials(baseUrl: String, token: String, adminToken: String? = null): McpCredentials {
+        val current = loadCredentials()
         val cleanUrl = sanitizeBaseUrl(baseUrl).ifBlank { defaultBaseUrl() }
         val cleanToken = token.trim()
+        val cleanAdminToken = adminToken?.trim() ?: current.adminToken
         val payload = JSONObject().apply {
             put("baseUrl", cleanUrl)
             put("token", cleanToken)
+            put("adminToken", cleanAdminToken)
         }.toString().toByteArray(Charsets.UTF_8)
 
         val cipher = Cipher.getInstance(TRANSFORMATION)
@@ -87,19 +99,25 @@ class SecureMcpCredentialStore(private val context: Context) {
             tmpFile.delete()
         }
 
-        return McpCredentials(baseUrl = cleanUrl, token = cleanToken)
+        return McpCredentials(baseUrl = cleanUrl, token = cleanToken, adminToken = cleanAdminToken)
+    }
+
+    @Synchronized
+    fun updateAdminTokenOnly(adminToken: String): McpCredentials {
+        val current = loadCredentials()
+        return saveCredentials(current.baseUrl, current.token, adminToken.trim())
     }
 
     @Synchronized
     fun updateBaseUrlOnly(baseUrl: String): McpCredentials {
         val current = loadCredentials()
-        return saveCredentials(baseUrl, current.token)
+        return saveCredentials(baseUrl, current.token, current.adminToken)
     }
 
     @Synchronized
     fun clearTokenKeepUrl(): McpCredentials {
         val current = loadCredentials()
-        return saveCredentials(current.baseUrl, "")
+        return saveCredentials(current.baseUrl, "", "")
     }
 
     private fun defaultBaseUrl(): String {
