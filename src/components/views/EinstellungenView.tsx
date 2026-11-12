@@ -27,7 +27,9 @@ import { useSmartphoneWeather } from '../../services/weatherService.ts';
 import { useApp } from '../../context/AppContext.tsx';
 import {
   NativeMcpSyncStatus,
+  copyTextRobustly,
   getNativeMcpSyncStatus,
+  getRevealedNativeMcpToken,
   isNativeAndroidApp,
   pairNativeMcpWithCode,
   resolveMcpAdminEndpoint,
@@ -58,6 +60,7 @@ interface McpClientConfigInfo {
   requireToken: boolean;
   tokenSource: 'env' | 'file';
   maskedToken: string;
+  adminToken?: string;
   oauthEnabled: boolean;
   activeOAuthGrants: number;
   pairedAndroidDevices: number;
@@ -99,7 +102,9 @@ export const EinstellungenView: React.FC = () => {
 
   // Gemeinsamer Cloud- & MCP-Server-Status (identisch in Web-App und Android-App)
   const [mcpInfo, setMcpInfo] = useState<McpClientConfigInfo | null>(null);
-  const [revealedAdminToken, setRevealedAdminToken] = useState<string | null>(null);
+  const [revealedAdminToken, setRevealedAdminToken] = useState<string | null>(() =>
+    getRevealedNativeMcpToken()
+  );
   const [showSecretToken, setShowSecretToken] = useState(false);
   const [resetInProgress, setResetInProgress] = useState(false);
   const [resetDoneBanner, setResetDoneBanner] = useState(false);
@@ -115,12 +120,54 @@ export const EinstellungenView: React.FC = () => {
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [rotatingToken, setRotatingToken] = useState(false);
 
+  const fetchRevealedToken = async (overrideBaseUrl?: string): Promise<string | null> => {
+    try {
+      const endpoint = resolveMcpAdminEndpoint(
+        '/api/internal/reveal-token',
+        overrideBaseUrl || nativeBaseUrlInput
+      );
+      const res = await fetch(endpoint.url, {
+        method: 'POST',
+        credentials: isNativeAndroid ? 'omit' : 'include',
+        headers: endpoint.headers
+      });
+      if (res.ok) {
+        const data = (await res.json()) as { adminToken?: string };
+        if (data.adminToken && data.adminToken.trim().length >= 16) {
+          const clean = data.adminToken.trim();
+          setRevealedAdminToken(clean);
+          return clean;
+        }
+      }
+    } catch {
+      // Ignore network error and fall back to local keystore token
+    }
+
+    const nativeFallback =
+      getRevealedNativeMcpToken() ||
+      nativeSyncStatus?.revealedToken?.trim() ||
+      nativeSyncStatus?.deviceToken?.trim() ||
+      null;
+    if (nativeFallback) {
+      setRevealedAdminToken(nativeFallback);
+      return nativeFallback;
+    }
+    return revealedAdminToken;
+  };
+
   const loadMcpInfo = async (customBaseUrl?: string) => {
     if (isNativeAndroid) {
       const latest = getNativeMcpSyncStatus();
       setNativeSyncStatus(latest);
       if (latest?.baseUrl) {
         setNativeBaseUrlInput(latest.baseUrl);
+      }
+      const immediateNativeToken =
+        getRevealedNativeMcpToken() ||
+        latest?.revealedToken?.trim() ||
+        latest?.deviceToken?.trim();
+      if (immediateNativeToken) {
+        setRevealedAdminToken((prev) => prev || immediateNativeToken);
       }
       // Falls noch kein Token im Keystore liegt, automatisch ohne Einmal-Code verbinden
       if (latest && !latest.configured && latest.state !== 'reconnecting') {
@@ -146,10 +193,16 @@ export const EinstellungenView: React.FC = () => {
       if (res.ok) {
         const data = (await res.json()) as McpClientConfigInfo;
         setMcpInfo(data);
+        if (data.adminToken && data.adminToken.trim().length >= 16) {
+          setRevealedAdminToken(data.adminToken.trim());
+          return;
+        }
       }
     } catch {
       // Offline tolerance
     }
+
+    void fetchRevealedToken(customBaseUrl);
   };
 
   useEffect(() => {
@@ -165,6 +218,10 @@ export const EinstellungenView: React.FC = () => {
       setNativeSyncStatus(status);
       if (status.baseUrl) {
         setNativeBaseUrlInput(status.baseUrl);
+      }
+      const nextToken = status.revealedToken?.trim() || status.deviceToken?.trim();
+      if (nextToken && nextToken.length >= 16) {
+        setRevealedAdminToken((prev) => prev || nextToken);
       }
     });
 
@@ -189,35 +246,23 @@ export const EinstellungenView: React.FC = () => {
   const [statusChecked, setStatusChecked] = useState(false);
   const [storageCleaned, setStorageCleaned] = useState(false);
 
-  const handleCopyText = async (key: string, value: string) => {
-    try {
-      await navigator.clipboard.writeText(value);
+  const handleCopyText = async (key: string, value: string, label = 'MCP') => {
+    const ok = await copyTextRobustly(label, value);
+    if (ok) {
       setCopiedKey(key);
-      setTimeout(() => setCopiedKey((prev) => (prev === key ? null : prev)), 2200);
-    } catch {
-      // Ignore clipboard restriction
+      setTimeout(() => setCopiedKey((prev) => (prev === key ? null : prev)), 2500);
     }
   };
 
-  const fetchRevealedToken = async (): Promise<string | null> => {
-    if (revealedAdminToken) return revealedAdminToken;
-    try {
-      const endpoint = resolveMcpAdminEndpoint('/api/internal/reveal-token', nativeBaseUrlInput);
-      const res = await fetch(endpoint.url, {
-        method: 'POST',
-        credentials: isNativeAndroid ? 'omit' : 'include',
-        headers: endpoint.headers
-      });
-      if (!res.ok) return null;
-      const data = (await res.json()) as { adminToken?: string };
-      if (data.adminToken) {
-        setRevealedAdminToken(data.adminToken);
-        return data.adminToken;
-      }
-    } catch {
-      // Ignore
-    }
-    return null;
+  const resolveCurrentFullTokenSync = (): string | null => {
+    return (
+      revealedAdminToken?.trim() ||
+      mcpInfo?.adminToken?.trim() ||
+      getRevealedNativeMcpToken() ||
+      nativeSyncStatus?.revealedToken?.trim() ||
+      nativeSyncStatus?.deviceToken?.trim() ||
+      null
+    );
   };
 
   const handleToggleShowSecret = async () => {
@@ -225,16 +270,27 @@ export const EinstellungenView: React.FC = () => {
       setShowSecretToken(false);
       return;
     }
-    const secret = await fetchRevealedToken();
-    if (secret) {
-      setShowSecretToken(true);
+    setShowSecretToken(true);
+    const immediate = resolveCurrentFullTokenSync();
+    if (immediate) {
+      setRevealedAdminToken(immediate);
+    }
+    const fetched = await fetchRevealedToken();
+    if (fetched) {
+      setRevealedAdminToken(fetched);
     }
   };
 
   const handleCopyAdminToken = async () => {
-    const secret = await fetchRevealedToken();
-    if (secret) {
-      await handleCopyText('mcp_token', secret);
+    const immediate = resolveCurrentFullTokenSync();
+    if (immediate) {
+      setRevealedAdminToken(immediate);
+      await handleCopyText('mcp_token', immediate, 'MCP-Zugangsschlüssel');
+      return;
+    }
+    const fetched = await fetchRevealedToken();
+    if (fetched) {
+      await handleCopyText('mcp_token', fetched, 'MCP-Zugangsschlüssel');
     }
   };
 
@@ -755,21 +811,23 @@ export const EinstellungenView: React.FC = () => {
                   )}
 
                   {/* 1. MCP-Server-Adresse (für ChatGPT) – Identisch in Web-App & Android-App */}
-                  <div className="p-2.5 bg-slate-50 border border-slate-200/80 rounded-lg space-y-1">
+                  <div className="p-2.5 bg-slate-50 border border-slate-200/80 rounded-lg space-y-1.5">
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-[10px] font-bold text-[#3138A0] uppercase tracking-tight">
                         1. MCP-Server-Adresse (für ChatGPT)
                       </span>
                       <button
                         type="button"
-                        onClick={() => void handleCopyText('mcp_url', effectiveMcpUrl)}
-                        className="h-7 px-2.5 bg-[#3138A0] hover:bg-[#272d82] text-white text-[10px] font-semibold rounded-md flex items-center gap-1 shrink-0 transition-colors"
+                        onClick={() =>
+                          void handleCopyText('mcp_url', effectiveMcpUrl, 'MCP-Server-Adresse')
+                        }
+                        className="h-7 px-2.5 bg-[#3138A0] hover:bg-[#272d82] active:scale-98 text-white text-[10px] font-semibold rounded-md flex items-center gap-1 shrink-0 transition-all"
                       >
                         {copiedKey === 'mcp_url' ? <Check size={11} /> : <Copy size={11} />}
                         <span>{copiedKey === 'mcp_url' ? 'Kopiert' : 'URL kopieren'}</span>
                       </button>
                     </div>
-                    <p className="text-[11px] font-mono text-slate-800 break-all leading-snug select-all">
+                    <p className="text-[11px] font-mono text-slate-800 break-all leading-snug select-all bg-white border border-slate-200/80 rounded-md px-2 py-1.5">
                       {effectiveMcpUrl}
                     </p>
                     <span className="text-[10px] text-slate-500 block">
@@ -779,36 +837,41 @@ export const EinstellungenView: React.FC = () => {
                   </div>
 
                   {/* 2. MCP-Zugangsschlüssel (direkt auslesbar & kopierbar in Web-App & Android-App) */}
-                  <div className="p-2.5 bg-slate-50 border border-slate-200/80 rounded-lg space-y-1.5">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-[10px] font-bold text-slate-800 uppercase tracking-tight">
-                        2. MCP-Zugangsschlüssel (Bearer / API-Key)
-                      </span>
-                      <div className="flex items-center gap-1 shrink-0">
-                        <button
-                          type="button"
-                          onClick={() => void handleToggleShowSecret()}
-                          className="h-7 px-2 bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 text-[10px] font-semibold rounded-md flex items-center gap-1 transition-colors"
-                          title={showSecretToken ? 'Schlüssel verbergen' : 'Schlüssel anzeigen'}
-                        >
-                          {showSecretToken ? <EyeOff size={11} /> : <Eye size={11} />}
-                          <span>{showSecretToken ? 'Verbergen' : 'Anzeigen'}</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => void handleCopyAdminToken()}
-                          className="h-7 px-2.5 bg-slate-800 hover:bg-slate-900 text-white text-[10px] font-semibold rounded-md flex items-center gap-1 transition-colors"
-                        >
-                          {copiedKey === 'mcp_token' ? <Check size={11} /> : <Copy size={11} />}
-                          <span>{copiedKey === 'mcp_token' ? 'Kopiert' : 'Schlüssel kopieren'}</span>
-                        </button>
-                      </div>
-                    </div>
-                    <p className="text-[11px] font-mono text-slate-700 break-all leading-snug select-all">
-                      {showSecretToken && revealedAdminToken
-                        ? revealedAdminToken
+                  <div className="p-2.5 bg-slate-50 border border-slate-200/80 rounded-lg space-y-2">
+                    <span className="text-[10px] font-bold text-slate-800 uppercase tracking-tight block">
+                      2. MCP-Zugangsschlüssel (Bearer / API-Key)
+                    </span>
+                    <p className="text-[11px] font-mono text-slate-800 break-all leading-snug select-all bg-white border border-slate-200/80 rounded-md px-2 py-1.5">
+                      {showSecretToken
+                        ? resolveCurrentFullTokenSync() || effectiveMaskedToken
                         : effectiveMaskedToken}
                     </p>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void handleToggleShowSecret()}
+                        className="h-8 px-2.5 bg-white hover:bg-slate-100 active:scale-98 border border-slate-300 text-slate-800 text-[11px] font-semibold rounded-lg flex items-center justify-center gap-1.5 transition-all"
+                      >
+                        {showSecretToken ? <EyeOff size={13} /> : <Eye size={13} />}
+                        <span>{showSecretToken ? 'Verbergen' : 'Anzeigen'}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleCopyAdminToken()}
+                        className="h-8 px-2.5 bg-slate-900 hover:bg-slate-800 active:scale-98 text-white text-[11px] font-semibold rounded-lg flex items-center justify-center gap-1.5 transition-all"
+                      >
+                        {copiedKey === 'mcp_token' ? <Check size={13} /> : <Copy size={13} />}
+                        <span>
+                          {copiedKey === 'mcp_token' ? 'Kopiert!' : 'Schlüssel kopieren'}
+                        </span>
+                      </button>
+                    </div>
+                    {copiedKey === 'mcp_token' && (
+                      <div className="px-2 py-1 bg-emerald-50 border border-emerald-200 rounded-md text-[10px] font-semibold text-[#2C7738] flex items-center gap-1">
+                        <Check size={11} className="shrink-0" />
+                        <span>MCP-Zugangsschlüssel in die Zwischenablage kopiert.</span>
+                      </div>
+                    )}
                   </div>
 
                   {/* 3. Automatische Verbindung ohne Einmal-Code + 1-Klick-Reset */}

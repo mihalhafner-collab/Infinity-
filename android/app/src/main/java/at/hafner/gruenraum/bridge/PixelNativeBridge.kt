@@ -1,5 +1,8 @@
 package at.hafner.gruenraum.bridge
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.webkit.JavascriptInterface
 import at.hafner.gruenraum.MainActivity
 import at.hafner.gruenraum.documents.NativeDocumentManager
@@ -37,6 +40,36 @@ class PixelNativeBridge(
     @JavascriptInterface
     fun getMcpSyncStatusJson(): String {
         return mcpSyncManager.getStatusJson()
+    }
+
+    @JavascriptInterface
+    fun getRevealedMcpToken(): String {
+        return mcpSyncManager.getRevealedMcpToken()
+    }
+
+    @JavascriptInterface
+    fun copyToClipboard(label: String, text: String): Boolean {
+        if (text.isBlank()) return false
+        val latch = java.util.concurrent.CountDownLatch(1)
+        var copied = false
+        activity.runOnUiThread {
+            try {
+                val cm = activity.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                if (cm != null) {
+                    val clip = ClipData.newPlainText(label.ifBlank { "MCP-Schlüssel" }, text)
+                    cm.setPrimaryClip(clip)
+                    copied = true
+                }
+            } catch (_: Exception) {
+            } finally {
+                latch.countDown()
+            }
+        }
+        try {
+            latch.await(1, java.util.concurrent.TimeUnit.SECONDS)
+        } catch (_: InterruptedException) {
+        }
+        return copied
     }
 
     @JavascriptInterface

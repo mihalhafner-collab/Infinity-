@@ -221,7 +221,7 @@ function isTrustedOwnerBrowserContext(req: Request): boolean {
 function requireMcpAuth(req: Request, res: Response, next: NextFunction): void {
   applyNoLeakSecurityHeaders(res);
   const token = extractTokenFromRequest(req);
-  const verified = verifyAnyAuthorizedToken(token, { allowDeviceToken: false });
+  const verified = verifyAnyAuthorizedToken(token, { allowDeviceToken: true });
   if (!verified) {
     const { baseUrl } = resolvePublicHttpsBaseUrl(req);
     res.setHeader(
@@ -987,6 +987,7 @@ async function startServer() {
       requireToken: true,
       tokenSource: cfg.tokenSource,
       maskedToken: maskToken(cfg.adminToken),
+      adminToken: cfg.adminToken,
       oauthEnabled: oauthSummary.oauthEnabled,
       activeOAuthGrants: oauthSummary.activeOAuthGrants,
       pairedAndroidDevices: oauthSummary.pairedAndroidDevices,

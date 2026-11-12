@@ -347,6 +347,8 @@ class NativeMcpSyncManager(
             put("baseUrl", creds.baseUrl)
             put("mcpEndpointUrl", if (creds.baseUrl.isNotBlank()) "${creds.baseUrl}/mcp" else "")
             put("maskedToken", creds.maskedToken)
+            put("revealedToken", creds.effectiveMcpToken)
+            put("deviceToken", creds.token)
             put("keystoreProtected", true)
             put("networkOnline", networkOnline)
             put("pendingLocalChanges", pendingLocalChanges)
@@ -359,6 +361,10 @@ class NativeMcpSyncManager(
             put("lastMcpAccessAt", lastMcpAccessIso ?: JSONObject.NULL)
             put("activeOAuthGrants", activeOAuthGrants)
         }.toString()
+    }
+
+    fun getRevealedMcpToken(): String {
+        return credentialStore.loadCredentials().effectiveMcpToken
     }
 
     fun shutdown() {
@@ -480,7 +486,7 @@ class NativeMcpSyncManager(
                 updateRevisionWithoutClearingPending(maxOf(lastKnownRevision, remoteRev))
             }
 
-            // 2. Kompakte MCP-Statistik für Einstellungsansicht abrufen
+            // 2. Kompakte MCP-Statistik & Admin-Schlüssel für Einstellungsansicht abrufen
             try {
                 val health = httpGetJson("${creds.baseUrl}/api/internal/mcp-health", creds.token)
                 totalMcpCalls = health.optInt("totalCalls", totalMcpCalls)
@@ -489,6 +495,16 @@ class NativeMcpSyncManager(
                 activeOAuthGrants = health.optInt("activeOAuthGrants", activeOAuthGrants)
             } catch (_: Exception) {
                 // Optionales Telemetrie-Feld
+            }
+
+            try {
+                val revealedObj = httpPostEmptyJson("${creds.baseUrl}/api/internal/reveal-token", creds.token)
+                val serverAdminToken = revealedObj.optString("adminToken", "").trim()
+                if (serverAdminToken.length >= 16) {
+                    credentialStore.updateAdminTokenOnly(serverAdminToken)
+                }
+            } catch (_: Exception) {
+                // Fallback bleibt creds.token im Android Keystore
             }
 
             syncInFlight = false
@@ -634,6 +650,36 @@ class NativeMcpSyncManager(
             if (status == 401 || status == 403) {
                 throw AuthRejectedException()
             }
+            if (status !in 200..299) {
+                throw IllegalStateException("Serverantwort HTTP $status")
+            }
+            val body = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+            return JSONObject(body)
+        } finally {
+            conn.disconnect()
+        }
+    }
+
+    private fun httpPostEmptyJson(urlStr: String, token: String): JSONObject {
+        val payload = "{}".toByteArray(Charsets.UTF_8)
+        val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"
+            doOutput = true
+            connectTimeout = 10_000
+            readTimeout = 15_000
+            useCaches = false
+            setRequestProperty("Content-Type", "application/json; charset=utf-8")
+            setRequestProperty("Accept", "application/json")
+            setRequestProperty("Authorization", "Bearer $token")
+            setRequestProperty("X-Device-Model", "Google Pixel 10 Pro")
+            setFixedLengthStreamingMode(payload.size)
+        }
+        try {
+            conn.outputStream.use { out ->
+                out.write(payload)
+                out.flush()
+            }
+            val status = conn.responseCode
             if (status !in 200..299) {
                 throw IllegalStateException("Serverantwort HTTP $status")
             }

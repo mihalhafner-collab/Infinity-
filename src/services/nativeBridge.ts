@@ -15,6 +15,8 @@ export interface NativeMcpSyncStatus {
   baseUrl: string;
   mcpEndpointUrl: string;
   maskedToken: string;
+  revealedToken?: string;
+  deviceToken?: string;
   keystoreProtected: boolean;
   networkOnline: boolean;
   pendingLocalChanges: boolean;
@@ -35,6 +37,8 @@ interface HafnerNativeInterface {
   saveStateJson: (json: string) => boolean;
   getBackupMetaJson: () => string;
   getMcpSyncStatusJson?: () => string;
+  getRevealedMcpToken?: () => string;
+  copyToClipboard?: (label: string, text: string) => boolean;
   configureMcpSync?: (baseUrl: string, token: string) => string;
   pairMcpWithCode?: (baseUrl: string, code: string) => string;
   triggerMcpSyncNow?: () => boolean;
@@ -431,6 +435,62 @@ export function resolveBackendEndpoint(path: string): {
   return { url: cleanPath, headers: {} };
 }
 
+export function getRevealedNativeMcpToken(): string | null {
+  if (!isNativeAndroidApp()) return null;
+  try {
+    const direct = window.HafnerNative?.getRevealedMcpToken?.()?.trim();
+    if (direct && direct.length >= 16) return direct;
+    const status = getNativeMcpSyncStatus();
+    const fromStatus = status?.revealedToken?.trim() || status?.deviceToken?.trim();
+    if (fromStatus && fromStatus.length >= 16) return fromStatus;
+  } catch {
+    // Ignore
+  }
+  return null;
+}
+
+export async function copyTextRobustly(label: string, text: string): Promise<boolean> {
+  const cleanText = text.trim();
+  if (!cleanText) return false;
+
+  if (isNativeAndroidApp() && window.HafnerNative?.copyToClipboard) {
+    try {
+      const ok = window.HafnerNative.copyToClipboard(label, cleanText);
+      if (ok) return true;
+    } catch {
+      // Fallback to web clipboard below
+    }
+  }
+
+  try {
+    if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(cleanText);
+      return true;
+    }
+  } catch {
+    // Fallback to textarea execCommand below
+  }
+
+  if (typeof document !== 'undefined') {
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = cleanText;
+      ta.setAttribute('readonly', 'true');
+      ta.className = 'fixed -top-96 left-0 opacity-0 pointer-events-none';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      const copied = document.execCommand('copy');
+      document.body.removeChild(ta);
+      if (copied) return true;
+    } catch {
+      // Ignore
+    }
+  }
+
+  return false;
+}
+
 export function resolveMcpAdminEndpoint(
   path: string,
   overrideBaseUrl?: string
@@ -440,18 +500,27 @@ export function resolveMcpAdminEndpoint(
 } {
   const cleanPath = path.startsWith('/') ? path : `/${path}`;
   if (isNativeAndroidApp()) {
+    const status = getNativeMcpSyncStatus();
     const rawBase =
       overrideBaseUrl?.trim() ||
-      getNativeMcpSyncStatus()?.baseUrl?.trim() ||
+      status?.baseUrl?.trim() ||
       'https://hafner-gruenraum.ai.studio';
     const normalizedBase = rawBase.includes('ais-pre-usuarrctzvo6yzyghmhedg')
       ? 'https://hafner-gruenraum.ai.studio'
       : rawBase.replace(/\/mcp.*$/i, '').replace(/\/+$/, '');
+    const authToken =
+      status?.deviceToken?.trim() ||
+      status?.revealedToken?.trim() ||
+      getRevealedNativeMcpToken();
+    const headers: Record<string, string> = {
+      'X-Device-Model': 'Google Pixel 10 Pro'
+    };
+    if (authToken) {
+      headers['Authorization'] = `Bearer ${authToken}`;
+    }
     return {
       url: `${normalizedBase}${cleanPath}`,
-      headers: {
-        'X-Device-Model': 'Google Pixel 10 Pro'
-      }
+      headers
     };
   }
   return { url: cleanPath, headers: {} };
