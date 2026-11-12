@@ -85,9 +85,7 @@ class NativeMcpSyncManager(
             sseReconnectAttempt = 0
             refreshStatusState()
             scheduleImmediateSync("network_available")
-            if (isForeground.get()) {
-                ensureSseStreamRunning()
-            }
+            ensureSseStreamRunning()
         }
 
         override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
@@ -97,9 +95,7 @@ class NativeMcpSyncManager(
                 sseReconnectAttempt = 0
                 refreshStatusState()
                 scheduleImmediateSync("network_validated")
-                if (isForeground.get()) {
-                    ensureSseStreamRunning()
-                }
+                ensureSseStreamRunning()
             }
         }
 
@@ -113,6 +109,11 @@ class NativeMcpSyncManager(
     }
 
     init {
+        try {
+            System.setProperty("http.keepAlive", "true")
+            System.setProperty("http.maxConnections", "10")
+        } catch (_: Exception) {
+        }
         refreshStatusState(emit = false)
         try {
             val req = NetworkRequest.Builder()
@@ -124,8 +125,11 @@ class NativeMcpSyncManager(
         }
         syncExecutor.scheduleWithFixedDelay({
             try {
-                if (isForeground.get() && !isDestroyed.get() && !syncInFlight && !pairingInFlight) {
-                    performSyncCycle("periodic_foreground")
+                if (!isDestroyed.get() && !syncInFlight && !pairingInFlight) {
+                    if (isForeground.get() || pendingLocalChanges) {
+                        performSyncCycle("periodic_tunnel_keepalive")
+                    }
+                    ensureSseStreamRunning()
                 }
             } catch (_: Exception) {
             }
@@ -143,9 +147,12 @@ class NativeMcpSyncManager(
 
     fun onAppBackgrounded() {
         isForeground.set(false)
-        closeActiveSseConnection()
-        if (pendingLocalChanges && networkOnline) {
-            scheduleImmediateSync("app_background_flush")
+        // Ausgehenden HTTPS-Tunnel verfügbar/warm halten für sofortige ChatGPT-Antworten ohne Reconnect-Verzögerung
+        if (networkOnline) {
+            ensureSseStreamRunning()
+            if (pendingLocalChanges) {
+                scheduleImmediateSync("app_background_flush")
+            }
         }
     }
 
@@ -195,7 +202,7 @@ class NativeMcpSyncManager(
         pendingPushTask?.cancel(false)
         pendingPushTask = syncExecutor.schedule({
             performSyncCycle("local_save")
-        }, 280, TimeUnit.MILLISECONDS)
+        }, 120, TimeUnit.MILLISECONDS)
     }
 
     fun pairWithOneTimeCode(baseUrl: String, pairingCode: String): String {
@@ -568,24 +575,26 @@ class NativeMcpSyncManager(
 
     private fun ensureSseStreamRunning() {
         val creds = credentialStore.loadCredentials()
-        if (!creds.isConfigured || !isForeground.get() || isDestroyed.get()) return
+        if (!creds.isConfigured || isDestroyed.get()) return
         if (sseThread?.isAlive == true) return
 
         val thread = Thread({
-            while (isForeground.get() && !isDestroyed.get()) {
+            while (!isDestroyed.get()) {
                 val currentCreds = credentialStore.loadCredentials()
                 if (!currentCreds.isConfigured || !checkCurrentConnectivity()) {
                     break
                 }
                 var conn: HttpURLConnection? = null
                 try {
-                    val url = URL("${currentCreds.baseUrl}/api/internal/events")
+                    val url = URL("${currentCreds.baseUrl}/api/internal/events?tunnel=1")
                     conn = (url.openConnection() as HttpURLConnection).apply {
                         requestMethod = "GET"
-                        connectTimeout = 10_000
-                        readTimeout = 65_000
+                        connectTimeout = 8_000
+                        readTimeout = 45_000
                         useCaches = false
                         setRequestProperty("Accept", "text/event-stream")
+                        setRequestProperty("Connection", "keep-alive")
+                        setRequestProperty("X-Tunnel-Mode", "outbound-https-pixel10pro")
                         setRequestProperty("Authorization", "Bearer ${currentCreds.token}")
                         setRequestProperty("X-Device-Model", "Google Pixel 10 Pro")
                     }
@@ -608,13 +617,22 @@ class NativeMcpSyncManager(
 
                     BufferedReader(InputStreamReader(conn.inputStream, Charsets.UTF_8)).use { reader ->
                         var line: String? = reader.readLine()
-                        while (line != null && isForeground.get() && !isDestroyed.get()) {
+                        while (line != null && !isDestroyed.get()) {
                             if (line.startsWith("data:")) {
                                 val payload = line.removePrefix("data:").trim()
                                 if (payload.startsWith("{")) {
                                     val evt = JSONObject(payload)
                                     val incomingRev = evt.optInt("revision", 0)
-                                    if (incomingRev > lastKnownRevision) {
+                                    val inlineData = evt.optJSONObject("data")
+                                    if (inlineData != null && incomingRev > lastKnownRevision && pendingSyncCount == 0) {
+                                        // Direkte Übernahme aus dem warmen ausgehenden HTTPS-Tunnel in die lokale Datenbank (0 Extra-Roundtrips)
+                                        val inlineStr = inlineData.toString()
+                                        storeManager.saveAppStateFromRemote(inlineStr)
+                                        val summary = evt.optString("summary", "Über privaten HTTPS-Tunnel aktualisiert")
+                                        updateRevisionWithoutClearingPending(incomingRev)
+                                        onRemoteStateApplied(inlineStr, incomingRev, summary)
+                                        emitStatus()
+                                    } else if (incomingRev > lastKnownRevision) {
                                         scheduleImmediateSync("sse_event_rev_$incomingRev")
                                     }
                                 }
@@ -623,13 +641,13 @@ class NativeMcpSyncManager(
                         }
                     }
                 } catch (_: Exception) {
-                    if (!isForeground.get() || isDestroyed.get()) break
+                    if (isDestroyed.get()) break
                     sseReconnectAttempt = (sseReconnectAttempt + 1).coerceAtMost(5)
                     val delayMs = when (sseReconnectAttempt) {
-                        1 -> 2_000L
-                        2 -> 5_000L
-                        3 -> 12_000L
-                        else -> 25_000L
+                        1 -> 600L
+                        2 -> 1_500L
+                        3 -> 4_000L
+                        else -> 10_000L
                     }
                     try {
                         Thread.sleep(delayMs)

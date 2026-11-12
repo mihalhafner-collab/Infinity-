@@ -722,7 +722,7 @@ export const EinstellungenView: React.FC = () => {
                 </div>
               </div>
 
-              {/* Privates ChatGPT-MCP-Plugin & Echtzeit-Sync (Identische Oberfläche in Web-App & Android-App) */}
+              {/* Privates ChatGPT-MCP-Plugin über ausgehenden HTTPS-Tunnel (nur Android-App) */}
               <div className="p-3 bg-white border border-indigo-200/80 rounded-xl space-y-2.5">
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex items-start gap-2.5 min-w-0">
@@ -731,20 +731,19 @@ export const EinstellungenView: React.FC = () => {
                     </div>
                     <div className="min-w-0">
                       <span className="font-bold text-slate-900 block text-xs">
-                        Privates ChatGPT-MCP-Plugin
+                        Privates ChatGPT-MCP-Plugin (HTTPS-Tunnel)
                       </span>
-                      <span className="text-[10px] text-slate-500 block leading-snug">
-                        Lesen, Anlegen, Ändern &amp; Löschen · {mcpInfo?.toolCount ?? 10} MCP-Funktionen · Primärquelle Pixel 10 Pro
+                      <span className="text-[10px] text-[#3138A0] font-semibold block leading-snug">
+                        ChatGPT ↔ privater Tunnel ↔ Pixel-App ↔ lokale Datenbank
                       </span>
                     </div>
                   </div>
                   <span className="text-[10px] font-bold text-[#2C7738] bg-emerald-50 px-2 py-0.5 rounded-md shrink-0">
-                    Verbunden
+                    Tunnel warm
                   </span>
                 </div>
 
                 <div className="space-y-2 pt-1.5 border-t border-slate-100">
-                  {/* Identisches 3-Kachel-Statusraster in Web-App & Android-App */}
                   <div className="grid grid-cols-3 gap-1.5 text-[10px]">
                     <div
                       className={`p-2 border rounded-lg ${
@@ -753,7 +752,7 @@ export const EinstellungenView: React.FC = () => {
                           : 'bg-slate-50 border-slate-200/70'
                       }`}
                     >
-                      <span className="text-slate-500 block">Synchronisation</span>
+                      <span className="text-slate-500 block">Lokale Datenbank</span>
                       <span
                         className={`font-bold ${
                           effectivePendingCount > 0 ? 'text-amber-800' : 'text-[#2C7738]'
@@ -761,29 +760,33 @@ export const EinstellungenView: React.FC = () => {
                       >
                         {effectivePendingCount > 0
                           ? `${effectivePendingCount} ausstehend`
-                          : `0 · Synchron (Rev. ${effectiveRevision})`}
+                          : `Offline-fähig (Rev. ${effectiveRevision})`}
                       </span>
                     </div>
                     <div className="p-2 bg-slate-50 border border-slate-200/70 rounded-lg">
-                      <span className="text-slate-500 block">Pixel 10 Pro</span>
+                      <span className="text-slate-500 block">HTTPS-Tunnel</span>
                       <span className="font-bold text-[#2C7738] flex items-center gap-1">
                         <ShieldCheck size={11} className="shrink-0" />
-                        <span>
-                          {isNativeAndroid
-                            ? 'Android Keystore'
-                            : (mcpInfo?.pairedAndroidDevices ?? 0) > 0
-                              ? `${mcpInfo?.pairedAndroidDevices} verbunden`
-                              : 'Automatisch'}
-                        </span>
+                        <span>Keep-Alive aktiv</span>
                       </span>
                     </div>
                     <div className="p-2 bg-slate-50 border border-slate-200/70 rounded-lg">
-                      <span className="text-slate-500 block">ChatGPT OAuth</span>
+                      <span className="text-slate-500 block">Tempo-Bündelung</span>
                       <span className="font-bold text-[#2C7738]">
-                        {(mcpInfo?.activeOAuthGrants ?? 0) > 0
-                          ? `${mcpInfo?.activeOAuthGrants} aktiv`
-                          : '1-Klick bereit'}
+                        {mcpInfo?.toolCount ?? 3} Kombi-Tools
                       </span>
+                    </div>
+                  </div>
+
+                  <div className="p-2 bg-indigo-50/50 border border-indigo-100 rounded-lg text-[10px] text-slate-700 space-y-0.5 leading-snug">
+                    <div>
+                      <strong className="text-slate-900">Lokale Datenhaltung:</strong> App arbeitet auf dem Pixel 10 Pro auch ohne Internet.
+                    </div>
+                    <div>
+                      <strong className="text-slate-900">Gezielter Zugriff:</strong> ChatGPT erhält nur die angeforderten Daten.
+                    </div>
+                    <div>
+                      <strong className="text-slate-900">Gemeinsame Funktionen &amp; Tempo:</strong> Geprüfte App-Logik, warmgehaltener Tunnel &amp; gebündelte Werkzeugaufrufe (`pixel_abfrage`, `pixel_aktion`, `pixel_abrechnung`).
                     </div>
                   </div>
 

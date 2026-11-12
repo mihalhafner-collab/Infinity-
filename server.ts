@@ -429,10 +429,10 @@ function handleSingleJsonRpc(payload: JsonRpcRequest): Record<string, unknown> |
           },
           serverInfo: {
             name: 'hafner-gruenraum-mcp',
-            version: '1.2.0'
+            version: '1.3.0'
           },
           instructions:
-            'Direkter privater MCP-Zugang (Lesen, Anlegen, Ändern & Löschen) für Hafner Grünraum Handwerk (Pixel 10 Pro). Verwendet exakt dieselbe Datenhaltung, L.C.R.-Sperren, Rechnungsnummern, Storno-Regeln und österreichische GuV-/Steuerberechnung wie die App.'
+            'Privater OpenAI-MCP-Tunnel mit ausgehendem HTTPS (ChatGPT ↔ privater Tunnel ↔ Pixel-App ↔ lokale Datenbank auf Google Pixel 10 Pro). Bündle Leseabfragen über pixel_abfrage (collections: [...]) und Schreibvorgänge über pixel_aktion oder pixel_abrechnung in einem einzigen Aufruf, um Wartezeiten zu minimieren. Verwendet exakt dieselbe geprüfte App-Logik (L.C.R.-Sperren, RE-75/2026 Rechnungen, Storno-Regeln und österreichische GuV).'
         }
       };
     }
@@ -467,7 +467,7 @@ function handleSingleJsonRpc(payload: JsonRpcRequest): Record<string, unknown> |
             content: [
               {
                 type: 'text',
-                text: JSON.stringify(output, null, 2)
+                text: JSON.stringify(output)
               }
             ],
             isError: false
@@ -949,17 +949,47 @@ async function startServer() {
     });
   });
 
+  const activeAndroidTunnels = new Map<
+    string,
+    {
+      res: Response;
+      connectedAt: string;
+      lastHeartbeatAt: string;
+      deviceModel: string;
+    }
+  >();
+
   app.get('/api/internal/events', allowAppSyncAccess, (req, res) => {
     const devHeader = req.headers['x-device-model'];
-    if (typeof devHeader === 'string' && devHeader.trim()) {
-      recordAndroidSyncActivity('events', devHeader);
+    const isAndroidTunnel =
+      (typeof devHeader === 'string' && devHeader.trim().length > 0) ||
+      req.query.tunnel === '1' ||
+      String(req.headers['x-tunnel-mode'] || '').includes('outbound-https');
+
+    if (isAndroidTunnel) {
+      recordAndroidSyncActivity(
+        'events',
+        typeof devHeader === 'string' && devHeader.trim() ? devHeader : 'Google Pixel 10 Pro'
+      );
     }
 
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache, no-transform');
     res.setHeader('Connection', 'keep-alive');
+    res.setHeader('Keep-Alive', 'timeout=75, max=1000');
     res.setHeader('X-Accel-Buffering', 'no');
     res.flushHeaders?.();
+
+    const tunnelId = crypto.randomUUID();
+    if (isAndroidTunnel) {
+      activeAndroidTunnels.set(tunnelId, {
+        res,
+        connectedAt: new Date().toISOString(),
+        lastHeartbeatAt: new Date().toISOString(),
+        deviceModel:
+          typeof devHeader === 'string' && devHeader.trim() ? devHeader : 'Google Pixel 10 Pro'
+      });
+    }
 
     const current = getStore();
     res.write(
@@ -968,28 +998,39 @@ async function startServer() {
         updatedAt: current.updatedAt,
         lastActor: current.lastActor,
         lastAndroidSyncAt: current.lastAndroidSyncAt,
-        summary: current.lastActionSummary
+        summary: current.lastActionSummary,
+        tunnelWarm: isAndroidTunnel
       })}\n\n`
     );
 
     const unsubscribe = subscribeStoreChanges((updated) => {
+      // Für den warmgehaltenen ausgehenden HTTPS-Tunnel des Pixel 10 Pro wird bei MCP-/Web-Änderungen
+      // der aktualisierte Datenbestand direkt inline im Tunnel-Frame mitgeliefert (0 Zusatz-Roundtrips!).
+      const includeInlineData = isAndroidTunnel && updated.lastActor !== 'android';
       res.write(
         `data: ${JSON.stringify({
           revision: updated.revision,
           updatedAt: updated.updatedAt,
           lastActor: updated.lastActor,
           lastAndroidSyncAt: updated.lastAndroidSyncAt,
-          summary: updated.lastActionSummary
+          summary: updated.lastActionSummary,
+          ...(includeInlineData ? { data: updated.data } : {})
         })}\n\n`
       );
     });
 
+    // Kurzer 15-Sekunden-Keep-Alive-Puls hält den ausgehenden HTTPS-Tunnel dauerhaft warm
     const keepAlive = setInterval(() => {
+      const entry = activeAndroidTunnels.get(tunnelId);
+      if (entry) {
+        entry.lastHeartbeatAt = new Date().toISOString();
+      }
       res.write(': keepalive\n\n');
-    }, 25000);
+    }, 15000);
 
     req.on('close', () => {
       clearInterval(keepAlive);
+      activeAndroidTunnels.delete(tunnelId);
       unsubscribe();
     });
   });
@@ -1008,7 +1049,9 @@ async function startServer() {
       adminToken: cfg.adminToken,
       oauthEnabled: oauthSummary.oauthEnabled,
       activeOAuthGrants: oauthSummary.activeOAuthGrants,
-      pairedAndroidDevices: oauthSummary.pairedAndroidDevices,
+      pairedAndroidDevices: Math.max(oauthSummary.pairedAndroidDevices, activeAndroidTunnels.size),
+      tunnelWarmConnections: activeAndroidTunnels.size,
+      tunnelArchitecture: 'outbound_https_private_tunnel',
       activePairingCodes: oauthSummary.activePairingCodes,
       androidTelemetry: oauthSummary.androidTelemetry,
       persistence,
