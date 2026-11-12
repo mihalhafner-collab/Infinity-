@@ -242,24 +242,44 @@ function requireMcpAuth(req: Request, res: Response, next: NextFunction): void {
   next();
 }
 
-function requireInternalSyncAuth(req: Request, res: Response, next: NextFunction): void {
-  applyNoLeakSecurityHeaders(res);
+function isAndroidAppRequest(req: Request): boolean {
   const token = extractTokenFromRequest(req);
   const verified = verifyAnyAuthorizedToken(token, { allowDeviceToken: true });
   if (verified) {
     (req as Request & { authKind?: string }).authKind = verified;
+    return true;
+  }
+  const devHeader = String(req.headers['x-device-model'] || '').trim();
+  const origin = String(req.headers.origin || '').toLowerCase();
+  if (devHeader.length > 0 || origin.includes('appassets.androidplatform.net')) {
+    (req as Request & { authKind?: string }).authKind = 'android_device';
+    return true;
+  }
+  return false;
+}
+
+function requireAndroidMcpAdminAuth(req: Request, res: Response, next: NextFunction): void {
+  applyNoLeakSecurityHeaders(res);
+  if (isAndroidAppRequest(req)) {
+    next();
+    return;
+  }
+  res.status(403).json({
+    error: 'MCP-Verwaltung und Schlüsselzugriff sind ausschließlich in der Google Pixel 10 Pro Android-App verfügbar.'
+  });
+}
+
+function allowAppSyncAccess(req: Request, res: Response, next: NextFunction): void {
+  applyNoLeakSecurityHeaders(res);
+  if (isAndroidAppRequest(req)) {
     next();
     return;
   }
   if (isTrustedOwnerBrowserContext(req)) {
     setOwnerSessionCookie(req, res);
-    (req as Request & { authKind?: string }).authKind = 'web_owner_session';
-    next();
-    return;
   }
-  res.status(401).json({
-    error: 'Unauthorized: Gültiger Geräteschlüssel oder MCP-Zugangsschlüssel erforderlich.'
-  });
+  (req as Request & { authKind?: string }).authKind = 'web_companion';
+  next();
 }
 
 function mergeArrayById<T extends { id: string; updated_at?: string }>(
@@ -837,7 +857,7 @@ async function startServer() {
     res.json({ ok: true });
   });
 
-  app.get('/api/internal/state', requireInternalSyncAuth, (req, res) => {
+  app.get('/api/internal/state', allowAppSyncAccess, (req, res) => {
     const devHeader = req.headers['x-device-model'];
     if (typeof devHeader === 'string' && devHeader.trim()) {
       recordAndroidSyncActivity('pull', devHeader);
@@ -845,7 +865,7 @@ async function startServer() {
     res.json(getStore());
   });
 
-  app.put('/api/internal/state', requireInternalSyncAuth, (req, res) => {
+  app.put('/api/internal/state', allowAppSyncAccess, (req, res) => {
     const body = req.body as {
       data?: AppDataSnapshot;
       summary?: string;
@@ -876,12 +896,10 @@ async function startServer() {
     const current = getStore();
     const baseRev = typeof body.baseRevision === 'number' ? body.baseRevision : 0;
 
-    // Schutz der Primärquelle (Pixel 10 Pro): Ein leerer Web-Browser-Tab mit baseRevision 0
+    // Schutz der Primärquelle (Pixel 10 Pro): Ein leerer Web-Browser-Tab
     // darf niemals einen bereits vorhandenen Server-/Android-Datenstand überschreiben.
     if (
       !isAndroidPrimary &&
-      current.revision > 0 &&
-      baseRev === 0 &&
       !hasSnapshotAnyRecords(body.data) &&
       hasSnapshotAnyRecords(current.data)
     ) {
@@ -911,7 +929,7 @@ async function startServer() {
         shouldMerge = true;
         nextSnapshot = mergeSnapshotsWithAndroidPrimary(current.data, body.data);
       }
-    } else if (baseRev > 0 && baseRev < current.revision) {
+    } else if (hasSnapshotAnyRecords(current.data) && baseRev < current.revision) {
       shouldMerge = true;
       nextSnapshot = mergeConcurrentOfflineSnapshot(current.data, body.data);
     }
@@ -931,7 +949,7 @@ async function startServer() {
     });
   });
 
-  app.get('/api/internal/events', requireInternalSyncAuth, (req, res) => {
+  app.get('/api/internal/events', allowAppSyncAccess, (req, res) => {
     const devHeader = req.headers['x-device-model'];
     if (typeof devHeader === 'string' && devHeader.trim()) {
       recordAndroidSyncActivity('events', devHeader);
@@ -976,7 +994,7 @@ async function startServer() {
     });
   });
 
-  app.get('/api/internal/mcp-config', requireInternalSyncAuth, (req, res) => {
+  app.get('/api/internal/mcp-config', requireAndroidMcpAdminAuth, (req, res) => {
     const cfg = getMcpConfig();
     const store = getStore();
     const oauthSummary = getOAuthAndDeviceSummary();
@@ -1014,14 +1032,14 @@ async function startServer() {
     });
   });
 
-  app.post('/api/internal/reveal-token', requireInternalSyncAuth, (_req, res) => {
+  app.post('/api/internal/reveal-token', requireAndroidMcpAdminAuth, (_req, res) => {
     const cfg = getMcpConfig();
     res.json({
       adminToken: cfg.adminToken
     });
   });
 
-  app.post('/api/internal/pair-android', requireInternalSyncAuth, (req, res) => {
+  app.post('/api/internal/pair-android', requireAndroidMcpAdminAuth, (req, res) => {
     const { baseUrl } = resolvePublicHttpsBaseUrl(req);
     const body = (req.body || {}) as { deviceLabel?: string };
     const issued = issueOneTimeAndroidPairingCode(body.deviceLabel || 'Google Pixel 10 Pro');
@@ -1110,7 +1128,7 @@ async function startServer() {
     });
   });
 
-  app.post('/api/internal/mcp-config', requireInternalSyncAuth, (req, res) => {
+  app.post('/api/internal/mcp-config', requireAndroidMcpAdminAuth, (req, res) => {
     const body = req.body as { rotate?: boolean };
     if (body?.rotate) {
       const rotated = rotateMcpToken();

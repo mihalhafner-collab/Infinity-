@@ -122,6 +122,14 @@ class NativeMcpSyncManager(
         } catch (_: Exception) {
             // Fallback auf Standard-Netzprüfung
         }
+        syncExecutor.scheduleWithFixedDelay({
+            try {
+                if (isForeground.get() && !isDestroyed.get() && !syncInFlight && !pairingInFlight) {
+                    performSyncCycle("periodic_foreground")
+                }
+            } catch (_: Exception) {
+            }
+        }, 12, 12, TimeUnit.SECONDS)
     }
 
     fun onAppForegrounded() {
@@ -456,18 +464,38 @@ class NativeMcpSyncManager(
             val remoteStore = httpGetJson("${creds.baseUrl}/api/internal/state", creds.token)
             val remoteRev = remoteStore.optInt("revision", 0)
             val remoteData = remoteStore.optJSONObject("data")
+            val remoteStr = remoteData?.toString()
+            val hasRemoteNonEmpty = hasAnyRecords(remoteStr)
 
             val queuedAtStart = pendingSyncCount
             val localRaw = storeManager.loadAppState()
             val hasLocalNonEmpty = hasAnyRecords(localRaw)
 
-            if ((queuedAtStart > 0 || (lastKnownRevision == 0 && hasLocalNonEmpty)) && localRaw != null) {
+            val isInteractiveReason =
+                reason == "manual_check" ||
+                reason == "app_foreground" ||
+                reason == "one_time_pair_exchange" ||
+                reason == "manual_config" ||
+                reason == "local_save"
+
+            val shouldPushPrimary =
+                localRaw != null && (
+                    queuedAtStart > 0 ||
+                    (hasLocalNonEmpty && (
+                        !hasRemoteNonEmpty ||
+                        remoteRev == 0 ||
+                        remoteRev < lastKnownRevision ||
+                        (isInteractiveReason && localRaw != remoteStr)
+                    ))
+                )
+
+            if (shouldPushPrimary && localRaw != null) {
                 val pushSummary = if (lastKnownRevision == 0 && queuedAtStart == 0) {
                     "Erstsynchronisation von Primärquelle (Google Pixel 10 Pro)"
                 } else {
                     "Primärquelle Pixel 10 Pro ($reason)"
                 }
-                val pushed = pushLocalSnapshot(creds, localRaw, lastKnownRevision, pushSummary)
+                val pushed = pushLocalSnapshot(creds, localRaw, remoteRev, pushSummary)
                 val newRev = pushed.optInt("revision", maxOf(1, remoteRev))
                 val mergedData = pushed.optJSONObject("data")
                 if (pushed.optBoolean("merged", false) && mergedData != null) {
@@ -476,10 +504,9 @@ class NativeMcpSyncManager(
                     onRemoteStateApplied(mergedStr, newRev, "Primärquelle Pixel 10 Pro abgeglichen")
                 }
                 acknowledgeSyncedMutations(queuedAtStart, newRev)
-            } else if (remoteData != null && (remoteRev > lastKnownRevision || localRaw == null)) {
-                val remoteStr = remoteData.toString()
+            } else if (remoteData != null && remoteStr != null && hasRemoteNonEmpty && (remoteRev != lastKnownRevision || !hasLocalNonEmpty)) {
                 storeManager.saveAppStateFromRemote(remoteStr)
-                val summary = remoteStore.optString("lastActionSummary", "MCP-Aktualisierung")
+                val summary = remoteStore.optString("lastActionSummary", "Synchronisation aktualisiert")
                 updateRevisionWithoutClearingPending(remoteRev)
                 onRemoteStateApplied(remoteStr, remoteRev, summary)
             } else {
@@ -730,9 +757,45 @@ class NativeMcpSyncManager(
                 throw IllegalStateException("Upload HTTP $status")
             }
             val respText = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+            mirrorSnapshotToCompanionWebEndpoints(creds.baseUrl, payloadBytes, creds.token)
             return JSONObject(respText)
         } finally {
             conn.disconnect()
+        }
+    }
+
+    private fun mirrorSnapshotToCompanionWebEndpoints(
+        primaryBaseUrl: String,
+        payloadBytes: ByteArray,
+        token: String
+    ) {
+        for (mirrorBase in COMPANION_WEB_ENDPOINTS) {
+            if (mirrorBase.equals(primaryBaseUrl, ignoreCase = true)) continue
+            try {
+                val mirrorConn = (URL("$mirrorBase/api/internal/state").openConnection() as HttpURLConnection).apply {
+                    requestMethod = "PUT"
+                    doOutput = true
+                    connectTimeout = 5_000
+                    readTimeout = 8_000
+                    useCaches = false
+                    setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                    setRequestProperty("Accept", "application/json")
+                    setRequestProperty("Authorization", "Bearer $token")
+                    setRequestProperty("X-Device-Model", "Google Pixel 10 Pro")
+                    setFixedLengthStreamingMode(payloadBytes.size)
+                }
+                try {
+                    mirrorConn.outputStream.use { out ->
+                        out.write(payloadBytes)
+                        out.flush()
+                    }
+                    mirrorConn.responseCode
+                } finally {
+                    mirrorConn.disconnect()
+                }
+            } catch (_: Exception) {
+                // Best-effort Spiegelung für Web-App-Zugriff
+            }
         }
     }
 
@@ -796,5 +859,11 @@ class NativeMcpSyncManager(
         private const val KEY_PENDING_LOCAL = "pending_local_changes"
         private const val KEY_PENDING_COUNT = "pending_sync_count"
         private const val KEY_LAST_SYNC_ISO = "last_sync_iso"
+
+        private val COMPANION_WEB_ENDPOINTS = listOf(
+            "https://hafner-gruenraum.ai.studio",
+            "https://ais-pre-usuarrctzvo6yzyghmhedg-947976408951.europe-west2.run.app",
+            "https://ais-dev-usuarrctzvo6yzyghmhedg-947976408951.europe-west2.run.app"
+        )
     }
 }
