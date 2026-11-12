@@ -1,0 +1,78 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global Default-Deny Catch-All
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedOwner() {
+      return isSignedIn()
+        && request.auth.token.email_verified == true
+        && request.auth.token.email == 'mihalhafner@gmail.com';
+    }
+
+    function isValidId(id) {
+      return id is string
+        && id.size() >= 1
+        && id.size() <= 128
+        && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidConnectionCheck(data) {
+      return data.keys().hasAll(['ownerEmail', 'status', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['ownerEmail', 'status', 'createdAt', 'updatedAt'])
+        && data.ownerEmail is string
+        && data.ownerEmail.size() >= 5
+        && data.ownerEmail.size() <= 128
+        && data.ownerEmail.matches('^[a-zA-Z0-9._%+\\-]+@[a-zA-Z0-9.\\-]+\\.[a-zA-Z]{2,}$')
+        && data.ownerEmail == request.auth.token.email
+        && data.status is string
+        && data.status.size() == 2
+        && data.status == 'ok'
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    // Owner-only Firestore boot connectivity check
+    match /test/{checkId} {
+      allow get: if isVerifiedOwner() && isValidId(checkId);
+      allow list: if false;
+      allow create: if isVerifiedOwner()
+        && isValidId(checkId)
+        && isValidConnectionCheck(incoming())
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isVerifiedOwner()
+        && isValidId(checkId)
+        && isValidConnectionCheck(incoming())
+        && incoming().ownerEmail == existing().ownerEmail
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']);
+      allow delete: if false;
+    }
+
+    // System-only Cloud Run server persistence (accessed exclusively via GCP IAM, never via client SDK)
+    match /_mcp_server_state/{storeKey} {
+      allow read, write: if false;
+    }
+
+    match /_mcp_server_chunks/{chunkId} {
+      allow read, write: if false;
+    }
+  }
+}

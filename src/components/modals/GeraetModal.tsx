@@ -6,6 +6,7 @@ import {
   Calendar,
   Tag,
   Camera,
+  ImagePlus,
   Package,
   Sliders,
   Link2,
@@ -71,7 +72,7 @@ export const GeraetModal: React.FC = () => {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
 
-  const photoInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -300,12 +301,12 @@ export const GeraetModal: React.FC = () => {
           </div>
 
           {/* Profilfoto + Bezeichnung & Modell */}
-          <div className="flex items-start gap-3 p-3 bg-slate-50 border border-slate-200 rounded-2xl">
-            <div className="shrink-0 flex flex-col items-center gap-1">
+          <div className="p-3 bg-slate-50 border border-slate-200 rounded-2xl space-y-2.5">
+            <div className="flex items-start gap-3">
               <div
-                onClick={() => photoInputRef.current?.click()}
-                className="w-18 h-18 rounded-2xl border-2 border-dashed border-indigo-200 hover:border-[#3138A0] bg-white overflow-hidden flex flex-col items-center justify-center cursor-pointer relative shadow-2xs transition-colors"
-                title="Profilfoto auswählen oder aufnehmen"
+                onClick={() => cameraInputRef.current?.click()}
+                className="w-18 h-18 rounded-2xl border-2 border-dashed border-indigo-200 hover:border-[#3138A0] bg-white overflow-hidden flex flex-col items-center justify-center cursor-pointer relative shadow-2xs transition-colors shrink-0"
+                title="Mit Kamera aufnehmen"
               >
                 {photo ? (
                   <img
@@ -322,64 +323,85 @@ export const GeraetModal: React.FC = () => {
                   </div>
                 )}
               </div>
-              {photo ? (
-                <div className="flex items-center gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => photoInputRef.current?.click()}
-                    className="text-[10px] font-semibold text-[#3138A0] hover:underline"
-                  >
-                    Ändern
-                  </button>
-                  <span className="text-slate-300">·</span>
-                  <button
-                    type="button"
-                    onClick={() => setPhoto(null)}
-                    className="text-[10px] font-semibold text-[#B42318] hover:underline"
-                  >
-                    Entf.
-                  </button>
+
+              <div className="flex-1 min-w-0 space-y-2">
+                <div>
+                  <label className="font-semibold text-slate-700 block mb-0.5 text-[11px]">
+                    {itemType === 'zubehoer' ? 'Zubehör-Bezeichnung *' : 'Gerätebezeichnung *'}
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder={currentCatDef?.namePlaceholder || 'Bezeichnung'}
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    className="w-full h-10 px-2.5 bg-white border border-slate-200 rounded-xl focus:border-[#3138A0] outline-hidden text-xs font-bold text-slate-900"
+                  />
                 </div>
-              ) : (
-                <span className="text-[9px] text-slate-400">Erkennbarkeit</span>
-              )}
-              <input
-                ref={photoInputRef}
-                type="file"
-                accept="image/*"
-                onChange={handlePhotoUpload}
-                className="hidden"
-              />
+
+                <div>
+                  <label className="font-semibold text-slate-600 mb-0.5 text-[11px] flex items-center gap-1">
+                    <Tag size={11} className="text-slate-400" />
+                    <span>Modell / Artikel-Nr.</span>
+                  </label>
+                  <input
+                    type="text"
+                    placeholder={currentCatDef?.modelPlaceholder || 'Typ / Serien- oder Artikelnr.'}
+                    value={model}
+                    onChange={(e) => setModel(e.target.value)}
+                    className="w-full h-9 px-2.5 bg-white border border-slate-200 rounded-xl focus:border-[#3138A0] outline-hidden text-xs text-slate-900"
+                  />
+                </div>
+              </div>
             </div>
 
-            <div className="flex-1 min-w-0 space-y-2">
-              <div>
-                <label className="font-semibold text-slate-700 block mb-0.5 text-[11px]">
-                  {itemType === 'zubehoer' ? 'Zubehör-Bezeichnung *' : 'Gerätebezeichnung *'}
-                </label>
+            {/* Direkte Fotoauswahl: Mit Kamera öffnen oder Aus Galerie */}
+            <div className="pt-2 border-t border-slate-200/80 flex items-center gap-2">
+              <label
+                className={`flex-1 h-10 px-2.5 bg-[#3138A0] hover:bg-[#272d82] active:scale-98 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-2xs transition-all cursor-pointer ${
+                  isUploadingPhoto ? 'opacity-60 pointer-events-none' : ''
+                }`}
+              >
+                <Camera size={14} />
+                <span>Mit Kamera öffnen</span>
                 <input
-                  type="text"
-                  required
-                  placeholder={currentCatDef?.namePlaceholder || 'Bezeichnung'}
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  className="w-full h-10 px-2.5 bg-white border border-slate-200 rounded-xl focus:border-[#3138A0] outline-hidden text-xs font-bold text-slate-900"
+                  ref={cameraInputRef}
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  disabled={isUploadingPhoto}
+                  onChange={handlePhotoUpload}
+                  className="hidden"
                 />
-              </div>
+              </label>
 
-              <div>
-                <label className="font-semibold text-slate-600 mb-0.5 text-[11px] flex items-center gap-1">
-                  <Tag size={11} className="text-slate-400" />
-                  <span>Modell / Artikel-Nr.</span>
-                </label>
+              <label
+                className={`flex-1 h-10 px-2.5 bg-white hover:bg-slate-100 active:scale-98 border border-slate-200 text-slate-800 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                  isUploadingPhoto ? 'opacity-60 pointer-events-none' : ''
+                }`}
+              >
+                <ImagePlus size={14} className="text-[#3138A0]" />
+                <span>Aus Galerie</span>
                 <input
-                  type="text"
-                  placeholder={currentCatDef?.modelPlaceholder || 'Typ / Serien- oder Artikelnr.'}
-                  value={model}
-                  onChange={(e) => setModel(e.target.value)}
-                  className="w-full h-9 px-2.5 bg-white border border-slate-200 rounded-xl focus:border-[#3138A0] outline-hidden text-xs text-slate-900"
+                  type="file"
+                  accept="image/*"
+                  disabled={isUploadingPhoto}
+                  onChange={handlePhotoUpload}
+                  className="hidden"
                 />
-              </div>
+              </label>
+
+              {photo && (
+                <button
+                  type="button"
+                  onClick={() => setPhoto(null)}
+                  className="w-10 h-10 bg-red-50 hover:bg-red-100 active:scale-95 text-[#B42318] rounded-xl flex items-center justify-center shrink-0 transition-all"
+                  title="Profilfoto entfernen"
+                  aria-label="Profilfoto entfernen"
+                >
+                  <Trash2 size={15} />
+                </button>
+              )}
             </div>
           </div>
 

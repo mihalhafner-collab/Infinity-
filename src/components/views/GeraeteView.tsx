@@ -11,6 +11,7 @@ import {
   Plus,
   Package,
   Camera,
+  ImagePlus,
   Pencil,
   Link2,
   X
@@ -33,9 +34,15 @@ export const GeraeteView: React.FC = () => {
 
   const [activeTab, setActiveTab] = useState<'alle' | 'geraet' | 'zubehoer'>('alle');
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState<string>('all');
-  const [previewPhoto, setPreviewPhoto] = useState<{ src: string; title: string } | null>(null);
+  const [previewPhoto, setPreviewPhoto] = useState<{
+    eqId: string;
+    src: string;
+    title: string;
+  } | null>(null);
+  const [photoSourceEq, setPhotoSourceEq] = useState<Equipment | null>(null);
 
   usePixelBackLayer(Boolean(previewPhoto), () => setPreviewPhoto(null));
+  usePixelBackLayer(Boolean(photoSourceEq), () => setPhotoSourceEq(null));
 
   const geraeteItems = equipments.filter((e) => (e.item_type || 'geraet') === 'geraet');
   const zubehoerItems = equipments.filter((e) => e.item_type === 'zubehoer');
@@ -88,6 +95,10 @@ export const GeraeteView: React.FC = () => {
     try {
       const compressed = await compressImageFile(file, 480, 0.76);
       updateEquipment(eqId, { photo: compressed });
+      setPhotoSourceEq(null);
+      setPreviewPhoto((prev) =>
+        prev && prev.eqId === eqId ? { ...prev, src: compressed } : prev
+      );
     } finally {
       e.target.value = '';
     }
@@ -201,9 +212,11 @@ export const GeraeteView: React.FC = () => {
                       {eq.photo ? (
                         <button
                           type="button"
-                          onClick={() => setPreviewPhoto({ src: eq.photo!, title: eq.name })}
+                          onClick={() =>
+                            setPreviewPhoto({ eqId: eq.id, src: eq.photo!, title: eq.name })
+                          }
                           className="w-14 h-14 rounded-2xl overflow-hidden border border-slate-200 shrink-0 bg-slate-100 shadow-2xs relative group"
-                          title="Profilfoto vergrößern"
+                          title="Profilfoto vergrößern oder ändern"
                         >
                           <img
                             src={eq.photo}
@@ -212,7 +225,9 @@ export const GeraeteView: React.FC = () => {
                           />
                         </button>
                       ) : (
-                        <label
+                        <button
+                          type="button"
+                          onClick={() => setPhotoSourceEq(eq)}
                           className={`w-14 h-14 rounded-2xl border border-dashed flex flex-col items-center justify-center shrink-0 cursor-pointer transition-colors ${
                             isZubehoer
                               ? 'bg-indigo-50/50 border-indigo-200 text-[#3138A0] hover:bg-indigo-50'
@@ -220,17 +235,11 @@ export const GeraeteView: React.FC = () => {
                                 ? 'bg-fuchsia-50 border-fuchsia-200 text-[#9A1B8D]'
                                 : 'bg-emerald-50/60 border-emerald-200 text-[#2C7738] hover:bg-emerald-50'
                           }`}
-                          title="Profilfoto direkt hinzufügen"
+                          title="Profilfoto mit Kamera aufnehmen oder aus Galerie wählen"
                         >
                           <Camera size={17} />
                           <span className="text-[9px] font-bold mt-0.5">+ Foto</span>
-                          <input
-                            type="file"
-                            accept="image/*"
-                            onChange={(e) => handleQuickAvatarUpload(eq.id, e)}
-                            className="hidden"
-                          />
-                        </label>
+                        </button>
                       )}
 
                       <div
@@ -410,7 +419,58 @@ export const GeraeteView: React.FC = () => {
         )}
       </div>
 
-      {/* Vollbild-Profilfoto Vorschau */}
+      {/* Schnellauswahl Fotoquelle (Mit Kamera öffnen / Aus Galerie wählen) */}
+      {photoSourceEq && (
+        <div className="absolute inset-0 z-50 bg-black/45 backdrop-blur-2xs flex flex-col justify-end animate-fade-in">
+          <div className="flex-1" onClick={() => setPhotoSourceEq(null)} />
+          <div className="bg-white rounded-t-3xl border-t border-slate-200 shadow-2xl p-4 space-y-3 animate-slide-up">
+            <div className="w-11 h-1.5 bg-slate-300 rounded-full mx-auto -mt-1" />
+            <div className="flex items-center justify-between">
+              <div className="min-w-0">
+                <h3 className="text-base font-bold text-slate-950 truncate">
+                  Profilfoto hinzufügen
+                </h3>
+                <p className="text-xs text-slate-600 truncate">{photoSourceEq.name}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPhotoSourceEq(null)}
+                className="w-10 h-10 rounded-full hover:bg-slate-100 flex items-center justify-center text-slate-600"
+                aria-label="Schließen"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="space-y-2 pt-1">
+              <label className="w-full h-13 px-4 bg-[#3138A0] hover:bg-[#272d82] active:scale-98 text-white font-bold rounded-2xl text-sm flex items-center justify-center gap-2.5 shadow-xs transition-all cursor-pointer">
+                <Camera size={19} />
+                <span>Mit Kamera öffnen</span>
+                <input
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  onChange={(e) => handleQuickAvatarUpload(photoSourceEq.id, e)}
+                  className="hidden"
+                />
+              </label>
+
+              <label className="w-full h-13 px-4 bg-slate-100 hover:bg-slate-200 active:scale-98 text-slate-900 font-bold rounded-2xl text-sm flex items-center justify-center gap-2.5 transition-all cursor-pointer">
+                <ImagePlus size={19} className="text-[#3138A0]" />
+                <span>Aus Galerie wählen</span>
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => handleQuickAvatarUpload(photoSourceEq.id, e)}
+                  className="hidden"
+                />
+              </label>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Vollbild-Profilfoto Vorschau + Direkt neu aufnehmen */}
       {previewPhoto && (
         <div
           onClick={() => setPreviewPhoto(null)}
@@ -419,17 +479,44 @@ export const GeraeteView: React.FC = () => {
           <button
             type="button"
             onClick={() => setPreviewPhoto(null)}
-            className="absolute top-12 right-4 w-10 h-10 rounded-full bg-white/15 text-white flex items-center justify-center hover:bg-white/25 transition-colors"
+            className="absolute top-4 right-4 w-11 h-11 rounded-full bg-white/15 text-white flex items-center justify-center hover:bg-white/25 transition-colors"
             aria-label="Schließen"
           >
-            <X size={20} />
+            <X size={22} />
           </button>
           <img
             src={previewPhoto.src}
             alt={previewPhoto.title}
-            className="max-w-full max-h-[75%] rounded-2xl object-contain shadow-2xl"
+            className="max-w-full max-h-[68%] rounded-2xl object-contain shadow-2xl"
           />
-          <span className="mt-3 text-sm font-bold text-white">{previewPhoto.title}</span>
+          <span className="mt-3 text-base font-bold text-white">{previewPhoto.title}</span>
+
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="mt-4 flex items-center gap-2.5 w-full max-w-[320px]"
+          >
+            <label className="flex-1 h-11 px-3 bg-[#3138A0] hover:bg-[#272d82] text-white font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 cursor-pointer shadow-md transition-colors">
+              <Camera size={15} />
+              <span>Kamera öffnen</span>
+              <input
+                type="file"
+                accept="image/*"
+                capture="environment"
+                onChange={(e) => handleQuickAvatarUpload(previewPhoto.eqId, e)}
+                className="hidden"
+              />
+            </label>
+            <label className="flex-1 h-11 px-3 bg-white/15 hover:bg-white/25 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 cursor-pointer transition-colors">
+              <ImagePlus size={15} />
+              <span>Aus Galerie</span>
+              <input
+                type="file"
+                accept="image/*"
+                onChange={(e) => handleQuickAvatarUpload(previewPhoto.eqId, e)}
+                className="hidden"
+              />
+            </label>
+          </div>
         </div>
       )}
 

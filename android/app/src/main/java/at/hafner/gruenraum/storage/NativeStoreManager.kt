@@ -29,6 +29,8 @@ class NativeStoreManager(private val context: Context) {
     private val internalZipDir = File(context.filesDir, "backups").apply { mkdirs() }
     private val internalZipFile = File(internalZipDir, "hausgarten-backup.zip")
 
+    var onLocalStateChanged: (() -> Unit)? = null
+
     fun loadAppState(): String? {
         return try {
             when {
@@ -41,7 +43,21 @@ class NativeStoreManager(private val context: Context) {
         }
     }
 
+    @Synchronized
     fun saveAppState(json: String): Boolean {
+        val ok = writeAtomically(json)
+        if (ok) {
+            onLocalStateChanged?.invoke()
+        }
+        return ok
+    }
+
+    @Synchronized
+    fun saveAppStateFromRemote(json: String): Boolean {
+        return writeAtomically(json)
+    }
+
+    private fun writeAtomically(json: String): Boolean {
         return try {
             JSONObject(json) // Validate well-formed JSON before atomic swap
             val tmpFile = File(context.filesDir, "hafner_app_store.json.tmp")

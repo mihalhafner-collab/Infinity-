@@ -13,12 +13,23 @@ android {
         applicationId = "at.hafner.gruenraum"
         minSdk = 31
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.1.0"
+
+        val defaultMcpUrl = (System.getenv("MCP_SERVER_URL") ?: "https://ais-pre-usuarrctzvo6yzyghmhedg-947976408951.europe-west2.run.app")
+            .trim()
+            .replace("\"", "")
+
+        // Nur die Serveradresse wird in der APK hinterlegt – niemals ein dauerhafter Admin- oder Sync-Schlüssel.
+        buildConfigField("String", "DEFAULT_MCP_BASE_URL", "\"$defaultMcpUrl\"")
 
         vectorDrawables {
             useSupportLibrary = true
         }
+    }
+
+    buildFeatures {
+        buildConfig = true
     }
 
     signingConfigs {

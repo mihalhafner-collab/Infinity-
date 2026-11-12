@@ -79,6 +79,8 @@ jobs:
 
       - name: Native Kotlin Android APK kompilieren (Release)
         working-directory: android
+        env:
+          MCP_SERVER_URL: ${{ secrets.MCP_SERVER_URL }}
         run: gradle assembleRelease --no-daemon --stacktrace
 
       - name: Signierte APK benennen

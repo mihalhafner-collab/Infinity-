@@ -3,6 +3,7 @@
   "appId": "1:523881801839:web:c2a661d78b61b023f3459a",
   "apiKey": "AIzaSyBYB42gJKLd5Pchq0tnyHBvSnxCRqsa7cA",
   "authDomain": "gen-lang-client-0369636054.firebaseapp.com",
+  "firestoreDatabaseId": "ai-studio-pdftoapparchitec-4fe1a361-dcc7-4d21-aca1-ca2844c4c5f4",
   "storageBucket": "gen-lang-client-0369636054.firebasestorage.app",
   "messagingSenderId": "523881801839",
   "measurementId": "",

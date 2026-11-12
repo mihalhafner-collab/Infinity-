@@ -1,0 +1,109 @@
+{
+  "entities": {
+    "ConnectionCheck": {
+      "title": "ConnectionCheck",
+      "description": "Owner-only connectivity verification document for Firestore client health checks.",
+      "type": "object",
+      "properties": {
+        "ownerEmail": {
+          "type": "string",
+          "description": "Verified Google account email of the application owner.",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9._%+\\-]+@[a-zA-Z0-9.\\-]+\\.[a-zA-Z]{2,}$"
+        },
+        "status": {
+          "type": "string",
+          "description": "Connectivity status marker.",
+          "enum": ["ok"],
+          "maxLength": 16
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Immutable server creation timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server update timestamp."
+        }
+      },
+      "required": ["ownerEmail", "status", "createdAt", "updatedAt"]
+    },
+    "ServerStateMeta": {
+      "title": "ServerStateMeta",
+      "description": "System-only Cloud Run persistence manifest written exclusively via GCP IAM.",
+      "type": "object",
+      "properties": {
+        "storeKey": {
+          "type": "string",
+          "description": "Identifier of the persisted server store.",
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "chunkCount": {
+          "type": "number",
+          "description": "Number of chunk documents composing the payload."
+        },
+        "byteLength": {
+          "type": "number",
+          "description": "UTF-8 byte length of the serialized payload."
+        },
+        "sha256": {
+          "type": "string",
+          "description": "SHA-256 hex digest of the serialized payload.",
+          "maxLength": 64,
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO-8601 server write timestamp."
+        }
+      },
+      "required": ["storeKey", "chunkCount", "byteLength", "sha256", "updatedAt"]
+    },
+    "ServerStateChunk": {
+      "title": "ServerStateChunk",
+      "description": "System-only Cloud Run persistence payload chunk written exclusively via GCP IAM.",
+      "type": "object",
+      "properties": {
+        "storeKey": {
+          "type": "string",
+          "description": "Parent store key.",
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "index": {
+          "type": "number",
+          "description": "Zero-based chunk index."
+        },
+        "payload": {
+          "type": "string",
+          "description": "UTF-8 chunk slice (max 600 KB).",
+          "maxLength": 650000
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO-8601 server write timestamp."
+        }
+      },
+      "required": ["storeKey", "index", "payload", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/test/{checkId}": {
+      "schema": "ConnectionCheck",
+      "description": "Owner-only Firestore client boot check collection."
+    },
+    "/_mcp_server_state/{storeKey}": {
+      "schema": "ServerStateMeta",
+      "description": "System-only Cloud Run persistence manifest collection (client SDK access strictly denied)."
+    },
+    "/_mcp_server_chunks/{chunkId}": {
+      "schema": "ServerStateChunk",
+      "description": "System-only Cloud Run persistence chunk collection (client SDK access strictly denied)."
+    }
+  }
+}

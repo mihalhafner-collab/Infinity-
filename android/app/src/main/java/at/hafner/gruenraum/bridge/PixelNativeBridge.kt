@@ -4,11 +4,13 @@ import android.webkit.JavascriptInterface
 import at.hafner.gruenraum.MainActivity
 import at.hafner.gruenraum.documents.NativeDocumentManager
 import at.hafner.gruenraum.storage.NativeStoreManager
+import at.hafner.gruenraum.sync.NativeMcpSyncManager
 
 class PixelNativeBridge(
     private val activity: MainActivity,
     private val storeManager: NativeStoreManager,
-    private val documentManager: NativeDocumentManager
+    private val documentManager: NativeDocumentManager,
+    private val mcpSyncManager: NativeMcpSyncManager
 ) {
 
     @JavascriptInterface
@@ -30,6 +32,32 @@ class PixelNativeBridge(
     @JavascriptInterface
     fun getBackupMetaJson(): String {
         return storeManager.getBackupMetaJson()
+    }
+
+    @JavascriptInterface
+    fun getMcpSyncStatusJson(): String {
+        return mcpSyncManager.getStatusJson()
+    }
+
+    @JavascriptInterface
+    fun configureMcpSync(baseUrl: String, token: String): String {
+        return mcpSyncManager.configureAndConnect(baseUrl, token)
+    }
+
+    @JavascriptInterface
+    fun pairMcpWithCode(baseUrl: String, code: String): String {
+        return mcpSyncManager.pairWithOneTimeCode(baseUrl, code)
+    }
+
+    @JavascriptInterface
+    fun triggerMcpSyncNow(): Boolean {
+        mcpSyncManager.triggerManualSyncNow()
+        return true
+    }
+
+    @JavascriptInterface
+    fun disconnectMcpSync(): String {
+        return mcpSyncManager.disconnectAndClearToken()
     }
 
     @JavascriptInterface
