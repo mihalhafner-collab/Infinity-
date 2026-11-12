@@ -488,10 +488,28 @@ export function queryCollection(params: {
   date_from?: string;
   date_to?: string;
   search?: string;
+  fields?: string[];
   limit?: number;
   include_photos?: boolean;
 }) {
   const { data, revision } = getStore();
+  const requestedFields =
+    Array.isArray(params.fields) && params.fields.length > 0
+      ? params.fields.map((f) => String(f).trim()).filter(Boolean)
+      : null;
+
+  const projectFields = <T>(item: T): T => {
+    const stripped = stripHeavyPhotos(item, Boolean(params.include_photos));
+    if (!requestedFields || !stripped || typeof stripped !== 'object') return stripped;
+    const src = stripped as Record<string, unknown>;
+    const projected: Record<string, unknown> = { id: src.id };
+    for (const f of requestedFields) {
+      if (f in src) {
+        projected[f] = src[f];
+      }
+    }
+    return projected as T;
+  };
   if (params.collection === 'taxSettings') {
     return {
       revision,
@@ -602,7 +620,7 @@ export function queryCollection(params: {
     revision,
     collection: params.collection,
     totalMatched,
-    items: items.map((i) => stripHeavyPhotos(i, Boolean(params.include_photos)))
+    items: items.map((i) => projectFields(i))
   };
 }
 
@@ -2158,15 +2176,15 @@ export function executeBatchAdmin(
   };
 }
 
-// ==================== MCP TOOLS DEFINITIONS & EXECUTION ====================
+// ==================== MCP TOOLS DEFINITIONS & EXECUTION (GEBÜNDELT FÜR MAXIMALE GESCHWINDIGKEIT) ====================
 
 export const MCP_TOOLS = [
   {
-    name: 'admin_get_overview',
+    name: 'pixel_abfrage',
     description:
-      'Liefert die komplette Echtzeit-Betriebsübersicht der App (Kunden, Objekte, anstehende Termine, offene Arbeitsstunden & Beträge, L.C.R.-Summen, offene Rechnungen, aktuelle GuV-/Steuerkennzahlen) und optional den gesamten Datenbestand.',
+      'Gezielter Lese- & Suchzugriff in einem einzigen Aufruf (ersetzt mehrfache Einzelabfragen): Liest wahlweise eine oder mehrere Tabellen gleichzeitig (customers, properties, appointments, workRecords, invoices, inquiries, offers, orders, equipments, materials, expenses, taxSettings), liefert auf Wunsch die kompakte Betriebsübersicht sowie die österreichische GuV-/Steuerberechnung und gibt gezielt nur die angeforderten Daten zurück.',
     annotations: {
-      title: 'Betriebsübersicht lesen',
+      title: 'Gezielte Abfrage (Übersicht, Tabellen & GuV in 1 Aufruf)',
       readOnlyHint: true,
       destructiveHint: false,
       idempotentHint: true,
@@ -2176,38 +2194,25 @@ export const MCP_TOOLS = [
       type: 'object',
       additionalProperties: false,
       properties: {
-        include_full_snapshot: {
-          type: 'boolean',
-          description: 'Wenn true, wird zusätzlich der gesamte Datenbestand aller Tabellen zurückgegeben.'
-        }
-      }
-    }
-  },
-  {
-    name: 'admin_read_records',
-    description:
-      'Liest, filtert und durchsucht Datensätze derselben App-Datenbasis (customers, properties, appointments, workRecords, invoices, inquiries, offers, orders, equipments, materials, expenses, taxSettings). Inklusive Termin-Konfliktprüfung und aufgelöster Rechnungs-Darstellung.',
-    annotations: {
-      title: 'Datensätze lesen & suchen',
-      readOnlyHint: true,
-      destructiveHint: false,
-      idempotentHint: true,
-      openWorldHint: false
-    },
-    inputSchema: {
-      type: 'object',
-      additionalProperties: false,
-      required: ['collection'],
-      properties: {
+        collections: {
+          type: 'array',
+          items: {
+            type: 'string',
+            enum: [...COLLECTION_NAMES, 'taxSettings', 'all']
+          },
+          description:
+            'Mehrere Tabellen gleichzeitig in einem einzigen Aufruf abfragen (z.B. ["customers", "workRecords", "invoices"]).'
+        },
         collection: {
           type: 'string',
           enum: [...COLLECTION_NAMES, 'taxSettings', 'all'],
-          description: 'Name der abzufragenden Tabelle / Collection oder "all" für globale Suche über alle Bereiche.'
+          description: 'Einzelne abzufragende Tabelle oder "all" für globale Suche.'
         },
         id: { type: 'string', description: 'Optionale exakte Datensatz-ID.' },
         customer_id: {
           type: 'string',
-          description: 'Optionaler Filter auf eine Kunden-ID (berücksichtigt auch Sub-Abrechnungsempfänger).'
+          description:
+            'Optionaler Filter auf eine Kunden-ID (liefert gezielt Kundenakte, Objekte, Termine, Arbeiten & Rechnungen dieses Kunden).'
         },
         status: { type: 'string', description: 'Optionaler Status-Filter (z.B. unpaid, paid, geplant).' },
         is_lcr: {
@@ -2216,312 +2221,101 @@ export const MCP_TOOLS = [
         },
         unbilled_only: {
           type: 'boolean',
-          description: 'Bei workRecords: Wenn true, nur noch nicht abgerechnete Arbeiten (settlement_id == null).'
+          description: 'Bei workRecords: Wenn true, nur noch nicht abgerechnete Arbeiten.'
         },
         date_from: { type: 'string', description: 'Optionales Startdatum YYYY-MM-DD.' },
         date_to: { type: 'string', description: 'Optionales Enddatum YYYY-MM-DD.' },
         search: { type: 'string', description: 'Freitextsuche über alle Felder.' },
-        limit: { type: 'number', description: 'Maximale Anzahl an Ergebnissen.' },
-        include_photos: {
-          type: 'boolean',
-          description: 'Standard false (spart Token). Wenn true, werden Base64-Fotos mitgeliefert.'
-        }
-      }
-    }
-  },
-  {
-    name: 'admin_calculate_guv',
-    description:
-      'Führt die identische österreichische GuV-, Kleinunternehmer- und Pauschalierungsberechnung der App aus (KU-Pauschale 45 % / 20 %, Basispauschale 15 % + Wareneinsatz, echte E/A-Rechnung inkl. GWG § 13 & Halbjahres-AfA § 7 EStG, Grundfreibetrag § 10 EStG und ESt-Orientierung § 33 EStG).',
-    annotations: {
-      title: 'GuV & Steuer-Günstigkeitsvergleich berechnen',
-      readOnlyHint: true,
-      destructiveHint: false,
-      idempotentHint: true,
-      openWorldHint: false
-    },
-    inputSchema: {
-      type: 'object',
-      additionalProperties: false,
-      properties: {
-        year: {
+        fields: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Optionale Feldliste für gezielten Zugriff (liefert nur diese Felder plus id).'
+        },
+        limit: {
           type: 'number',
-          description: 'Optionales Steuerjahr (z.B. 2026). Standard ist das in der App gewählte Steuerjahr.'
+          description: 'Maximale Anzahl an Ergebnissen pro Tabelle (Standard 25).'
+        },
+        include_overview: {
+          type: 'boolean',
+          description: 'Wenn true, wird die kompakte Betriebsübersicht (Zähler, Summen, nächste Termine) mitgeliefert.'
+        },
+        include_guv: {
+          type: 'boolean',
+          description: 'Wenn true, wird der vollständige österreichische GuV- & Pauschalierungsvergleich mitgeliefert.'
+        },
+        guv_year: {
+          type: 'number',
+          description: 'Optionales Steuerjahr für die GuV-Berechnung (z.B. 2026).'
         }
       }
     }
   },
   {
-    name: 'admin_upsert_record',
+    name: 'pixel_aktion',
     description:
-      'Anlegen & Ändern: Erstellt einen neuen Datensatz oder aktualisiert einen bestehenden Datensatz (wenn record.id angegeben ist) in jeder beliebigen Tabelle unter Anwendung exakt derselben App-Prüfungen und Berechnungen (z.B. Betragsberechnung Stunden × Satz + Material, L.C.R.-Sperre bei abgerechneten Arbeiten, Sub-Rechnungsempfänger, Termin-Konfliktprüfung).',
+      'Gemeinsame geprüfte App-Logik zum Anlegen, Ändern und Löschen in einem einzigen Aufruf: Verarbeitet Einzel- oder Stapeländerungen (Kunden, Objekte, Termine inkl. Konfliktprüfung, Arbeitsaufzeichnungen inkl. Betragsberechnung & L.C.R.-Sperre, Anfragen, Angebote, Aufträge, Geräte inkl. Wartung, Material, Ausgaben, Steuereinstellungen) atomar ohne mehrfache Werkzeugaufrufe.',
     annotations: {
-      title: 'Datensatz anlegen oder ändern',
+      title: 'Daten anlegen, ändern & löschen (Einzel oder Stapel in 1 Aufruf)',
       readOnlyHint: false,
-      destructiveHint: false,
+      destructiveHint: true,
       idempotentHint: false,
       openWorldHint: false
     },
     inputSchema: {
       type: 'object',
       additionalProperties: false,
-      required: ['collection', 'record'],
       properties: {
+        op: {
+          type: 'string',
+          enum: ['upsert', 'delete', 'toggle_lcr', 'maintenance', 'tax_settings'],
+          description: 'Art der Einzelaktion (falls nicht "operations" als Liste übergeben wird).'
+        },
         collection: {
           type: 'string',
           enum: [...COLLECTION_NAMES],
-          description: 'Zieltabelle für das Anlegen oder Aktualisieren.'
+          description: 'Zieltabelle bei op="upsert" oder op="delete".'
         },
+        id: { type: 'string', description: 'Datensatz-ID bei op="delete".' },
         record: {
           type: 'object',
           additionalProperties: true,
-          description:
-            'Felder des Datensatzes. Mit bestehender record.id wird aktualisiert; ohne id wird neu angelegt.'
-        }
-      }
-    }
-  },
-  {
-    name: 'admin_delete_record',
-    description:
-      'Löscht einen Datensatz anhand seiner ID inklusive identischer App-Referenzbereinigung (z.B. Kaskadenbereinigung bei Kunden unter Erhalt abgerechneter Belege, Freigabe abgerechneter Arbeiten beim Löschen einer Rechnung, Reaktivierung bei Löschung eines Stornobelegs).',
-    annotations: {
-      title: 'Datensatz löschen',
-      readOnlyHint: false,
-      destructiveHint: true,
-      idempotentHint: true,
-      openWorldHint: false
-    },
-    inputSchema: {
-      type: 'object',
-      additionalProperties: false,
-      required: ['collection', 'id'],
-      properties: {
-        collection: {
-          type: 'string',
-          enum: [...COLLECTION_NAMES],
-          description: 'Tabelle, aus der gelöscht werden soll.'
+          description: 'Datensatz-Felder bei op="upsert" (mit id = ändern, ohne id = neu anlegen).'
         },
-        id: {
-          type: 'string',
-          description: 'ID des zu löschenden Datensatzes.'
-        }
-      }
-    }
-  },
-  {
-    name: 'admin_toggle_lcr',
-    description:
-      'Schaltet die L.C.R.-Kennzeichnung für eine oder mehrere offene Arbeitsaufzeichnungen um oder setzt sie gezielt (gesperrt für bereits an eine Rechnung gebundene Arbeiten).',
-    annotations: {
-      title: 'L.C.R.-Status umschalten',
-      readOnlyHint: false,
-      destructiveHint: false,
-      idempotentHint: false,
-      openWorldHint: false
-    },
-    inputSchema: {
-      type: 'object',
-      additionalProperties: false,
-      required: ['work_record_ids'],
-      properties: {
         work_record_ids: {
           type: 'array',
           items: { type: 'string' },
-          description: 'IDs der Arbeitsaufzeichnungen.'
+          description: 'Arbeits-IDs bei op="toggle_lcr".'
         },
         is_lcr: {
           type: 'boolean',
-          description: 'Optionaler Zielwert (true/false). Wenn weggelassen, wird der aktuelle Zustand umgeschaltet.'
-        }
-      }
-    }
-  },
-  {
-    name: 'admin_create_invoice',
-    description:
-      'Erstellt eine Rechnung (Format RE-75/2026, § 6 Abs. 1 Z 27 UStG Kleinunternehmerregelung) für einen Kunden aus offenen abrechenbaren Arbeitsaufzeichnungen (inkl. Sub-Abrechnung, Materialpositionen, Leistungszeitraum und automatischer Nummernvergabe) und sperrt die abgerechneten Arbeiten.',
-    annotations: {
-      title: 'Rechnung erstellen',
-      readOnlyHint: false,
-      destructiveHint: false,
-      idempotentHint: false,
-      openWorldHint: false
-    },
-    inputSchema: {
-      type: 'object',
-      additionalProperties: false,
-      required: ['customer_id'],
-      properties: {
-        customer_id: { type: 'string', description: 'ID des Rechnungsempfängers (Kunde).' },
-        work_record_ids: {
-          type: 'array',
-          items: { type: 'string' },
-          description:
-            'Optionale Liste der abzurechnenden Arbeits-IDs. Wenn leer, werden alle offenen abrechenbaren Nicht-L.C.R.-Arbeiten dieses Rechnungsempfängers abgerechnet.'
+          description: 'Zielwert für L.C.R. bei op="toggle_lcr".'
         },
-        extra_items: {
-          type: 'array',
-          items: {
-            type: 'object',
-            required: ['description', 'amount'],
-            properties: {
-              description: { type: 'string' },
-              quantity_label: { type: 'string' },
-              unit_price_label: { type: 'string' },
-              amount: { type: 'number' }
-            }
+        equipment_id: { type: 'string', description: 'Geräte-ID bei op="maintenance".' },
+        maintenance: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            plan: { type: 'string' },
+            note: { type: 'string' },
+            date: { type: 'string' },
+            next_maintenance: { type: 'string' }
           }
         },
-        issue_date: { type: 'string', description: 'Rechnungsdatum YYYY-MM-DD.' },
-        due_days: { type: 'number', description: 'Zahlungsziel in Tagen (Standard 14).' },
-        invoice_number: { type: 'string', description: 'Optionale manuelle Rechnungsnummer.' },
-        customer_number: { type: 'string', description: 'Optionale Kundennummer.' },
-        service_period: { type: 'string', description: 'Optionaler Leistungszeitraum.' },
-        payment_terms_text: { type: 'string', description: 'Optionaler Zahlungsbedingungstext.' },
-        paid_in_cash: { type: 'boolean', description: 'Wenn true, sofort als Barzahlung verbuchen.' }
-      }
-    }
-  },
-  {
-    name: 'admin_pay_invoice',
-    description:
-      'Bucht Zahlungen, Teilzahlungen, Gegenbuchungen (Zahlungskorrektur), Zahlungslöschungen oder Rückerstattungen auf eine bestehende Rechnung.',
-    annotations: {
-      title: 'Rechnungszahlung / Korrektur buchen',
-      readOnlyHint: false,
-      destructiveHint: false,
-      idempotentHint: false,
-      openWorldHint: false
-    },
-    inputSchema: {
-      type: 'object',
-      additionalProperties: false,
-      required: ['invoice_id'],
-      properties: {
-        invoice_id: {
-          type: 'string',
-          description: 'ID oder Rechnungsnummer (z.B. RE-75/2026) der Rechnung.'
-        },
-        action: {
-          type: 'string',
-          enum: ['pay', 'update_payment', 'reverse_payment', 'delete_payment', 'refund'],
-          description: 'Standard "pay". Weitere Optionen: "update_payment" (Zahlung ändern), "reverse_payment" (Gegenbuchung), "delete_payment", "refund" (Rückzahlung nach Storno).'
-        },
-        amount: {
-          type: 'number',
-          description: 'Betrag in EUR (bei "pay" ohne Angabe wird der gesamte offene Restbetrag gebucht).'
-        },
-        payment_id: {
-          type: 'string',
-          description: 'Erforderlich bei "update_payment", "reverse_payment" oder "delete_payment": ID des Zahlungseintrags.'
-        },
-        date: { type: 'string', description: 'Buchungsdatum YYYY-MM-DD.' },
-        note: { type: 'string', description: 'Optionale Buchungsnotiz / Begründung.' }
-      }
-    }
-  },
-  {
-    name: 'admin_storno_invoice',
-    description:
-      'Storniert eine ausgestellte Rechnung buchhalterisch korrekt per Stornobeleg (z.B. RE-S01/2026), setzt etwaige bereits gezahlte Beträge als offenen Rückzahlungsbetrag und gibt die verknüpften Arbeitsaufzeichnungen wieder zur Abrechnung frei.',
-    annotations: {
-      title: 'Rechnung stornieren',
-      readOnlyHint: false,
-      destructiveHint: true,
-      idempotentHint: false,
-      openWorldHint: false
-    },
-    inputSchema: {
-      type: 'object',
-      additionalProperties: false,
-      required: ['invoice_id'],
-      properties: {
-        invoice_id: {
-          type: 'string',
-          description: 'ID oder Rechnungsnummer der zu stornierenden Rechnung.'
-        },
-        reason: { type: 'string', description: 'Stornogrund (z.B. Rechnungskorrektur).' },
-        issue_date: { type: 'string', description: 'Optionales Stornodatum YYYY-MM-DD.' }
-      }
-    }
-  },
-  {
-    name: 'admin_record_maintenance',
-    description:
-      'Dokumentiert eine durchgeführte Wartung an einem Gerät (setzt Status auf einsatzbereit, aktualisiert Wartungshistorie und nächstes Fälligkeitsdatum).',
-    annotations: {
-      title: 'Gerätewartung eintragen',
-      readOnlyHint: false,
-      destructiveHint: false,
-      idempotentHint: false,
-      openWorldHint: false
-    },
-    inputSchema: {
-      type: 'object',
-      additionalProperties: false,
-      required: ['equipment_id'],
-      properties: {
-        equipment_id: { type: 'string', description: 'ID des Geräts.' },
-        plan: { type: 'string', description: 'Durchgeführter Wartungsplan.' },
-        note: { type: 'string', description: 'Wartungsnotiz.' },
-        date: { type: 'string', description: 'Wartungsdatum YYYY-MM-DD.' },
-        next_maintenance: { type: 'string', description: 'Nächster Wartungstermin YYYY-MM-DD.' }
-      }
-    }
-  },
-  {
-    name: 'admin_update_tax_settings',
-    description:
-      'Aktualisiert die Steuer- und Pauschalierungs-Einstellungen (Steuerjahr, bevorzugte Methode, SVS-Beiträge, Arbeitsplatzpauschale, Öffi-Ticket, Zusatz-Einnahmen) und liefert sofort die neu berechnete GuV-Übersicht.',
-    annotations: {
-      title: 'Steuereinstellungen ändern',
-      readOnlyHint: false,
-      destructiveHint: false,
-      idempotentHint: true,
-      openWorldHint: false
-    },
-    inputSchema: {
-      type: 'object',
-      additionalProperties: false,
-      required: ['settings'],
-      properties: {
-        settings: {
+        tax_settings: {
           type: 'object',
           additionalProperties: false,
           properties: {
             selected_year: { type: 'number' },
-            preferred_method: {
-              type: 'string',
-              enum: [...VALID_TAX_METHODS]
-            },
+            preferred_method: { type: 'string', enum: [...VALID_TAX_METHODS] },
             svs_paid: { type: 'number' },
             workplace_allowance: { type: 'number', enum: [0, 300, 1200] },
             transit_ticket_full: { type: 'number' },
             manual_extra_income: { type: 'number' }
           }
-        }
-      }
-    }
-  },
-  {
-    name: 'admin_batch_mutate',
-    description:
-      'Führt mehrere Anlege-, Änderungs- und Löschoperationen atomar in einem einzigen Aufruf aus (bei einem Validierungsfehler wird keine Teiländerung gespeichert).',
-    annotations: {
-      title: 'Stapelverarbeitung (Batch)',
-      readOnlyHint: false,
-      destructiveHint: true,
-      idempotentHint: false,
-      openWorldHint: false
-    },
-    inputSchema: {
-      type: 'object',
-      additionalProperties: false,
-      required: ['operations'],
-      properties: {
+        },
         operations: {
           type: 'array',
+          description: 'Mehrere Operationen gebündelt in einem einzigen Aufruf ausführen.',
           items: {
             type: 'object',
             additionalProperties: false,
@@ -2536,12 +2330,310 @@ export const MCP_TOOLS = [
         }
       }
     }
+  },
+  {
+    name: 'pixel_abrechnung',
+    description:
+      'Gemeinsame geprüfte Abrechnungs-Logik in einem einzigen Aufruf: Erstellt Rechnungen (Format RE-75/2026, § 6 Abs. 1 Z 27 UStG Kleinunternehmerregelung, inkl. Sub-Abrechnung & Sperre abgerechneter Arbeiten), bucht Zahlungen/Teilzahlungen/Korrekturen oder erstellt buchhalterisch korrekte Stornobelege (RE-S01/2026).',
+    annotations: {
+      title: 'Rechnung erstellen, Zahlung buchen oder stornieren',
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: false
+    },
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['action'],
+      properties: {
+        action: {
+          type: 'string',
+          enum: [
+            'create_invoice',
+            'pay',
+            'update_payment',
+            'reverse_payment',
+            'delete_payment',
+            'refund',
+            'storno'
+          ],
+          description:
+            'Aktion: "create_invoice" (neue Rechnung), "pay" / "update_payment" / "reverse_payment" / "delete_payment" / "refund" (Zahlung) oder "storno" (Stornobeleg).'
+        },
+        customer_id: {
+          type: 'string',
+          description: 'Bei create_invoice: ID des Rechnungsempfängers.'
+        },
+        work_record_ids: {
+          type: 'array',
+          items: { type: 'string' },
+          description:
+            'Bei create_invoice: Optionale Arbeits-IDs (wenn leer, werden alle offenen abrechenbaren Nicht-L.C.R.-Arbeiten des Kunden abgerechnet).'
+        },
+        extra_items: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['description', 'amount'],
+            properties: {
+              description: { type: 'string' },
+              quantity_label: { type: 'string' },
+              unit_price_label: { type: 'string' },
+              amount: { type: 'number' }
+            }
+          }
+        },
+        issue_date: { type: 'string', description: 'Rechnungs- oder Stornodatum YYYY-MM-DD.' },
+        due_days: { type: 'number', description: 'Zahlungsziel in Tagen (Standard 14).' },
+        invoice_number: { type: 'string', description: 'Optionale manuelle Rechnungsnummer.' },
+        customer_number: { type: 'string', description: 'Optionale Kundennummer.' },
+        service_period: { type: 'string', description: 'Optionaler Leistungszeitraum.' },
+        payment_terms_text: { type: 'string', description: 'Optionaler Zahlungsbedingungstext.' },
+        paid_in_cash: {
+          type: 'boolean',
+          description: 'Bei create_invoice: Wenn true, Rechnung sofort als bar bezahlt verbuchen.'
+        },
+        invoice_id: {
+          type: 'string',
+          description: 'Bei Zahlung oder Storno: ID oder Rechnungsnummer (z.B. RE-75/2026).'
+        },
+        amount: { type: 'number', description: 'Zahlungsbetrag in EUR.' },
+        payment_id: { type: 'string', description: 'ID des Zahlungseintrags bei Korrektur/Löschung.' },
+        date: { type: 'string', description: 'Zahlungsdatum YYYY-MM-DD.' },
+        note: { type: 'string', description: 'Zahlungsnotiz.' },
+        reason: { type: 'string', description: 'Stornogrund bei action="storno".' }
+      }
+    }
   }
 ];
+
+function executeTargetedPixelQuery(args: Record<string, unknown>) {
+  const { revision, updatedAt, lastActor } = getStore();
+  const requestedCollections: string[] = [];
+
+  if (Array.isArray(args.collections)) {
+    for (const c of args.collections) {
+      const clean = String(c || '').trim();
+      if (clean && !requestedCollections.includes(clean)) {
+        requestedCollections.push(clean);
+      }
+    }
+  }
+  if (typeof args.collection === 'string' && args.collection.trim()) {
+    const single = args.collection.trim();
+    if (!requestedCollections.includes(single)) {
+      requestedCollections.push(single);
+    }
+  }
+
+  const fields = Array.isArray(args.fields)
+    ? (args.fields as string[])
+    : undefined;
+  const limit = typeof args.limit === 'number' && args.limit > 0 ? args.limit : 25;
+
+  const includeOverview =
+    Boolean(args.include_overview) ||
+    (requestedCollections.length === 0 && !args.include_guv);
+  const includeGuv = Boolean(args.include_guv) || typeof args.guv_year === 'number';
+
+  const response: Record<string, unknown> = {
+    revision,
+    updatedAt,
+    lastActor
+  };
+
+  if (includeOverview) {
+    response.overview = getAdminOverview(false);
+  }
+
+  if (includeGuv) {
+    response.guv = calculateGuvAdminAction(
+      typeof args.guv_year === 'number' ? args.guv_year : undefined
+    );
+  }
+
+  if (requestedCollections.length === 1) {
+    const col = requestedCollections[0];
+    if (col !== 'taxSettings' && col !== 'all' && !isCollectionName(col)) {
+      throw new Error(`Unbekannte Collection "${col}".`);
+    }
+    response.result = queryCollection({
+      collection: col,
+      id: typeof args.id === 'string' ? args.id : undefined,
+      customer_id: typeof args.customer_id === 'string' ? args.customer_id : undefined,
+      status: typeof args.status === 'string' ? args.status : undefined,
+      is_lcr: typeof args.is_lcr === 'boolean' ? args.is_lcr : undefined,
+      unbilled_only: Boolean(args.unbilled_only),
+      date_from: typeof args.date_from === 'string' ? args.date_from : undefined,
+      date_to: typeof args.date_to === 'string' ? args.date_to : undefined,
+      search: typeof args.search === 'string' ? args.search : undefined,
+      fields,
+      limit,
+      include_photos: Boolean(args.include_photos)
+    });
+  } else if (requestedCollections.length > 1) {
+    const multiResults: Record<string, unknown> = {};
+    for (const col of requestedCollections) {
+      if (col === 'taxSettings' || col === 'all' || isCollectionName(col)) {
+        multiResults[col] = queryCollection({
+          collection: col,
+          id: typeof args.id === 'string' ? args.id : undefined,
+          customer_id: typeof args.customer_id === 'string' ? args.customer_id : undefined,
+          status: typeof args.status === 'string' ? args.status : undefined,
+          is_lcr: typeof args.is_lcr === 'boolean' ? args.is_lcr : undefined,
+          unbilled_only: Boolean(args.unbilled_only),
+          date_from: typeof args.date_from === 'string' ? args.date_from : undefined,
+          date_to: typeof args.date_to === 'string' ? args.date_to : undefined,
+          search: typeof args.search === 'string' ? args.search : undefined,
+          fields,
+          limit,
+          include_photos: Boolean(args.include_photos)
+        });
+      }
+    }
+    response.collections = multiResults;
+  }
+
+  return response;
+}
+
+function executeUnifiedPixelAction(args: Record<string, unknown>) {
+  if (Array.isArray(args.operations) && args.operations.length > 0) {
+    return executeBatchAdmin(args.operations as BatchOperation[], 'mcp');
+  }
+
+  const op = String(args.op || 'upsert');
+  switch (op) {
+    case 'upsert': {
+      const col = String(args.collection || '');
+      if (!isCollectionName(col)) {
+        throw new Error(`Unbekannte Collection "${col}".`);
+      }
+      const rec =
+        args.record && typeof args.record === 'object'
+          ? (args.record as Record<string, unknown>)
+          : {};
+      return upsertCollectionRecord(col, rec, 'mcp');
+    }
+    case 'delete': {
+      const col = String(args.collection || '');
+      if (!isCollectionName(col)) {
+        throw new Error(`Unbekannte Collection "${col}".`);
+      }
+      const id = String(args.id || '').trim();
+      if (!id) throw new Error('Parameter "id" ist erforderlich.');
+      return deleteCollectionRecord(col, id, 'mcp');
+    }
+    case 'toggle_lcr':
+      return toggleLcrAdminAction(
+        {
+          work_record_ids: Array.isArray(args.work_record_ids)
+            ? (args.work_record_ids as string[])
+            : [],
+          is_lcr: typeof args.is_lcr === 'boolean' ? args.is_lcr : undefined
+        },
+        'mcp'
+      );
+    case 'maintenance': {
+      const maint =
+        args.maintenance && typeof args.maintenance === 'object'
+          ? (args.maintenance as Record<string, unknown>)
+          : args;
+      return recordMaintenanceAdminAction(
+        {
+          equipment_id: String(args.equipment_id || maint.equipment_id || ''),
+          plan: typeof maint.plan === 'string' ? maint.plan : undefined,
+          note: typeof maint.note === 'string' ? maint.note : undefined,
+          date: typeof maint.date === 'string' ? maint.date : undefined,
+          next_maintenance:
+            typeof maint.next_maintenance === 'string' ? maint.next_maintenance : undefined
+        },
+        'mcp'
+      );
+    }
+    case 'tax_settings': {
+      const settings =
+        args.tax_settings && typeof args.tax_settings === 'object'
+          ? (args.tax_settings as Partial<TaxSettings>)
+          : ((args.settings as Partial<TaxSettings>) || {});
+      return updateTaxSettingsAdmin(settings, 'mcp');
+    }
+    default:
+      throw new Error(`Unbekannte Aktion "${op}".`);
+  }
+}
+
+function executeUnifiedPixelBilling(args: Record<string, unknown>) {
+  const action = String(args.action || 'create_invoice');
+  if (action === 'create_invoice') {
+    return createInvoiceAdminAction(
+      {
+        customer_id: String(args.customer_id || ''),
+        work_record_ids: Array.isArray(args.work_record_ids)
+          ? (args.work_record_ids as string[])
+          : undefined,
+        extra_items: Array.isArray(args.extra_items)
+          ? (args.extra_items as InvoiceLineItem[])
+          : undefined,
+        issue_date: typeof args.issue_date === 'string' ? args.issue_date : undefined,
+        due_days: typeof args.due_days === 'number' ? args.due_days : undefined,
+        invoice_number:
+          typeof args.invoice_number === 'string' ? args.invoice_number : undefined,
+        customer_number:
+          typeof args.customer_number === 'string' ? args.customer_number : undefined,
+        service_period:
+          typeof args.service_period === 'string' ? args.service_period : undefined,
+        payment_terms_text:
+          typeof args.payment_terms_text === 'string' ? args.payment_terms_text : undefined,
+        paid_in_cash: Boolean(args.paid_in_cash)
+      },
+      'mcp'
+    );
+  }
+
+  if (action === 'storno') {
+    return stornoInvoiceAdminAction(
+      {
+        invoice_id: String(args.invoice_id || ''),
+        reason: typeof args.reason === 'string' ? args.reason : undefined,
+        issue_date: typeof args.issue_date === 'string' ? args.issue_date : undefined
+      },
+      'mcp'
+    );
+  }
+
+  return payInvoiceAdminAction(
+    {
+      invoice_id: String(args.invoice_id || ''),
+      action:
+        action === 'update_payment' ||
+        action === 'reverse_payment' ||
+        action === 'delete_payment' ||
+        action === 'refund'
+          ? action
+          : 'pay',
+      amount: typeof args.amount === 'number' ? args.amount : undefined,
+      payment_id: typeof args.payment_id === 'string' ? args.payment_id : undefined,
+      date: typeof args.date === 'string' ? args.date : undefined,
+      note: typeof args.note === 'string' ? args.note : undefined
+    },
+    'mcp'
+  );
+}
 
 export function callMcpTool(name: string, args: Record<string, unknown> = {}): unknown {
   recordMcpAccess(`mcp:${name}`);
   switch (name) {
+    // Neue gebündelte Hochgeschwindigkeits-Werkzeuge (1 Aufruf statt mehrerer Einzelaufrufe)
+    case 'pixel_abfrage':
+      return executeTargetedPixelQuery(args);
+    case 'pixel_aktion':
+      return executeUnifiedPixelAction(args);
+    case 'pixel_abrechnung':
+      return executeUnifiedPixelBilling(args);
+
+    // Abwärtskompatibilität für bestehende Einzelwerkzeug-Namen
     case 'admin_get_overview':
       return getAdminOverview(Boolean(args.include_full_snapshot));
     case 'admin_read_records': {
@@ -2559,6 +2651,7 @@ export function callMcpTool(name: string, args: Record<string, unknown> = {}): u
         date_from: typeof args.date_from === 'string' ? args.date_from : undefined,
         date_to: typeof args.date_to === 'string' ? args.date_to : undefined,
         search: typeof args.search === 'string' ? args.search : undefined,
+        fields: Array.isArray(args.fields) ? (args.fields as string[]) : undefined,
         limit: typeof args.limit === 'number' ? args.limit : undefined,
         include_photos: Boolean(args.include_photos)
       });
