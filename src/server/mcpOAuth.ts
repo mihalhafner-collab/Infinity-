@@ -814,13 +814,10 @@ export function renderAuthorizePageHtml(params: {
     .badge { display: inline-block; background: #EEF2FF; color: #3138A0; font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 8px; margin-bottom: 12px; }
     h1 { font-size: 20px; margin: 0 0 8px; line-height: 1.25; }
     p { font-size: 14px; color: #475569; margin: 0 0 16px; line-height: 1.5; }
-    .scopes { background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 12px; padding: 12px; font-size: 13px; color: #334155; margin-bottom: 16px; }
+    .scopes { background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 12px; padding: 12px; font-size: 13px; color: #334155; margin-bottom: 18px; }
     .scopes strong { display: block; color: #0F172A; margin-bottom: 4px; }
-    label { display: block; font-size: 13px; font-weight: 700; margin-bottom: 6px; }
-    input[type="password"] { width: 100%; height: 46px; padding: 0 14px; border: 1px solid #CBD5E1; border-radius: 12px; font-size: 15px; margin-bottom: 14px; }
-    input[type="password"]:focus { outline: 2px solid #3138A0; border-color: transparent; }
     .err { background: #FEF2F2; border: 1px solid #FECACA; color: #B91C1C; border-radius: 10px; padding: 10px 12px; font-size: 13px; font-weight: 600; margin-bottom: 14px; }
-    button { width: 100%; height: 48px; background: #3138A0; color: #FFFFFF; border: 0; border-radius: 12px; font-size: 15px; font-weight: 700; cursor: pointer; }
+    button { width: 100%; height: 50px; background: #3138A0; color: #FFFFFF; border: 0; border-radius: 12px; font-size: 15px; font-weight: 700; cursor: pointer; }
     button:hover { background: #272D82; }
   </style>
 </head>
@@ -828,7 +825,7 @@ export function renderAuthorizePageHtml(params: {
   <div class="card">
     <span class="badge">Hafner Grünraum Handwerk · MCP</span>
     <h1>Zugriff für ${escapeHtml(params.clientName)} freigeben</h1>
-    <p>Bestätigen Sie einmalig mit Ihrem geheimen MCP-Zugangsschlüssel, damit Ihr privates ChatGPT-Plugin alle Datenbereiche lesen, anlegen, ändern und löschen darf.</p>
+    <p>Bestätigen Sie mit einem Tipp, damit Ihr privates ChatGPT-Plugin alle Datenbereiche synchron mit Ihrem Google Pixel 10 Pro und der Web-App lesen, anlegen, ändern und löschen darf.</p>
     <div class="scopes">
       <strong>Umfang der Freigabe (OAuth 2.1 + PKCE):</strong>
       Kunden, Objekte, Termine, Arbeitsaufzeichnungen, L.C.R., Rechnungen &amp; Zahlungen, Anfragen, Angebote, Aufträge, Geräte, Material, Ausgaben &amp; GuV.
@@ -841,9 +838,8 @@ export function renderAuthorizePageHtml(params: {
       <input type="hidden" name="code_challenge" value="${escapeHtml(params.code_challenge)}" />
       <input type="hidden" name="code_challenge_method" value="${escapeHtml(params.code_challenge_method)}" />
       <input type="hidden" name="scope" value="${escapeHtml(params.scope)}" />
-      <label for="admin_token">MCP-Zugangsschlüssel</label>
-      <input id="admin_token" name="admin_token" type="password" required autocomplete="current-password" placeholder="MCP_ADMIN_TOKEN eingeben…" />
-      <button type="submit">Verbindung dauerhaft freigeben</button>
+      <input type="hidden" name="one_click_approve" value="true" />
+      <button type="submit">Verbindung jetzt freigeben (1-Klick)</button>
     </form>
   </div>
 </body>

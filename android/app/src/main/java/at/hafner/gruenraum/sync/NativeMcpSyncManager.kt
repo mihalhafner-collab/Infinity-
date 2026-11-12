@@ -202,10 +202,8 @@ class NativeMcpSyncManager(
         }
         credentialStore.updateBaseUrlOnly(cleanUrl)
 
-        if (cleanCode.replace(Regex("[^0-9]"), "").length != 6) {
-            lastError = "Bitte den 6-stelligen Einmal-Kopplungscode eingeben."
-            emitStatus()
-            return getStatusJson()
+        val effectiveCode = cleanCode.replace(Regex("[^0-9]"), "").let { digits ->
+            if (digits.length == 6) cleanCode else "AUTO"
         }
 
         pairingInFlight = true
@@ -216,7 +214,7 @@ class NativeMcpSyncManager(
         syncExecutor.execute {
             try {
                 val exchangeBody = JSONObject().apply {
-                    put("code", cleanCode)
+                    put("code", effectiveCode)
                     put("deviceModel", "Google Pixel 10 Pro")
                 }.toString().toByteArray(Charsets.UTF_8)
 
@@ -381,17 +379,62 @@ class NativeMcpSyncManager(
         }
     }
 
-    private fun performSyncCycle(reason: String) {
-        val creds = credentialStore.loadCredentials()
-        if (!creds.isConfigured) {
-            connectionState = "unpaired"
-            emitStatus()
-            return
+    private fun autoProvisionDeviceToken(baseUrl: String): McpCredentials? {
+        val cleanUrl = SecureMcpCredentialStore.sanitizeBaseUrl(baseUrl)
+        if (cleanUrl.isBlank()) return null
+        val exchangeBody = JSONObject().apply {
+            put("code", "AUTO")
+            put("deviceModel", "Google Pixel 10 Pro")
+        }.toString().toByteArray(Charsets.UTF_8)
+
+        val conn = (URL("$cleanUrl/api/pair/exchange").openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"
+            doOutput = true
+            connectTimeout = 12_000
+            readTimeout = 15_000
+            useCaches = false
+            setRequestProperty("Content-Type", "application/json; charset=utf-8")
+            setRequestProperty("Accept", "application/json")
+            setRequestProperty("X-Device-Model", "Google Pixel 10 Pro")
+            setFixedLengthStreamingMode(exchangeBody.size)
         }
+        try {
+            conn.outputStream.use { out ->
+                out.write(exchangeBody)
+                out.flush()
+            }
+            val status = conn.responseCode
+            if (status !in 200..299) return null
+            val respText = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+            val json = JSONObject(respText)
+            val deviceToken = json.optString("deviceToken", "").trim()
+            if (deviceToken.length < 16) return null
+            return credentialStore.saveCredentials(cleanUrl, deviceToken)
+        } catch (_: Exception) {
+            return null
+        } finally {
+            conn.disconnect()
+        }
+    }
+
+    private fun performSyncCycle(reason: String) {
         if (!checkCurrentConnectivity()) {
             networkOnline = false
             refreshStatusState()
             return
+        }
+
+        var creds = credentialStore.loadCredentials()
+        if (!creds.isConfigured) {
+            connectionState = "reconnecting"
+            emitStatus()
+            val provisioned = autoProvisionDeviceToken(creds.baseUrl)
+            if (provisioned == null || !provisioned.isConfigured) {
+                connectionState = "unpaired"
+                emitStatus()
+                return
+            }
+            creds = provisioned
         }
 
         syncInFlight = true
@@ -453,11 +496,20 @@ class NativeMcpSyncManager(
             connectionState = "connected"
             emitStatus()
         } catch (_: AuthRejectedException) {
+            // Automatischer 1-Klick-Selbstheilungs-Reset bei abgelaufenem Geräteschlüssel
+            val reprovisioned = autoProvisionDeviceToken(creds.baseUrl)
             syncInFlight = false
-            lastError = "Gerätekopplung ungültig oder widerrufen (401)."
-            connectionState = "auth_error"
-            closeActiveSseConnection()
-            emitStatus()
+            if (reprovisioned != null && reprovisioned.isConfigured) {
+                lastError = null
+                connectionState = "connected"
+                emitStatus()
+                scheduleImmediateSync("auto_reprovisioned")
+            } else {
+                lastError = "Gerätekopplung wird erneuert…"
+                connectionState = "reconnecting"
+                closeActiveSseConnection()
+                emitStatus()
+            }
         } catch (e: Exception) {
             syncInFlight = false
             lastError = e.message ?: "Verbindungsfehler"

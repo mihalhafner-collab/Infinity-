@@ -16,9 +16,8 @@ android {
         versionCode = 2
         versionName = "1.1.0"
 
-        val defaultMcpUrl = (System.getenv("MCP_SERVER_URL") ?: "https://ais-pre-usuarrctzvo6yzyghmhedg-947976408951.europe-west2.run.app")
-            .trim()
-            .replace("\"", "")
+        val envMcpUrl = System.getenv("MCP_SERVER_URL")?.trim()?.replace("\"", "").orEmpty()
+        val defaultMcpUrl = envMcpUrl.ifBlank { "https://hafner-gruenraum.ai.studio" }
 
         // Nur die Serveradresse wird in der APK hinterlegt – niemals ein dauerhafter Admin- oder Sync-Schlüssel.
         buildConfigField("String", "DEFAULT_MCP_BASE_URL", "\"$defaultMcpUrl\"")
