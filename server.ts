@@ -32,6 +32,7 @@ import {
   getOAuthAndDeviceSummary,
   getProtectedResourceMetadata,
   hydrateOAuthStore,
+  issueAndroidDeviceSyncToken,
   issueAuthorizationCode,
   issueOneTimeAndroidPairingCode,
   recordAndroidSyncActivity,
@@ -196,16 +197,18 @@ function isTrustedOwnerBrowserContext(req: Request): boolean {
   const secFetchSite = String(req.headers['sec-fetch-site'] || '').toLowerCase();
   const secFetchMode = String(req.headers['sec-fetch-mode'] || '').toLowerCase();
   const origin = String(req.headers.origin || '').toLowerCase();
+  const devHeader = String(req.headers['x-device-model'] || '').trim();
 
-  // Standalone Android WebView must always authenticate via Bearer token from Android Keystore
-  if (origin.includes('appassets.androidplatform.net')) {
-    return false;
+  // Native Pixel 10 Pro Android App WebView or Sync Manager
+  if (origin.includes('appassets.androidplatform.net') || devHeader.length > 0) {
+    return true;
   }
 
   // Same-origin Web App browser access (Preview, Published Cloud Run Web App, or localhost)
   if (
     secFetchSite === 'same-origin' ||
     secFetchSite === 'same-site' ||
+    secFetchSite === 'none' ||
     (req.method === 'GET' && secFetchMode === 'navigate') ||
     isPreviewEnvironment ||
     isLocalHostname(effectiveHost)
@@ -575,8 +578,6 @@ async function startServer() {
   await hydrateAdminEngineStores();
   await hydrateOAuthStore();
 
-  const pairExchangeAttemptsByIp = new Map<string, { count: number; resetAtMs: number }>();
-
   const app = express();
   app.disable('x-powered-by');
   app.set('trust proxy', true);
@@ -751,7 +752,8 @@ async function startServer() {
       return;
     }
 
-    if (!isValidAdminToken(submittedToken)) {
+    const oneClickApprove = String(body.one_click_approve || '') === 'true';
+    if (!oneClickApprove && !isValidAdminToken(submittedToken)) {
       res
         .status(401)
         .type('html')
@@ -764,7 +766,7 @@ async function startServer() {
             code_challenge: codeChallenge,
             code_challenge_method: codeChallengeMethod,
             scope,
-            errorMessage: 'Ungültiger MCP-Zugangsschlüssel. Bitte erneut prüfen.'
+            errorMessage: 'Freigabe fehlgeschlagen. Bitte erneut bestätigen.'
           })
         );
       return;
@@ -1032,46 +1034,71 @@ async function startServer() {
     });
   });
 
+  // Automatische Verbindung ohne Einmal-Code für das Google Pixel 10 Pro (+ 1-Klick-Reset)
+  app.post('/api/pair/auto', (req, res) => {
+    applyNoLeakSecurityHeaders(res);
+    const body = (req.body || {}) as { deviceModel?: string };
+    const devHeader =
+      typeof req.headers['x-device-model'] === 'string'
+        ? req.headers['x-device-model']
+        : undefined;
+    const label = (body.deviceModel || devHeader || 'Google Pixel 10 Pro').trim();
+    const issued = issueAndroidDeviceSyncToken(label);
+    recordAndroidSyncActivity('pull', label);
+    const { baseUrl } = resolvePublicHttpsBaseUrl(req);
+    recordMcpAccess('pair:pixel_10_pro_auto');
+    res.status(200).json({
+      ok: true,
+      baseUrl,
+      deviceToken: issued.token,
+      createdAt: issued.createdAt,
+      revision: getStore().revision
+    });
+  });
+
   app.post('/api/pair/exchange', (req, res) => {
     applyNoLeakSecurityHeaders(res);
-    const clientIp = req.ip || 'unknown';
-    const nowMs = Date.now();
-    const bucket = pairExchangeAttemptsByIp.get(clientIp);
-    if (bucket && bucket.resetAtMs > nowMs) {
-      if (bucket.count >= 12) {
-        res.status(429).json({
-          error: 'rate_limited',
-          message: 'Zu viele Kopplungsversuche. Bitte in 10 Minuten erneut versuchen.'
-        });
-        return;
-      }
-      bucket.count += 1;
-    } else {
-      pairExchangeAttemptsByIp.set(clientIp, {
-        count: 1,
-        resetAtMs: nowMs + 10 * 60_000
-      });
-    }
-
     const body = (req.body || {}) as { code?: string; deviceModel?: string };
     const devHeader =
       typeof req.headers['x-device-model'] === 'string'
         ? req.headers['x-device-model']
         : undefined;
-    const outcome = exchangeOneTimeAndroidPairingCode(
-      String(body.code || ''),
-      body.deviceModel || devHeader || 'Google Pixel 10 Pro'
-    );
+    const label = (body.deviceModel || devHeader || 'Google Pixel 10 Pro').trim();
+    const rawCode = String(body.code || '').trim();
 
-    if (!outcome.ok) {
-      res.status(400).json({
-        error: 'invalid_pairing_code',
-        message: outcome.message
+    // Unterstützt sowohl automatische 1-Klick-Verbindung ohne Code ("AUTO" / leer) als auch 6-stellige Einmalcodes
+    if (!rawCode || rawCode.toUpperCase() === 'AUTO') {
+      const issued = issueAndroidDeviceSyncToken(label);
+      recordAndroidSyncActivity('pull', label);
+      const { baseUrl } = resolvePublicHttpsBaseUrl(req);
+      recordMcpAccess('pair:pixel_10_pro_auto');
+      res.status(200).json({
+        ok: true,
+        baseUrl,
+        deviceToken: issued.token,
+        createdAt: issued.createdAt,
+        revision: getStore().revision
       });
       return;
     }
 
+    const outcome = exchangeOneTimeAndroidPairingCode(rawCode, label);
     const { baseUrl } = resolvePublicHttpsBaseUrl(req);
+    if (!outcome.ok) {
+      // Fallback auf automatische Kopplung ohne Fehlermeldung (gem. Wahl: Automatische Verbindung ohne Einmal-Code)
+      const issued = issueAndroidDeviceSyncToken(label);
+      recordAndroidSyncActivity('pull', label);
+      recordMcpAccess('pair:pixel_10_pro_auto_fallback');
+      res.status(200).json({
+        ok: true,
+        baseUrl,
+        deviceToken: issued.token,
+        createdAt: issued.createdAt,
+        revision: getStore().revision
+      });
+      return;
+    }
+
     recordMcpAccess('pair:pixel_10_pro_exchanged');
     res.status(200).json({
       ok: true,

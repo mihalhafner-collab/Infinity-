@@ -425,8 +425,35 @@ export function resolveBackendEndpoint(path: string): {
 } {
   const cleanPath = path.startsWith('/') ? path : `/${path}`;
   if (isNativeAndroidApp()) {
-    // Im nativen Android-Betrieb übernimmt Kotlin NativeMcpSyncManager alle Server-Verbindungen
+    // Im nativen Android-Betrieb übernimmt Kotlin NativeMcpSyncManager alle Daten-Synchronisationen
     return { url: null, headers: {} };
   }
   return { url: cleanPath, headers: {} };
 }
+
+export function resolveMcpAdminEndpoint(
+  path: string,
+  overrideBaseUrl?: string
+): {
+  url: string;
+  headers: Record<string, string>;
+} {
+  const cleanPath = path.startsWith('/') ? path : `/${path}`;
+  if (isNativeAndroidApp()) {
+    const rawBase =
+      overrideBaseUrl?.trim() ||
+      getNativeMcpSyncStatus()?.baseUrl?.trim() ||
+      'https://hafner-gruenraum.ai.studio';
+    const normalizedBase = rawBase.includes('ais-pre-usuarrctzvo6yzyghmhedg')
+      ? 'https://hafner-gruenraum.ai.studio'
+      : rawBase.replace(/\/mcp.*$/i, '').replace(/\/+$/, '');
+    return {
+      url: `${normalizedBase}${cleanPath}`,
+      headers: {
+        'X-Device-Model': 'Google Pixel 10 Pro'
+      }
+    };
+  }
+  return { url: cleanPath, headers: {} };
+}
+

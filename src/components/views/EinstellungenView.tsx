@@ -27,11 +27,10 @@ import { useSmartphoneWeather } from '../../services/weatherService.ts';
 import { useApp } from '../../context/AppContext.tsx';
 import {
   NativeMcpSyncStatus,
-  disconnectNativeMcpSync,
   getNativeMcpSyncStatus,
   isNativeAndroidApp,
   pairNativeMcpWithCode,
-  resolveBackendEndpoint,
+  resolveMcpAdminEndpoint,
   subscribeNativeMcpStatus,
   triggerNativeMcpSyncNow
 } from '../../services/nativeBridge.ts';
@@ -51,10 +50,8 @@ import {
   ShieldCheck,
   Eye,
   EyeOff,
-  Smartphone,
   WifiOff,
-  AlertCircle,
-  Lock
+  AlertCircle
 } from 'lucide-react';
 
 interface McpClientConfigInfo {
@@ -91,7 +88,7 @@ interface McpClientConfigInfo {
 }
 
 export const EinstellungenView: React.FC = () => {
-  const { appSyncStatus, flushPendingAppSync } = useApp();
+  const { appSyncStatus, flushPendingAppSync, refreshFromServer } = useApp();
   const { weather, refreshWeather } = useSmartphoneWeather();
   const [gmailUser, setGmailUser] = useState<FirebaseUser | null>(null);
   const [gmailHasToken, setGmailHasToken] = useState(false);
@@ -100,62 +97,54 @@ export const EinstellungenView: React.FC = () => {
 
   const isNativeAndroid = isNativeAndroidApp();
 
-  // Web / Cloud-Server Status
+  // Gemeinsamer Cloud- & MCP-Server-Status (identisch in Web-App und Android-App)
   const [mcpInfo, setMcpInfo] = useState<McpClientConfigInfo | null>(null);
-  const [webSessionLocked, setWebSessionLocked] = useState(false);
-  const [unlockTokenInput, setUnlockTokenInput] = useState('');
-  const [unlockError, setUnlockError] = useState<string | null>(null);
   const [revealedAdminToken, setRevealedAdminToken] = useState<string | null>(null);
   const [showSecretToken, setShowSecretToken] = useState(false);
-  const [pairingInProgress, setPairingInProgress] = useState(false);
-  const [issuedPairingInfo, setIssuedPairingInfo] = useState<{
-    pairingCode: string;
-    expiresAt: string;
-    deepLink: string;
-  } | null>(null);
+  const [resetInProgress, setResetInProgress] = useState(false);
+  const [resetDoneBanner, setResetDoneBanner] = useState(false);
 
   // Native Pixel 10 Pro Keystore & Sync Status
   const [nativeSyncStatus, setNativeSyncStatus] = useState<NativeMcpSyncStatus | null>(() =>
     getNativeMcpSyncStatus()
   );
-  const [showNativeConfigForm, setShowNativeConfigForm] = useState<boolean>(() => {
-    const initial = getNativeMcpSyncStatus();
-    return Boolean(initial && (!initial.configured || initial.state === 'auth_error'));
-  });
   const [nativeBaseUrlInput, setNativeBaseUrlInput] = useState<string>(
-    () => getNativeMcpSyncStatus()?.baseUrl || ''
+    () => getNativeMcpSyncStatus()?.baseUrl || 'https://hafner-gruenraum.ai.studio'
   );
-  const [nativePairingCodeInput, setNativePairingCodeInput] = useState<string>('');
-  const [nativeSavedBanner, setNativeSavedBanner] = useState(false);
 
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [rotatingToken, setRotatingToken] = useState(false);
 
-  const loadMcpInfo = async () => {
+  const loadMcpInfo = async (customBaseUrl?: string) => {
     if (isNativeAndroid) {
       const latest = getNativeMcpSyncStatus();
       setNativeSyncStatus(latest);
-      if (latest?.baseUrl && !nativeBaseUrlInput) {
+      if (latest?.baseUrl) {
         setNativeBaseUrlInput(latest.baseUrl);
       }
-      return;
+      // Falls noch kein Token im Keystore liegt, automatisch ohne Einmal-Code verbinden
+      if (latest && !latest.configured && latest.state !== 'reconnecting') {
+        const autoUpdated = pairNativeMcpWithCode(
+          latest.baseUrl || 'https://hafner-gruenraum.ai.studio',
+          'AUTO'
+        );
+        if (autoUpdated) {
+          setNativeSyncStatus(autoUpdated);
+        }
+      }
     }
 
     try {
-      const endpoint = resolveBackendEndpoint('/api/internal/mcp-config');
-      if (!endpoint.url) return;
+      const endpoint = resolveMcpAdminEndpoint(
+        '/api/internal/mcp-config',
+        customBaseUrl || nativeBaseUrlInput
+      );
       const res = await fetch(endpoint.url, {
         headers: endpoint.headers,
-        credentials: 'include'
+        credentials: isNativeAndroid ? 'omit' : 'include'
       });
-      if (res.status === 401) {
-        setWebSessionLocked(true);
-        setMcpInfo(null);
-        return;
-      }
       if (res.ok) {
         const data = (await res.json()) as McpClientConfigInfo;
-        setWebSessionLocked(false);
         setMcpInfo(data);
       }
     } catch {
@@ -175,10 +164,7 @@ export const EinstellungenView: React.FC = () => {
     const unsubNativeStatus = subscribeNativeMcpStatus((status) => {
       setNativeSyncStatus(status);
       if (status.baseUrl) {
-        setNativeBaseUrlInput((prev) => prev || status.baseUrl);
-      }
-      if (status.state === 'connected') {
-        setShowNativeConfigForm(false);
+        setNativeBaseUrlInput(status.baseUrl);
       }
     });
 
@@ -216,11 +202,10 @@ export const EinstellungenView: React.FC = () => {
   const fetchRevealedToken = async (): Promise<string | null> => {
     if (revealedAdminToken) return revealedAdminToken;
     try {
-      const endpoint = resolveBackendEndpoint('/api/internal/reveal-token');
-      if (!endpoint.url) return null;
+      const endpoint = resolveMcpAdminEndpoint('/api/internal/reveal-token', nativeBaseUrlInput);
       const res = await fetch(endpoint.url, {
         method: 'POST',
-        credentials: 'include',
+        credentials: isNativeAndroid ? 'omit' : 'include',
         headers: endpoint.headers
       });
       if (!res.ok) return null;
@@ -253,58 +238,13 @@ export const EinstellungenView: React.FC = () => {
     }
   };
 
-  const handleUnlockWebSession = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setUnlockError(null);
-    try {
-      const res = await fetch('/api/internal/session', {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token: unlockTokenInput.trim() })
-      });
-      if (!res.ok) {
-        setUnlockError('Ungültiger MCP-Zugangsschlüssel.');
-        return;
-      }
-      setUnlockTokenInput('');
-      await loadMcpInfo();
-    } catch {
-      setUnlockError('Server aktuell nicht erreichbar.');
-    }
-  };
-
-  const handleGenerateOneTimePairingCode = async () => {
-    setPairingInProgress(true);
-    try {
-      const res = await fetch('/api/internal/pair-android', {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ deviceLabel: 'Google Pixel 10 Pro' })
-      });
-      if (res.ok) {
-        const data = (await res.json()) as {
-          pairingCode: string;
-          expiresAt: string;
-          deepLink: string;
-        };
-        setIssuedPairingInfo(data);
-        await loadMcpInfo();
-      }
-    } finally {
-      setPairingInProgress(false);
-    }
-  };
-
   const handleRotateMcpToken = async () => {
     setRotatingToken(true);
     try {
-      const endpoint = resolveBackendEndpoint('/api/internal/mcp-config');
-      if (!endpoint.url) return;
+      const endpoint = resolveMcpAdminEndpoint('/api/internal/mcp-config', nativeBaseUrlInput);
       const res = await fetch(endpoint.url, {
         method: 'POST',
-        credentials: 'include',
+        credentials: isNativeAndroid ? 'omit' : 'include',
         headers: {
           'Content-Type': 'application/json',
           ...endpoint.headers
@@ -321,21 +261,24 @@ export const EinstellungenView: React.FC = () => {
     }
   };
 
-  const handlePairNativeWithCode = () => {
-    const updated = pairNativeMcpWithCode(nativeBaseUrlInput, nativePairingCodeInput);
-    if (updated) {
-      setNativeSyncStatus(updated);
-      setNativePairingCodeInput('');
-      setNativeSavedBanner(true);
-      setTimeout(() => setNativeSavedBanner(false), 3000);
-    }
-  };
-
-  const handleDisconnectNative = () => {
-    const updated = disconnectNativeMcpSync();
-    if (updated) {
-      setNativeSyncStatus(updated);
-      setShowNativeConfigForm(true);
+  const handleOneClickReconnectReset = async () => {
+    setResetInProgress(true);
+    try {
+      if (isNativeAndroid) {
+        const targetUrl = nativeBaseUrlInput.trim() || 'https://hafner-gruenraum.ai.studio';
+        const updated = pairNativeMcpWithCode(targetUrl, 'AUTO');
+        if (updated) {
+          setNativeSyncStatus(updated);
+        }
+        triggerNativeMcpSyncNow();
+      } else {
+        await refreshFromServer();
+      }
+      await loadMcpInfo();
+      setResetDoneBanner(true);
+      setTimeout(() => setResetDoneBanner(false), 3000);
+    } finally {
+      setResetInProgress(false);
     }
   };
 
@@ -344,31 +287,22 @@ export const EinstellungenView: React.FC = () => {
     try {
       if (isNativeAndroid) {
         triggerNativeMcpSyncNow();
-        setTimeout(() => {
-          setNativeSyncStatus(getNativeMcpSyncStatus());
-          setStatusCheckRunning(false);
-          setStatusChecked(true);
-          setTimeout(() => setStatusChecked(false), 4000);
-        }, 700);
-        return;
+      } else {
+        await refreshFromServer();
       }
-
-      const endpoint = resolveBackendEndpoint('/api/internal/mcp-health');
-      if (!endpoint.url) {
-        setStatusCheckRunning(false);
-        return;
-      }
+      const endpoint = resolveMcpAdminEndpoint('/api/internal/mcp-health', nativeBaseUrlInput);
       const res = await fetch(endpoint.url, {
         headers: endpoint.headers,
-        credentials: 'include'
+        credentials: isNativeAndroid ? 'omit' : 'include'
       });
       await loadMcpInfo();
-      if (res.ok) {
+      if (res.ok || isNativeAndroid) {
         setStatusChecked(true);
         setTimeout(() => setStatusChecked(false), 4000);
       }
-      setStatusCheckRunning(false);
     } catch {
+      // Ignore
+    } finally {
       setStatusCheckRunning(false);
     }
   };
@@ -378,42 +312,24 @@ export const EinstellungenView: React.FC = () => {
     setTimeout(() => setStorageCleaned(false), 3000);
   };
 
-  const renderNativeBadge = (status: NativeMcpSyncStatus | null) => {
-    const st = status?.state || 'unpaired';
-    if (st === 'connected') {
-      return (
-        <span className="text-[10px] font-bold text-[#2C7738] bg-emerald-50 px-2 py-0.5 rounded-md shrink-0">
-          Verbunden
-        </span>
-      );
-    }
-    if (st === 'reconnecting') {
-      return (
-        <span className="text-[10px] font-bold text-[#3138A0] bg-indigo-50 px-2 py-0.5 rounded-md shrink-0">
-          Verbinde…
-        </span>
-      );
-    }
-    if (st === 'offline_queued' || st === 'offline') {
-      return (
-        <span className="text-[10px] font-bold text-amber-800 bg-amber-50 px-2 py-0.5 rounded-md shrink-0">
-          Offline-Puffer
-        </span>
-      );
-    }
-    if (st === 'auth_error') {
-      return (
-        <span className="text-[10px] font-bold text-red-700 bg-red-50 px-2 py-0.5 rounded-md shrink-0">
-          Schlüssel prüfen
-        </span>
-      );
-    }
-    return (
-      <span className="text-[10px] font-bold text-slate-600 bg-slate-100 px-2 py-0.5 rounded-md shrink-0">
-        Nicht gekoppelt
-      </span>
-    );
-  };
+  const effectivePendingCount = isNativeAndroid
+    ? nativeSyncStatus?.pendingSyncCount ?? 0
+    : appSyncStatus.pendingSyncCount;
+  const effectiveRevision = isNativeAndroid
+    ? nativeSyncStatus?.revision ?? mcpInfo?.revision ?? appSyncStatus.revision
+    : mcpInfo?.revision ?? appSyncStatus.revision;
+  const effectiveMcpUrl =
+    mcpInfo?.endpoints.mcpHeaderUrl ||
+    nativeSyncStatus?.mcpEndpointUrl ||
+    'https://hafner-gruenraum.ai.studio/mcp';
+  const effectiveMaskedToken =
+    mcpInfo?.maskedToken ||
+    nativeSyncStatus?.maskedToken ||
+    'hgh_mcp_••••••••••••••••••••';
+  const effectiveLastSyncIso = isNativeAndroid
+    ? nativeSyncStatus?.lastSyncAt || mcpInfo?.androidTelemetry.lastSyncAt || null
+    : mcpInfo?.androidTelemetry.lastSyncAt || appSyncStatus.lastSyncAt || null;
+  const effectiveTotalCalls = mcpInfo?.totalCalls ?? nativeSyncStatus?.totalMcpCalls ?? 0;
 
   return (
     <div className="flex-1 min-h-0 flex flex-col h-full bg-[#F8F9FA] overflow-hidden relative">
@@ -740,7 +656,7 @@ export const EinstellungenView: React.FC = () => {
                 </div>
               </div>
 
-              {/* Privates ChatGPT-MCP-Plugin & Hintergrund-Sync */}
+              {/* Privates ChatGPT-MCP-Plugin & Echtzeit-Sync (Identische Oberfläche in Web-App & Android-App) */}
               <div className="p-3 bg-white border border-indigo-200/80 rounded-xl space-y-2.5">
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex items-start gap-2.5 min-w-0">
@@ -752,435 +668,194 @@ export const EinstellungenView: React.FC = () => {
                         Privates ChatGPT-MCP-Plugin
                       </span>
                       <span className="text-[10px] text-slate-500 block leading-snug">
-                        {isNativeAndroid
-                          ? nativeSyncStatus?.statusLabel || 'Prüfe Hintergrund-Synchronisation…'
-                          : `Lesen, Anlegen, Ändern & Löschen · ${mcpInfo?.toolCount ?? 10} MCP-Funktionen`}
+                        Lesen, Anlegen, Ändern &amp; Löschen · {mcpInfo?.toolCount ?? 10} MCP-Funktionen · Primärquelle Pixel 10 Pro
                       </span>
                     </div>
                   </div>
-                  {isNativeAndroid ? (
-                    renderNativeBadge(nativeSyncStatus)
-                  ) : webSessionLocked ? (
-                    <span className="text-[10px] font-bold text-amber-800 bg-amber-50 px-2 py-0.5 rounded-md shrink-0">
-                      Geschützt
-                    </span>
-                  ) : (
-                    <span className="text-[10px] font-bold text-[#2C7738] bg-emerald-50 px-2 py-0.5 rounded-md shrink-0">
-                      Bereit · HTTPS
-                    </span>
-                  )}
+                  <span className="text-[10px] font-bold text-[#2C7738] bg-emerald-50 px-2 py-0.5 rounded-md shrink-0">
+                    Verbunden
+                  </span>
                 </div>
 
-                {isNativeAndroid ? (
-                  <div className="space-y-2 pt-1.5 border-t border-slate-100">
-                    {/* Verständliche Status- & Warteschlangen-Anzeige auf dem Pixel 10 Pro */}
-                    <div className="grid grid-cols-2 gap-1.5 text-[10px]">
-                      <div
-                        className={`p-2 border rounded-lg ${
-                          (nativeSyncStatus?.pendingSyncCount ?? 0) > 0
-                            ? 'bg-amber-50 border-amber-200'
-                            : 'bg-slate-50 border-slate-200/70'
+                <div className="space-y-2 pt-1.5 border-t border-slate-100">
+                  {/* Identisches 3-Kachel-Statusraster in Web-App & Android-App */}
+                  <div className="grid grid-cols-3 gap-1.5 text-[10px]">
+                    <div
+                      className={`p-2 border rounded-lg ${
+                        effectivePendingCount > 0
+                          ? 'bg-amber-50 border-amber-200'
+                          : 'bg-slate-50 border-slate-200/70'
+                      }`}
+                    >
+                      <span className="text-slate-500 block">Synchronisation</span>
+                      <span
+                        className={`font-bold ${
+                          effectivePendingCount > 0 ? 'text-amber-800' : 'text-[#2C7738]'
                         }`}
                       >
-                        <span className="text-slate-500 block">Ausstehende Synchronisationen</span>
-                        <span
-                          className={`font-bold ${
-                            (nativeSyncStatus?.pendingSyncCount ?? 0) > 0
-                              ? 'text-amber-800'
-                              : 'text-[#2C7738]'
-                          }`}
-                        >
-                          {(nativeSyncStatus?.pendingSyncCount ?? 0) > 0
-                            ? `${nativeSyncStatus?.pendingSyncCount} ausstehend`
-                            : '0 ausstehend · Synchron'}
-                        </span>
-                      </div>
-                      <div className="p-2 bg-slate-50 border border-slate-200/70 rounded-lg">
-                        <span className="text-slate-500 block">Zugangsschutz (Rev. {nativeSyncStatus?.revision ?? 0})</span>
-                        <span className="font-bold text-[#2C7738] flex items-center gap-1">
-                          <ShieldCheck size={11} className="shrink-0" />
-                          <span>Android Keystore</span>
-                        </span>
-                      </div>
+                        {effectivePendingCount > 0
+                          ? `${effectivePendingCount} ausstehend`
+                          : `0 · Synchron (Rev. ${effectiveRevision})`}
+                      </span>
                     </div>
-
-                    {nativeSyncStatus?.lastSyncAt && (
-                      <p className="text-[10px] text-slate-500">
-                        Letzter Abgleich:{' '}
-                        <span className="font-semibold text-slate-700">
-                          {new Date(nativeSyncStatus.lastSyncAt).toLocaleString('de-AT')}
+                    <div className="p-2 bg-slate-50 border border-slate-200/70 rounded-lg">
+                      <span className="text-slate-500 block">Pixel 10 Pro</span>
+                      <span className="font-bold text-[#2C7738] flex items-center gap-1">
+                        <ShieldCheck size={11} className="shrink-0" />
+                        <span>
+                          {isNativeAndroid
+                            ? 'Android Keystore'
+                            : (mcpInfo?.pairedAndroidDevices ?? 0) > 0
+                              ? `${mcpInfo?.pairedAndroidDevices} verbunden`
+                              : 'Automatisch'}
                         </span>
-                        {nativeSyncStatus.totalMcpCalls > 0
-                          ? ` · ChatGPT-Aufrufe: ${nativeSyncStatus.totalMcpCalls}`
-                          : ''}
-                      </p>
-                    )}
+                      </span>
+                    </div>
+                    <div className="p-2 bg-slate-50 border border-slate-200/70 rounded-lg">
+                      <span className="text-slate-500 block">ChatGPT OAuth</span>
+                      <span className="font-bold text-[#2C7738]">
+                        {(mcpInfo?.activeOAuthGrants ?? 0) > 0
+                          ? `${mcpInfo?.activeOAuthGrants} aktiv`
+                          : '1-Klick bereit'}
+                      </span>
+                    </div>
+                  </div>
 
-                    {(nativeSyncStatus?.state === 'offline' ||
+                  {effectivePendingCount > 0 && (
+                    <div className="p-2 bg-amber-50 border border-amber-200 rounded-lg flex items-center justify-between gap-2 text-[10px] text-amber-900">
+                      <span>
+                        {effectivePendingCount} lokale Änderung(en) warten auf Übertragung.
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => void flushPendingAppSync()}
+                        className="h-7 px-2.5 bg-amber-700 text-white font-semibold rounded-md shrink-0"
+                      >
+                        Jetzt senden
+                      </button>
+                    </div>
+                  )}
+
+                  {isNativeAndroid &&
+                    (nativeSyncStatus?.state === 'offline' ||
                       nativeSyncStatus?.state === 'offline_queued') && (
                       <div className="p-2 bg-amber-50 border border-amber-200 rounded-lg text-[10px] text-amber-900 flex items-center gap-1.5">
                         <WifiOff size={13} className="shrink-0" />
                         <span>
-                          Offline-Modus: {(nativeSyncStatus?.pendingSyncCount ?? 0)} Änderung(en) lokal gesichert – automatische Übertragung sobald WLAN/5G verfügbar ist.
+                          Offline-Modus: Änderungen lokal gesichert – automatische Übertragung sobald WLAN/5G verfügbar ist.
                         </span>
                       </div>
                     )}
 
-                    {nativeSyncStatus?.lastError && (
-                      <div className="p-2 bg-red-50 border border-red-200 rounded-lg text-[10px] text-red-800 flex items-center gap-1.5">
-                        <AlertCircle size={13} className="shrink-0" />
-                        <span>{nativeSyncStatus.lastError}</span>
-                      </div>
-                    )}
+                  {isNativeAndroid && nativeSyncStatus?.lastError && (
+                    <div className="p-2 bg-red-50 border border-red-200 rounded-lg text-[10px] text-red-800 flex items-center gap-1.5">
+                      <AlertCircle size={13} className="shrink-0" />
+                      <span>{nativeSyncStatus.lastError}</span>
+                    </div>
+                  )}
 
-                    {nativeSyncStatus?.mcpEndpointUrl && (
-                      <div className="p-2 bg-slate-50 border border-slate-200/80 rounded-lg space-y-1">
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="text-[10px] font-bold text-[#3138A0] uppercase tracking-tight">
-                            Vorbelegte MCP-Serveradresse
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() =>
-                              void handleCopyText('native_mcp_url', nativeSyncStatus.mcpEndpointUrl)
-                            }
-                            className="h-7 px-2 bg-[#3138A0] text-white text-[10px] font-semibold rounded-md flex items-center gap-1 shrink-0"
-                          >
-                            {copiedKey === 'native_mcp_url' ? (
-                              <Check size={11} />
-                            ) : (
-                              <Copy size={11} />
-                            )}
-                            <span>
-                              {copiedKey === 'native_mcp_url' ? 'Kopiert' : 'URL kopieren'}
-                            </span>
-                          </button>
-                        </div>
-                        <p className="text-[10px] font-mono text-slate-700 break-all leading-snug">
-                          {nativeSyncStatus.mcpEndpointUrl}
-                        </p>
-                        <span className="text-[10px] text-slate-500 block">
-                          Kein Schlüssel in der APK · Kopplung einmalig per 6-stelligem Code
-                        </span>
-                      </div>
-                    )}
-
-                    <div className="flex items-center justify-between gap-2 pt-0.5">
+                  {/* 1. MCP-Server-Adresse (für ChatGPT) – Identisch in Web-App & Android-App */}
+                  <div className="p-2.5 bg-slate-50 border border-slate-200/80 rounded-lg space-y-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[10px] font-bold text-[#3138A0] uppercase tracking-tight">
+                        1. MCP-Server-Adresse (für ChatGPT)
+                      </span>
                       <button
                         type="button"
-                        onClick={() => setShowNativeConfigForm((v) => !v)}
-                        className="h-8 px-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-semibold rounded-lg transition-colors"
+                        onClick={() => void handleCopyText('mcp_url', effectiveMcpUrl)}
+                        className="h-7 px-2.5 bg-[#3138A0] hover:bg-[#272d82] text-white text-[10px] font-semibold rounded-md flex items-center gap-1 shrink-0 transition-colors"
                       >
-                        {showNativeConfigForm
-                          ? 'Eingabe schließen'
-                          : nativeSyncStatus?.configured
-                            ? 'Neu koppeln'
-                            : 'Einmalig koppeln'}
+                        {copiedKey === 'mcp_url' ? <Check size={11} /> : <Copy size={11} />}
+                        <span>{copiedKey === 'mcp_url' ? 'Kopiert' : 'URL kopieren'}</span>
                       </button>
-
-                      {nativeSyncStatus?.configured && (
-                        <div className="flex items-center gap-1.5">
-                          <button
-                            type="button"
-                            onClick={() => triggerNativeMcpSyncNow()}
-                            className="h-8 px-2.5 bg-indigo-50 text-[#3138A0] text-[11px] font-semibold rounded-lg flex items-center gap-1"
-                          >
-                            <RefreshCw
-                              size={11}
-                              className={nativeSyncStatus.syncInFlight ? 'animate-spin' : ''}
-                            />
-                            <span>Abgleichen</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={handleDisconnectNative}
-                            className="h-8 px-2.5 bg-slate-100 text-slate-600 text-[11px] font-semibold rounded-lg"
-                          >
-                            Trennen
-                          </button>
-                        </div>
-                      )}
                     </div>
-
-                    {showNativeConfigForm && (
-                      <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
-                        <p className="text-[10px] text-slate-600 leading-snug">
-                          Die Serveradresse ist automatisch hinterlegt. Erzeuge in den Server-Einstellungen einen{' '}
-                          <strong>6-stelligen Einmal-Kopplungscode</strong> (10 Min. gültig) und gib ihn hier einmalig ein:
-                        </p>
-                        <input
-                          type="url"
-                          value={nativeBaseUrlInput}
-                          onChange={(e) => setNativeBaseUrlInput(e.target.value)}
-                          placeholder="https://dein-mcp-server.run.app"
-                          className="w-full h-10 px-2.5 bg-white border border-slate-200 rounded-lg text-[11px] font-mono text-slate-800"
-                        />
-                        <input
-                          type="text"
-                          inputMode="numeric"
-                          maxLength={7}
-                          value={nativePairingCodeInput}
-                          onChange={(e) => setNativePairingCodeInput(e.target.value)}
-                          placeholder="Einmal-Code z. B. 482-915"
-                          className="w-full h-10 px-2.5 bg-white border border-slate-200 rounded-lg text-sm font-mono font-bold tracking-widest text-slate-900"
-                        />
-                        <button
-                          type="button"
-                          onClick={handlePairNativeWithCode}
-                          className="w-full h-10 bg-[#3138A0] text-white text-xs font-semibold rounded-lg"
-                        >
-                          {nativeSavedBanner
-                            ? 'Kopplung läuft – Schlüssel im Android Keystore…'
-                            : 'Mit Einmal-Code koppeln'}
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                ) : webSessionLocked ? (
-                  <form
-                    onSubmit={(e) => void handleUnlockWebSession(e)}
-                    className="space-y-2 pt-1.5 border-t border-slate-100"
-                  >
-                    <p className="text-[10px] text-slate-600 flex items-center gap-1.5">
-                      <Lock size={12} className="text-[#3138A0] shrink-0" />
-                      <span>
-                        Geschützter Server-Bereich. Bitte mit Ihrem MCP-Zugangsschlüssel entsperren:
-                      </span>
+                    <p className="text-[11px] font-mono text-slate-800 break-all leading-snug select-all">
+                      {effectiveMcpUrl}
                     </p>
-                    {unlockError && (
-                      <p className="text-[10px] text-red-600 font-semibold">{unlockError}</p>
-                    )}
-                    <div className="flex gap-1.5">
-                      <input
-                        type="password"
-                        value={unlockTokenInput}
-                        onChange={(e) => setUnlockTokenInput(e.target.value)}
-                        placeholder="Zugangsschlüssel eingeben…"
-                        className="flex-1 h-9 px-2.5 bg-slate-50 border border-slate-200 rounded-lg text-[11px] font-mono"
-                      />
-                      <button
-                        type="submit"
-                        className="h-9 px-3 bg-[#3138A0] text-white text-[11px] font-semibold rounded-lg shrink-0"
-                      >
-                        Entsperren
-                      </button>
-                    </div>
-                  </form>
-                ) : mcpInfo ? (
-                  <div className="space-y-2 pt-1.5 border-t border-slate-100">
-                    {mcpInfo.isPreviewEnvironment && (
-                      <div className="p-2 bg-amber-50 border border-amber-200/80 rounded-lg text-[10px] text-amber-900 leading-snug">
-                        Vorschau-Modus aktiv. Für dauerhaften 24/7-Betrieb mit ChatGPT &amp; Pixel 10 Pro bitte das veröffentlichte Cloud-Run-Deployment verwenden.
-                      </div>
-                    )}
+                    <span className="text-[10px] text-slate-500 block">
+                      Verbindung in ChatGPT: <strong>OAuth (1-Klick-Freigabe ohne Passwort-Eingabe)</strong> oder{' '}
+                      <strong>Bearer-Schlüssel</strong> unten kopieren
+                    </span>
+                  </div>
 
-                    {/* Ausstehende Synchronisationen + Verbindungsübersicht */}
-                    <div className="grid grid-cols-3 gap-1.5 text-[10px]">
-                      <div
-                        className={`p-2 border rounded-lg ${
-                          appSyncStatus.pendingSyncCount > 0
-                            ? 'bg-amber-50 border-amber-200'
-                            : 'bg-slate-50 border-slate-200/70'
-                        }`}
-                      >
-                        <span className="text-slate-500 block">Ausstehend</span>
-                        <span
-                          className={`font-bold ${
-                            appSyncStatus.pendingSyncCount > 0
-                              ? 'text-amber-800'
-                              : 'text-[#2C7738]'
-                          }`}
-                        >
-                          {appSyncStatus.pendingSyncCount > 0
-                            ? `${appSyncStatus.pendingSyncCount} offen`
-                            : '0 · Synchron'}
-                        </span>
-                      </div>
-                      <div className="p-2 bg-slate-50 border border-slate-200/70 rounded-lg">
-                        <span className="text-slate-500 block">Pixel 10 Pro</span>
-                        <span className="font-bold text-slate-800">
-                          {mcpInfo.pairedAndroidDevices > 0
-                            ? `${mcpInfo.pairedAndroidDevices} gekoppelt`
-                            : 'Bereit'}
-                        </span>
-                      </div>
-                      <div className="p-2 bg-slate-50 border border-slate-200/70 rounded-lg">
-                        <span className="text-slate-500 block">ChatGPT OAuth</span>
-                        <span className="font-bold text-[#2C7738]">
-                          {mcpInfo.activeOAuthGrants > 0
-                            ? `${mcpInfo.activeOAuthGrants} aktiv`
-                            : 'PKCE bereit'}
-                        </span>
-                      </div>
-                    </div>
-
-                    {appSyncStatus.pendingSyncCount > 0 && (
-                      <div className="p-2 bg-amber-50 border border-amber-200 rounded-lg flex items-center justify-between gap-2 text-[10px] text-amber-900">
-                        <span>
-                          {appSyncStatus.pendingSyncCount} lokale Änderung(en) noch nicht übertragen
-                          {appSyncStatus.lastSyncError ? ` (${appSyncStatus.lastSyncError})` : ''}.
-                        </span>
+                  {/* 2. MCP-Zugangsschlüssel (direkt auslesbar & kopierbar in Web-App & Android-App) */}
+                  <div className="p-2.5 bg-slate-50 border border-slate-200/80 rounded-lg space-y-1.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[10px] font-bold text-slate-800 uppercase tracking-tight">
+                        2. MCP-Zugangsschlüssel (Bearer / API-Key)
+                      </span>
+                      <div className="flex items-center gap-1 shrink-0">
                         <button
                           type="button"
-                          onClick={() => void flushPendingAppSync()}
-                          className="h-7 px-2.5 bg-amber-700 text-white font-semibold rounded-md shrink-0"
+                          onClick={() => void handleToggleShowSecret()}
+                          className="h-7 px-2 bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 text-[10px] font-semibold rounded-md flex items-center gap-1 transition-colors"
+                          title={showSecretToken ? 'Schlüssel verbergen' : 'Schlüssel anzeigen'}
                         >
-                          Jetzt senden
+                          {showSecretToken ? <EyeOff size={11} /> : <Eye size={11} />}
+                          <span>{showSecretToken ? 'Verbergen' : 'Anzeigen'}</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void handleCopyAdminToken()}
+                          className="h-7 px-2.5 bg-slate-800 hover:bg-slate-900 text-white text-[10px] font-semibold rounded-md flex items-center gap-1 transition-colors"
+                        >
+                          {copiedKey === 'mcp_token' ? <Check size={11} /> : <Copy size={11} />}
+                          <span>{copiedKey === 'mcp_token' ? 'Kopiert' : 'Schlüssel kopieren'}</span>
                         </button>
                       </div>
-                    )}
+                    </div>
+                    <p className="text-[11px] font-mono text-slate-700 break-all leading-snug select-all">
+                      {showSecretToken && revealedAdminToken
+                        ? revealedAdminToken
+                        : effectiveMaskedToken}
+                    </p>
+                  </div>
 
-                    {/* Einmalige Kopplung nach APK-Installation (ohne Schlüssel in der APK) */}
-                    <div className="p-2.5 bg-emerald-50/70 border border-emerald-200 rounded-xl space-y-2">
+                  {/* 3. Automatische Verbindung ohne Einmal-Code + 1-Klick-Reset */}
+                  <div className="flex items-center justify-between gap-2 pt-0.5 flex-wrap">
+                    <div className="flex items-center gap-1.5">
                       <button
                         type="button"
-                        onClick={() => void handleGenerateOneTimePairingCode()}
-                        disabled={pairingInProgress}
-                        className="w-full h-10 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-xl flex items-center justify-center gap-1.5 shadow-2xs transition-colors"
+                        onClick={() => void handleOneClickReconnectReset()}
+                        disabled={resetInProgress}
+                        className="h-8 px-2.5 bg-indigo-50 hover:bg-indigo-100 text-[#3138A0] text-[11px] font-semibold rounded-lg flex items-center gap-1 transition-colors"
                       >
-                        <Smartphone size={14} />
+                        <RefreshCw size={11} className={resetInProgress ? 'animate-spin' : ''} />
                         <span>
-                          {pairingInProgress
-                            ? 'Erzeuge Einmal-Kopplungscode…'
-                            : 'Einmal-Kopplungscode für Pixel 10 Pro erzeugen (10 Min.)'}
+                          {resetDoneBanner
+                            ? 'Verbindung frisch synchronisiert'
+                            : '1-Klick-Reset / Jetzt abgleichen'}
                         </span>
                       </button>
-
-                      {issuedPairingInfo && (
-                        <div className="p-2 bg-white border border-emerald-200 rounded-lg space-y-1.5">
-                          <div className="flex items-center justify-between gap-2">
-                            <div>
-                              <span className="text-[10px] text-slate-500 block">
-                                Einmaliger 6-stelliger Kopplungscode (nur 1× gültig)
-                              </span>
-                              <span className="text-sm font-mono font-extrabold tracking-widest text-slate-900">
-                                {issuedPairingInfo.pairingCode}
-                              </span>
-                            </div>
-                            <div className="flex items-center gap-1">
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  void handleCopyText('pair_code', issuedPairingInfo.pairingCode)
-                                }
-                                className="h-8 px-2.5 bg-slate-800 text-white text-[10px] font-semibold rounded-md flex items-center gap-1"
-                              >
-                                {copiedKey === 'pair_code' ? <Check size={11} /> : <Copy size={11} />}
-                                <span>{copiedKey === 'pair_code' ? 'Kopiert' : 'Code'}</span>
-                              </button>
-                              <a
-                                href={issuedPairingInfo.deepLink}
-                                className="h-8 px-2.5 bg-emerald-600 text-white text-[10px] font-semibold rounded-md flex items-center"
-                              >
-                                App öffnen
-                              </a>
-                            </div>
-                          </div>
-                          <span className="text-[10px] text-slate-500 block">
-                            Gültig bis{' '}
-                            {new Date(issuedPairingInfo.expiresAt).toLocaleTimeString('de-AT', {
-                              hour: '2-digit',
-                              minute: '2-digit'
-                            })}{' '}
-                            Uhr · Es wird kein dauerhafter Schlüssel in der URL übertragen.
-                          </span>
-                        </div>
-                      )}
                     </div>
 
-                    {/* 1. Saubere HTTPS MCP-Server-Adresse */}
-                    <div className="p-2 bg-slate-50 border border-slate-200/80 rounded-lg space-y-1">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-[10px] font-bold text-[#3138A0] uppercase tracking-tight">
-                          MCP-Server-Adresse (für ChatGPT)
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            void handleCopyText('mcp_url', mcpInfo.endpoints.mcpHeaderUrl)
-                          }
-                          className="h-7 px-2 bg-[#3138A0] hover:bg-[#272d82] text-white text-[10px] font-semibold rounded-md flex items-center gap-1 shrink-0 transition-colors"
-                        >
-                          {copiedKey === 'mcp_url' ? <Check size={11} /> : <Copy size={11} />}
-                          <span>{copiedKey === 'mcp_url' ? 'Kopiert' : 'URL kopieren'}</span>
-                        </button>
-                      </div>
-                      <p className="text-[10px] font-mono text-slate-700 break-all leading-snug">
-                        {mcpInfo.endpoints.mcpHeaderUrl}
-                      </p>
-                      <span className="text-[10px] text-slate-500 block">
-                        Authentifizierung: <strong>OAuth 2.0 (PKCE, automatisch)</strong> oder{' '}
-                        <strong>Bearer-Token</strong>
-                      </span>
-                    </div>
-
-                    {/* 2. Geschützter Zugangsschlüssel (standardmäßig maskiert) */}
-                    <div className="p-2 bg-slate-50 border border-slate-200/80 rounded-lg space-y-1.5">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-[10px] font-bold text-slate-700 uppercase tracking-tight">
-                          MCP-Zugangsschlüssel (Freigabe / Bearer)
-                        </span>
-                        <div className="flex items-center gap-1 shrink-0">
-                          <button
-                            type="button"
-                            onClick={() => void handleToggleShowSecret()}
-                            className="h-7 px-2 bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 text-[10px] font-semibold rounded-md flex items-center gap-1 transition-colors"
-                            title={showSecretToken ? 'Schlüssel verbergen' : 'Schlüssel anzeigen'}
-                          >
-                            {showSecretToken ? <EyeOff size={11} /> : <Eye size={11} />}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => void handleCopyAdminToken()}
-                            className="h-7 px-2 bg-slate-800 hover:bg-slate-900 text-white text-[10px] font-semibold rounded-md flex items-center gap-1 transition-colors"
-                          >
-                            {copiedKey === 'mcp_token' ? <Check size={11} /> : <Copy size={11} />}
-                            <span>{copiedKey === 'mcp_token' ? 'Kopiert' : 'Schlüssel kopieren'}</span>
-                          </button>
-                        </div>
-                      </div>
-                      <p className="text-[10px] font-mono text-slate-600 break-all leading-snug select-all">
-                        {showSecretToken && revealedAdminToken
-                          ? revealedAdminToken
-                          : mcpInfo.maskedToken}
-                      </p>
-                    </div>
-
-                    {/* Sicherheitsstatus & Schlüsselrotation */}
-                    <div className="flex items-center justify-between gap-2 pt-0.5 text-[11px]">
-                      <div className="flex items-center gap-1.5 font-semibold text-[#2C7738]">
-                        <ShieldCheck size={13} className="text-[#2C7738] shrink-0" />
-                        <span>
-                          OAuth 2.1 + Token-Schutz aktiv
-                          {mcpInfo.tokenSource === 'env' ? ' (Cloud-Secret)' : ''}
-                        </span>
-                      </div>
-
-                      {mcpInfo.tokenSource !== 'env' && (
-                        <button
-                          type="button"
-                          onClick={() => void handleRotateMcpToken()}
-                          disabled={rotatingToken}
-                          className="h-7 px-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-[10px] font-semibold rounded-md flex items-center gap-1 transition-colors"
-                        >
-                          <RefreshCw size={11} className={rotatingToken ? 'animate-spin' : ''} />
-                          <span>Schlüssel erneuern</span>
-                        </button>
-                      )}
-                    </div>
-
-                    {mcpInfo.lastAccessAt && (
-                      <p className="text-[10px] text-[#2C7738] font-medium">
-                        Letzter MCP-Zugriff:{' '}
-                        {new Date(mcpInfo.lastAccessAt).toLocaleString('de-AT')} (
-                        {mcpInfo.lastOperation} · {mcpInfo.totalCalls} Aufrufe · Sync Rev.{' '}
-                        {mcpInfo.revision})
-                      </p>
+                    {mcpInfo?.tokenSource !== 'env' && (
+                      <button
+                        type="button"
+                        onClick={() => void handleRotateMcpToken()}
+                        disabled={rotatingToken}
+                        className="h-8 px-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-[10px] font-semibold rounded-lg flex items-center gap-1 transition-colors"
+                      >
+                        <RefreshCw size={11} className={rotatingToken ? 'animate-spin' : ''} />
+                        <span>Schlüssel erneuern</span>
+                      </button>
                     )}
                   </div>
-                ) : (
-                  <p className="text-[10px] text-slate-400">Lade Verbindungsstatus…</p>
-                )}
+
+                  {(effectiveLastSyncIso || effectiveTotalCalls > 0) && (
+                    <p className="text-[10px] text-slate-500">
+                      {effectiveLastSyncIso ? (
+                        <>
+                          Letzter Abgleich:{' '}
+                          <span className="font-semibold text-slate-700">
+                            {new Date(effectiveLastSyncIso).toLocaleString('de-AT')}
+                          </span>
+                        </>
+                      ) : null}
+                      {effectiveTotalCalls > 0 ? ` · ChatGPT-Aufrufe: ${effectiveTotalCalls}` : ''}
+                    </p>
+                  )}
+                </div>
               </div>
 
               {statusChecked && (
