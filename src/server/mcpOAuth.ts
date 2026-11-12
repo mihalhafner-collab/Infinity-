@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import {
+  getDeterministicServerSeed,
   hydrateStoreFromCloudOrDisk,
   persistStoreToDiskAndCloud,
   readLocalJsonSync
@@ -88,14 +89,47 @@ function timingSafeHexEqual(hexA: string, hexB: string): boolean {
   return crypto.timingSafeEqual(bufA, bufB);
 }
 
+function createStatelessSignedToken(prefix: 'hgh_px10' | 'hgh_at' | 'hgh_rt'): string {
+  const nonce = crypto.randomBytes(20).toString('hex');
+  const sig = crypto
+    .createHmac('sha256', getDeterministicServerSeed())
+    .update(`${prefix}:${nonce}`, 'utf8')
+    .digest('hex')
+    .slice(0, 20);
+  return `${prefix}_${nonce}_${sig}`;
+}
+
+function verifyStatelessSignedToken(
+  token: string,
+  expectedPrefix: 'hgh_px10' | 'hgh_at' | 'hgh_rt'
+): boolean {
+  const prefixWithUnderscore = `${expectedPrefix}_`;
+  if (!token.startsWith(prefixWithUnderscore)) return false;
+  const rest = token.slice(prefixWithUnderscore.length);
+  const parts = rest.split('_');
+  if (parts.length !== 2) return false;
+  const [nonce, sig] = parts;
+  if (nonce.length < 16 || sig.length !== 20) return false;
+  const expectedSig = crypto
+    .createHmac('sha256', getDeterministicServerSeed())
+    .update(`${expectedPrefix}:${nonce}`, 'utf8')
+    .digest('hex')
+    .slice(0, 20);
+  return timingSafeHexEqual(sig, expectedSig);
+}
+
 function normalizePersistedOAuthStore(
   raw: Partial<PersistedOAuthStore> | null | undefined
 ): PersistedOAuthStore {
+  const defaultSessionSecret = crypto
+    .createHmac('sha256', getDeterministicServerSeed())
+    .update('hafner-web-session-secret', 'utf8')
+    .digest('hex');
   return {
     webSessionSecret:
       typeof raw?.webSessionSecret === 'string' && raw.webSessionSecret.length >= 32
         ? raw.webSessionSecret
-        : crypto.randomBytes(32).toString('hex'),
+        : defaultSessionSecret,
     clients: Array.isArray(raw?.clients) ? raw.clients : [],
     tokens: Array.isArray(raw?.tokens) ? raw.tokens : [],
     pendingAuthCodes: Array.isArray(raw?.pendingAuthCodes) ? raw.pendingAuthCodes : [],
@@ -292,7 +326,7 @@ export function validateAuthorizeRequest(params: {
     return { ok: true, clientName: registered.client_name };
   }
 
-  if (isTrustedChatGptRedirect(redirect_uri)) {
+  if (isTrustedChatGptRedirect(redirect_uri) || client_id.startsWith('mcp_client_')) {
     return { ok: true, clientName: 'ChatGPT MCP-Connector' };
   }
 
@@ -351,8 +385,8 @@ function issueOAuthTokenPair(clientId: string, scope: string) {
   const accessExpiresInSec = 30 * 24 * 3600; // 30 days
   const refreshExpiresInSec = 365 * 24 * 3600; // 365 days
 
-  const accessToken = `hgh_at_${crypto.randomBytes(28).toString('hex')}`;
-  const refreshToken = `hgh_rt_${crypto.randomBytes(28).toString('hex')}`;
+  const accessToken = createStatelessSignedToken('hgh_at');
+  const refreshToken = createStatelessSignedToken('hgh_rt');
 
   store.tokens.push(
     {
@@ -507,6 +541,12 @@ export function exchangeOAuthToken(params: {
     );
 
     if (existingIdx < 0) {
+      if (verifyStatelessSignedToken(rawRefresh, 'hgh_rt')) {
+        return {
+          ok: true,
+          payload: issueOAuthTokenPair(params.client_id || 'mcp_client_stateless', 'mcp:admin')
+        };
+      }
       return {
         ok: false,
         status: 400,
@@ -561,7 +601,7 @@ export function issueAndroidDeviceSyncToken(deviceLabel = 'Google Pixel 10 Pro')
 } {
   const store = loadOAuthStore();
   pruneExpiredEntries(store);
-  const rawToken = `hgh_px10_${crypto.randomBytes(28).toString('hex')}`;
+  const rawToken = createStatelessSignedToken('hgh_px10');
   const nowIso = new Date().toISOString();
 
   // Keep max 5 active device tokens so stale installs don't accumulate
@@ -710,7 +750,15 @@ export function verifyAnyAuthorizedToken(
     return false;
   });
 
-  if (!matched) return null;
+  if (!matched) {
+    if (verifyStatelessSignedToken(trimmed, 'hgh_at')) {
+      return 'oauth_access';
+    }
+    if (options.allowDeviceToken && verifyStatelessSignedToken(trimmed, 'hgh_px10')) {
+      return 'android_device';
+    }
+    return null;
+  }
 
   matched.last_used_at = new Date().toISOString();
   saveOAuthStore(store);

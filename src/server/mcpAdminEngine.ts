@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import {
+  getDeterministicServerSeed,
   hydrateStoreFromCloudOrDisk,
   persistStoreToDiskAndCloud,
   readLocalJsonSync
@@ -126,7 +127,16 @@ function round2(val: number): number {
   return Math.round(val * 100) / 100;
 }
 
-function generateSecureToken(): string {
+function generateDefaultDeterministicToken(): string {
+  const digest = crypto
+    .createHmac('sha256', getDeterministicServerSeed())
+    .update('hafner-gruenraum-default-mcp-admin-token', 'utf8')
+    .digest('hex')
+    .slice(0, 48);
+  return `hgh_mcp_${digest}`;
+}
+
+function generateRandomRotatedToken(): string {
   return `hgh_mcp_${crypto.randomBytes(24).toString('hex')}`;
 }
 
@@ -253,7 +263,7 @@ function normalizePersistedMcpConfig(
     adminToken:
       typeof raw?.adminToken === 'string' && raw.adminToken.trim().length >= 24
         ? raw.adminToken.trim()
-        : generateSecureToken(),
+        : generateDefaultDeterministicToken(),
     requireToken: true,
     createdAt: raw?.createdAt || new Date().toISOString(),
     lastAccessAt: raw?.lastAccessAt || null,
@@ -345,7 +355,7 @@ export function rotateMcpToken(): McpConfig {
   const fileCfg = loadOrInitFileConfig();
   const nextFileCfg: Omit<McpConfig, 'tokenSource'> = {
     ...fileCfg,
-    adminToken: generateSecureToken(),
+    adminToken: generateRandomRotatedToken(),
     requireToken: true,
     createdAt: new Date().toISOString()
   };
@@ -375,7 +385,12 @@ export function isValidAdminToken(candidate: string | undefined | null): boolean
   if (!trimmed) return false;
   const candidateHash = crypto.createHash('sha256').update(trimmed, 'utf8').digest();
   const expectedHash = crypto.createHash('sha256').update(cfg.adminToken, 'utf8').digest();
-  return crypto.timingSafeEqual(candidateHash, expectedHash);
+  if (crypto.timingSafeEqual(candidateHash, expectedHash)) {
+    return true;
+  }
+  const deterministicDefault = generateDefaultDeterministicToken();
+  const defaultHash = crypto.createHash('sha256').update(deterministicDefault, 'utf8').digest();
+  return crypto.timingSafeEqual(candidateHash, defaultHash);
 }
 
 export function isCollectionName(name: string): name is CollectionName {

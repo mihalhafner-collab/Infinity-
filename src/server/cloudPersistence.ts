@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
 interface FirebaseAppletConfig {
@@ -28,7 +29,7 @@ const inFlightCloudWrites = new Set<Promise<void>>();
 
 export function getDataDir(): string {
   const custom = process.env.HAFNER_DATA_DIR?.trim();
-  return custom ? path.resolve(custom) : path.resolve(process.cwd(), 'data');
+  return custom ? path.resolve(custom) : path.join(os.tmpdir(), 'hafner-gruenraum-runtime-data');
 }
 
 export function ensureDataDir(): string {
@@ -43,14 +44,27 @@ export function resolveDataFilePath(fileName: string): string {
   return path.join(ensureDataDir(), fileName);
 }
 
-function loadFirebaseAppletConfig(): FirebaseAppletConfig {
+function loadFirebaseAppletConfig(): FirebaseAppletConfig & Record<string, unknown> {
   try {
     const cfgPath = path.resolve(process.cwd(), 'firebase-applet-config.json');
     if (!fs.existsSync(cfgPath)) return {};
-    return JSON.parse(fs.readFileSync(cfgPath, 'utf-8')) as FirebaseAppletConfig;
+    return JSON.parse(fs.readFileSync(cfgPath, 'utf-8')) as FirebaseAppletConfig &
+      Record<string, unknown>;
   } catch {
     return {};
   }
+}
+
+export function getDeterministicServerSeed(): string {
+  const cfg = loadFirebaseAppletConfig();
+  const base = [
+    process.env.MCP_ADMIN_TOKEN || '',
+    cfg.projectId || 'hafner-gruenraum',
+    cfg.firestoreDatabaseId || 'pixel10pro',
+    String(cfg.appId || ''),
+    String(cfg.oAuthClientId || '')
+  ].join(':');
+  return crypto.createHash('sha256').update(base, 'utf8').digest('hex');
 }
 
 function resolveFirestoreRestBaseUrl(): {
