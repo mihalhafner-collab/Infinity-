@@ -14,6 +14,7 @@ import {
   ChevronRight
 } from 'lucide-react';
 import { ScreenId } from '../../types/index.ts';
+import { isNativeAndroidApp } from '../../services/nativeBridge.ts';
 import { PWAInstallCard } from './PWAInstallCard.tsx';
 
 export const ThreeDotsMenuModal: React.FC = () => {
@@ -192,7 +193,11 @@ export const ThreeDotsMenuModal: React.FC = () => {
                   <Settings size={20} className="text-[#5D6178] shrink-0" />
                   <div>
                     <span className="text-sm font-bold text-slate-950 block leading-tight">Einstellungen</span>
-                    <span className="text-xs text-slate-600">Vorgaben, Rechnungsdaten & MCP</span>
+                    <span className="text-xs text-slate-600">
+                      {isNativeAndroidApp()
+                        ? 'Vorgaben, Rechnungsdaten & MCP'
+                        : 'Vorgaben, Rechnungsdaten & Speicher'}
+                    </span>
                   </div>
                 </div>
                 <ChevronRight size={18} className="text-slate-400 shrink-0" />

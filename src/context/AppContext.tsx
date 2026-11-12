@@ -578,26 +578,89 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const lastNativeSavedJsonRef = useRef<string>('');
   const nativeHydratedRef = useRef<boolean>(!isNativeAndroidApp());
 
+  const hasAnySnapshotRecords = (snap: Partial<ReturnType<typeof buildCurrentSnapshot>> | null | undefined): boolean => {
+    if (!snap || typeof snap !== 'object') return false;
+    return (
+      (Array.isArray(snap.customers) && snap.customers.length > 0) ||
+      (Array.isArray(snap.properties) && snap.properties.length > 0) ||
+      (Array.isArray(snap.appointments) && snap.appointments.length > 0) ||
+      (Array.isArray(snap.workRecords) && snap.workRecords.length > 0) ||
+      (Array.isArray(snap.invoices) && snap.invoices.length > 0) ||
+      (Array.isArray(snap.inquiries) && snap.inquiries.length > 0) ||
+      (Array.isArray(snap.offers) && snap.offers.length > 0) ||
+      (Array.isArray(snap.orders) && snap.orders.length > 0) ||
+      (Array.isArray(snap.equipments) && snap.equipments.length > 0) ||
+      (Array.isArray(snap.materials) && snap.materials.length > 0) ||
+      (Array.isArray(snap.expenses) && snap.expenses.length > 0)
+    );
+  };
+
+  const mergeCollectionById = <T extends { id: string }>(baseArr: T[] | undefined, primaryArr: T[] | undefined): T[] => {
+    const map = new Map<string, T>();
+    if (Array.isArray(baseArr)) {
+      for (const item of baseArr) {
+        if (item && item.id) map.set(item.id, item);
+      }
+    }
+    if (Array.isArray(primaryArr)) {
+      for (const item of primaryArr) {
+        if (item && item.id) map.set(item.id, item);
+      }
+    }
+    return Array.from(map.values());
+  };
+
+  const mergeSnapshotsClientSide = (
+    base: Partial<ReturnType<typeof buildCurrentSnapshot>> | null | undefined,
+    primary: Partial<ReturnType<typeof buildCurrentSnapshot>>
+  ): ReturnType<typeof buildCurrentSnapshot> => ({
+    customers: mergeCollectionById(base?.customers, primary.customers),
+    properties: mergeCollectionById(base?.properties, primary.properties),
+    appointments: mergeCollectionById(base?.appointments, primary.appointments),
+    workRecords: mergeCollectionById(base?.workRecords, primary.workRecords),
+    invoices: mergeCollectionById(base?.invoices, primary.invoices),
+    inquiries: mergeCollectionById(base?.inquiries, primary.inquiries),
+    offers: mergeCollectionById(base?.offers, primary.offers),
+    orders: mergeCollectionById(base?.orders, primary.orders),
+    equipments: mergeCollectionById(base?.equipments, primary.equipments),
+    materials: mergeCollectionById(base?.materials, primary.materials),
+    expenses: mergeCollectionById(base?.expenses, primary.expenses),
+    taxSettings: {
+      ...defaultTaxSettings,
+      ...(base?.taxSettings || {}),
+      ...(primary.taxSettings || {})
+    }
+  });
+
   // Hydrate from Kotlin atomic filesDir storage + live NativeMcpSyncManager listener on Pixel 10 Pro
   useEffect(() => {
     if (!isNativeAndroidApp()) return;
     migrateLegacyWebStorageCredentialsIfNeeded();
 
+    const localBootSnap = buildCurrentSnapshot();
     const rawNative = loadNativeStoreJson();
     if (rawNative) {
       try {
         const parsed = JSON.parse(rawNative) as Partial<ReturnType<typeof buildCurrentSnapshot>>;
         if (parsed && typeof parsed === 'object') {
-          applyServerData(parsed);
-          lastNativeSavedJsonRef.current = lastSyncedSnapshotJsonRef.current;
+          const mergedBoot = mergeSnapshotsClientSide(localBootSnap, parsed);
+          applyServerData(mergedBoot);
+          const mergedStr = JSON.stringify(mergedBoot);
+          lastNativeSavedJsonRef.current = mergedStr;
+          saveNativeStoreJson(mergedStr);
         }
       } catch {
-        // Ignore malformed native snapshot
+        const fallbackStr = JSON.stringify(localBootSnap);
+        lastNativeSavedJsonRef.current = fallbackStr;
+        saveNativeStoreJson(fallbackStr);
       }
     } else {
-      lastNativeSavedJsonRef.current = JSON.stringify(buildCurrentSnapshot());
+      const initialStr = JSON.stringify(localBootSnap);
+      lastNativeSavedJsonRef.current = initialStr;
+      saveNativeStoreJson(initialStr);
     }
     nativeHydratedRef.current = true;
+    triggerNativeMcpSyncNow();
 
     const unsubRemote = subscribeNativeRemoteState((stateJson, revision) => {
       try {
@@ -617,6 +680,54 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  type RemoteStorePayload = {
+    revision: number;
+    lastActor?: string;
+    lastAndroidSyncAt?: string | null;
+    data?: Partial<ReturnType<typeof buildCurrentSnapshot>>;
+  };
+
+  const fetchBestRemoteStoreForWeb = async (): Promise<RemoteStorePayload | null> => {
+    const endpoint = resolveBackendEndpoint('/api/internal/state');
+    if (!endpoint.url) return null;
+
+    let localStore: RemoteStorePayload | null = null;
+
+    try {
+      const res = await fetch(endpoint.url, {
+        headers: endpoint.headers,
+        credentials: 'include'
+      });
+      if (res.ok) {
+        localStore = (await res.json()) as RemoteStorePayload;
+      }
+    } catch {
+      // Ignore and try fallback
+    }
+
+    if (
+      typeof window !== 'undefined' &&
+      window.location.hostname !== 'hafner-gruenraum.ai.studio' &&
+      (!localStore || !hasAnySnapshotRecords(localStore.data))
+    ) {
+      try {
+        const pubRes = await fetch('https://hafner-gruenraum.ai.studio/api/internal/state', {
+          credentials: 'omit'
+        });
+        if (pubRes.ok) {
+          const pubStore = (await pubRes.json()) as RemoteStorePayload;
+          if (pubStore && hasAnySnapshotRecords(pubStore.data)) {
+            return pubStore;
+          }
+        }
+      } catch {
+        // Ignore cross-origin fallback failure
+      }
+    }
+
+    return localStore;
+  };
 
   const pushSnapshotToServer = useCallback(
     async (
@@ -638,6 +749,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const countAtStart = pendingSyncCountRef.current;
       updateSyncMeta({ syncInFlight: true, online: true });
 
+      const payloadStr = JSON.stringify({
+        data: snap,
+        baseRevision: lastKnownRevisionRef.current,
+        summary,
+        source: 'web'
+      });
+
       try {
         const res = await fetch(endpoint.url, {
           method: 'PUT',
@@ -646,21 +764,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             'Content-Type': 'application/json',
             ...endpoint.headers
           },
-          body: JSON.stringify({
-            data: snap,
-            baseRevision: lastKnownRevisionRef.current,
-            summary,
-            source: 'web'
-          })
+          body: payloadStr
         });
+
+        // Best-effort Spiegelung an den veröffentlichten Hauptserver, falls in Preview geöffnet
+        if (
+          typeof window !== 'undefined' &&
+          window.location.hostname !== 'hafner-gruenraum.ai.studio'
+        ) {
+          void fetch('https://hafner-gruenraum.ai.studio/api/internal/state', {
+            method: 'PUT',
+            credentials: 'omit',
+            headers: { 'Content-Type': 'application/json' },
+            body: payloadStr
+          }).catch(() => undefined);
+        }
 
         if (!res.ok) {
           updateSyncMeta({
             syncInFlight: false,
-            lastSyncError:
-              res.status === 401
-                ? 'Sitzung gesperrt – Synchronisation ausstehend'
-                : `Synchronisation ausstehend (HTTP ${res.status})`
+            lastSyncError: `Synchronisation ausstehend (HTTP ${res.status})`
           });
           return false;
         }
@@ -737,27 +860,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       triggerNativeMcpSyncNow();
       return;
     }
-    const endpoint = resolveBackendEndpoint('/api/internal/state');
-    if (!endpoint.url) return;
     updateSyncMeta({ syncInFlight: true });
     try {
-      const res = await fetch(endpoint.url, {
-        headers: endpoint.headers,
-        credentials: 'include'
-      });
-      if (!res.ok) {
+      const store = await fetchBestRemoteStoreForWeb();
+      if (!store) {
         updateSyncMeta({
           syncInFlight: false,
-          lastSyncError: `Abruf fehlgeschlagen (HTTP ${res.status})`
+          lastSyncError: 'Abruf vom Server fehlgeschlagen'
         });
         return;
       }
-      const store = (await res.json()) as {
-        revision: number;
-        lastActor?: string;
-        lastAndroidSyncAt?: string | null;
-        data?: Partial<ReturnType<typeof buildCurrentSnapshot>>;
-      };
       if (store.data) {
         applyServerData(store.data);
       }
@@ -790,6 +902,29 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     let cancelled = false;
     let eventSource: EventSource | null = null;
 
+    const pullLatestFromServerIfIdle = async () => {
+      if (cancelled || pendingSyncCountRef.current > 0) return;
+      const store = await fetchBestRemoteStoreForWeb();
+      if (!store || cancelled) return;
+      if (store.data && (store.revision > 0 || hasAnySnapshotRecords(store.data))) {
+        const incomingSerialized = JSON.stringify(store.data);
+        if (
+          incomingSerialized !== lastSyncedSnapshotJsonRef.current ||
+          store.revision !== lastKnownRevisionRef.current
+        ) {
+          updateSyncMeta({
+            revision: store.revision,
+            online: true,
+            lastSyncAt: new Date().toISOString(),
+            lastSyncError: null,
+            lastActor: store.lastActor || null,
+            lastAndroidSyncAt: store.lastAndroidSyncAt || null
+          });
+          applyServerData(store.data);
+        }
+      }
+    };
+
     const connectEventStream = () => {
       if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
         eventSource?.close();
@@ -805,7 +940,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           const payload = JSON.parse(ev.data) as { revision?: number };
           if (
             typeof payload.revision === 'number' &&
-            payload.revision > lastKnownRevisionRef.current
+            payload.revision !== lastKnownRevisionRef.current
           ) {
             if (pendingSyncCountRef.current > 0) {
               const currentSnap = buildCurrentSnapshot();
@@ -816,29 +951,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               );
               return;
             }
-            const latestEndpoint = resolveBackendEndpoint('/api/internal/state');
-            if (!latestEndpoint.url) return;
-            const latestRes = await fetch(latestEndpoint.url, {
-              headers: latestEndpoint.headers,
-              credentials: 'include'
-            });
-            if (!latestRes.ok || cancelled) return;
-            const latestStore = (await latestRes.json()) as {
-              revision: number;
-              lastActor?: string;
-              lastAndroidSyncAt?: string | null;
-              data: Partial<ReturnType<typeof buildCurrentSnapshot>>;
-            };
-            if (latestStore.revision > lastKnownRevisionRef.current) {
-              updateSyncMeta({
-                revision: latestStore.revision,
-                lastSyncAt: new Date().toISOString(),
-                lastSyncError: null,
-                lastActor: latestStore.lastActor || null,
-                lastAndroidSyncAt: latestStore.lastAndroidSyncAt || null
-              });
-              applyServerData(latestStore.data);
-            }
+            await pullLatestFromServerIfIdle();
           }
         } catch {
           // ignore keepalive/event parse errors
@@ -848,19 +961,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     const initSync = async () => {
       try {
-        const endpoint = resolveBackendEndpoint('/api/internal/state');
-        if (!endpoint.url) {
-          serverSyncInitializedRef.current = true;
-          return;
-        }
-
         const localSnap = buildCurrentSnapshot();
         const localJson = JSON.stringify(localSnap);
         if (!lastTrackedMutationJsonRef.current) {
           lastTrackedMutationJsonRef.current = localJson;
         }
 
-        // Falls aus einer Offline-Phase ungesendete Änderungen ausstehen, diese zuerst übertragen (inkl. Server-Merge)
         if (pendingSyncCountRef.current > 0) {
           const flushed = await pushSnapshotToServer(
             localSnap,
@@ -874,37 +980,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           }
         }
 
-        const res = await fetch(endpoint.url, {
-          headers: endpoint.headers,
-          credentials: 'include'
-        });
-        if (!res.ok) {
+        const store = await fetchBestRemoteStoreForWeb();
+        if (!store || cancelled) {
           serverSyncInitializedRef.current = true;
           return;
         }
-        const store = (await res.json()) as {
-          revision: number;
-          lastActor?: string;
-          lastAndroidSyncAt?: string | null;
-          data: Partial<ReturnType<typeof buildCurrentSnapshot>>;
-        };
-        if (cancelled) return;
 
-        const hasLocalData =
-          localSnap.customers.length > 0 ||
-          localSnap.properties.length > 0 ||
-          localSnap.appointments.length > 0 ||
-          localSnap.workRecords.length > 0 ||
-          localSnap.invoices.length > 0 ||
-          localSnap.orders.length > 0 ||
-          localSnap.equipments.length > 0 ||
-          localSnap.materials.length > 0 ||
-          localSnap.expenses.length > 0;
+        const hasLocalData = hasAnySnapshotRecords(localSnap);
+        const hasRemoteData = hasAnySnapshotRecords(store.data);
 
-        if (store.revision === 0 && hasLocalData) {
+        if (!hasRemoteData && hasLocalData) {
           updateSyncMeta({ pendingSyncCount: Math.max(1, pendingSyncCountRef.current) });
           await pushSnapshotToServer(localSnap, localJson, 'Initiale Synchronisation aus Web-App');
-        } else if (store.revision > 0 && store.data && pendingSyncCountRef.current === 0) {
+        } else if (store.data && (hasRemoteData || store.revision > 0) && pendingSyncCountRef.current === 0) {
           updateSyncMeta({
             revision: store.revision,
             online: true,
@@ -937,6 +1025,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
     };
 
+    const pollTimer = setInterval(() => {
+      if (typeof document === 'undefined' || document.visibilityState === 'visible') {
+        void pullLatestFromServerIfIdle();
+      }
+    }, 6000);
+
     const handleBrowserOnline = () => {
       updateSyncMeta({ online: true });
       void initSync();
@@ -968,6 +1062,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     return () => {
       cancelled = true;
+      clearInterval(pollTimer);
       window.removeEventListener('online', handleBrowserOnline);
       window.removeEventListener('offline', handleBrowserOffline);
       document.removeEventListener('visibilitychange', handleVisibilityChange);

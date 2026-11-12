@@ -121,6 +121,9 @@ export const EinstellungenView: React.FC = () => {
   const [rotatingToken, setRotatingToken] = useState(false);
 
   const fetchRevealedToken = async (overrideBaseUrl?: string): Promise<string | null> => {
+    if (!isNativeAndroid) {
+      return null;
+    }
     try {
       const endpoint = resolveMcpAdminEndpoint(
         '/api/internal/reveal-token',
@@ -128,7 +131,7 @@ export const EinstellungenView: React.FC = () => {
       );
       const res = await fetch(endpoint.url, {
         method: 'POST',
-        credentials: isNativeAndroid ? 'omit' : 'include',
+        credentials: 'omit',
         headers: endpoint.headers
       });
       if (res.ok) {
@@ -156,28 +159,30 @@ export const EinstellungenView: React.FC = () => {
   };
 
   const loadMcpInfo = async (customBaseUrl?: string) => {
-    if (isNativeAndroid) {
-      const latest = getNativeMcpSyncStatus();
-      setNativeSyncStatus(latest);
-      if (latest?.baseUrl) {
-        setNativeBaseUrlInput(latest.baseUrl);
-      }
-      const immediateNativeToken =
-        getRevealedNativeMcpToken() ||
-        latest?.revealedToken?.trim() ||
-        latest?.deviceToken?.trim();
-      if (immediateNativeToken) {
-        setRevealedAdminToken((prev) => prev || immediateNativeToken);
-      }
-      // Falls noch kein Token im Keystore liegt, automatisch ohne Einmal-Code verbinden
-      if (latest && !latest.configured && latest.state !== 'reconnecting') {
-        const autoUpdated = pairNativeMcpWithCode(
-          latest.baseUrl || 'https://hafner-gruenraum.ai.studio',
-          'AUTO'
-        );
-        if (autoUpdated) {
-          setNativeSyncStatus(autoUpdated);
-        }
+    if (!isNativeAndroid) {
+      return;
+    }
+
+    const latest = getNativeMcpSyncStatus();
+    setNativeSyncStatus(latest);
+    if (latest?.baseUrl) {
+      setNativeBaseUrlInput(latest.baseUrl);
+    }
+    const immediateNativeToken =
+      getRevealedNativeMcpToken() ||
+      latest?.revealedToken?.trim() ||
+      latest?.deviceToken?.trim();
+    if (immediateNativeToken) {
+      setRevealedAdminToken((prev) => prev || immediateNativeToken);
+    }
+    // Falls noch kein Token im Keystore liegt, automatisch ohne Einmal-Code verbinden
+    if (latest && !latest.configured && latest.state !== 'reconnecting') {
+      const autoUpdated = pairNativeMcpWithCode(
+        latest.baseUrl || 'https://hafner-gruenraum.ai.studio',
+        'AUTO'
+      );
+      if (autoUpdated) {
+        setNativeSyncStatus(autoUpdated);
       }
     }
 
@@ -188,7 +193,7 @@ export const EinstellungenView: React.FC = () => {
       );
       const res = await fetch(endpoint.url, {
         headers: endpoint.headers,
-        credentials: isNativeAndroid ? 'omit' : 'include'
+        credentials: 'omit'
       });
       if (res.ok) {
         const data = (await res.json()) as McpClientConfigInfo;
@@ -206,6 +211,10 @@ export const EinstellungenView: React.FC = () => {
   };
 
   useEffect(() => {
+    if (!isNativeAndroid) {
+      return;
+    }
+
     const unsubGmail = subscribeGmailAuth(({ user, hasToken, error }) => {
       setGmailUser(user);
       setGmailHasToken(hasToken);
@@ -232,7 +241,7 @@ export const EinstellungenView: React.FC = () => {
       unsubNativeStatus();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [isNativeAndroid]);
 
   const [arbeitsvorgabenOpen, setArbeitsvorgabenOpen] = useState(false);
   const [rechnungsdatenOpen, setRechnungsdatenOpen] = useState(false);
@@ -534,12 +543,13 @@ export const EinstellungenView: React.FC = () => {
           )}
         </div>
 
-        {/* GRUPPE 3: Verbindungen */}
-        <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-2xs">
-          <button
-            onClick={() => setVerbindungenOpen(!verbindungenOpen)}
-            className="w-full min-h-[48px] p-3.5 flex items-center justify-between hover:bg-slate-50 transition-colors text-left"
-          >
+        {/* GRUPPE 3: Verbindungen & MCP – ausschließlich in der primären Android-App (Pixel 10 Pro) */}
+        {isNativeAndroid && (
+          <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-2xs">
+            <button
+              onClick={() => setVerbindungenOpen(!verbindungenOpen)}
+              className="w-full min-h-[48px] p-3.5 flex items-center justify-between hover:bg-slate-50 transition-colors text-left"
+            >
             <div>
               <span className="text-xs font-bold text-slate-900 block leading-tight">
                 Verbindungen
@@ -939,7 +949,8 @@ export const EinstellungenView: React.FC = () => {
               </button>
             </div>
           )}
-        </div>
+          </div>
+        )}
 
         {/* GRUPPE 4: Speicher und App */}
         <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-2xs">
