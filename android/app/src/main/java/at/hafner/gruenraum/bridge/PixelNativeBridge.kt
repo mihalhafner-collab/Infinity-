@@ -112,6 +112,13 @@ class PixelNativeBridge(
     }
 
     @JavascriptInterface
+    fun readDeviceLocation(requestId: String) {
+        activity.runOnUiThread {
+            activity.requestDeviceLocation(requestId)
+        }
+    }
+
+    @JavascriptInterface
     fun runVerifiedZipBackup(requestId: String, jsonPayload: String, forcePickTarget: Boolean) {
         activity.runOnUiThread {
             activity.requestVerifiedZipBackup(requestId, jsonPayload, forcePickTarget)
