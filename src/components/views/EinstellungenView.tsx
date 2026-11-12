@@ -966,7 +966,9 @@ export const EinstellungenView: React.FC = () => {
                 Speicher und App
               </span>
               <span className="text-[11px] text-slate-500">
-                Startbildschirm-Icon · 128 MB insgesamt · Bereinigung
+                {isNativeAndroid
+                  ? 'Startbildschirm-Icon · 128 MB insgesamt · Bereinigung'
+                  : 'Datenabgleich mit Pixel 10 Pro · Speicher & Bereinigung'}
               </span>
             </div>
             {speicherOpen ? (
@@ -978,6 +980,40 @@ export const EinstellungenView: React.FC = () => {
 
           {speicherOpen && (
             <div className="p-3.5 bg-slate-50 border-t border-slate-100 space-y-3">
+              {!isNativeAndroid && (
+                <div className="p-3 bg-white border border-slate-200 rounded-xl space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <div>
+                      <span className="text-xs font-bold text-slate-900 block leading-tight">
+                        Datenstand (Synchronisation mit Pixel 10 Pro)
+                      </span>
+                      <span className="text-[11px] text-slate-500 block">
+                        Revision #{appSyncStatus.revision}
+                        {appSyncStatus.pendingSyncCount > 0
+                          ? ` · ${appSyncStatus.pendingSyncCount} lokale Änderung(en) ausstehend`
+                          : ' · Alle Geschäftsdaten synchron'}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void (appSyncStatus.pendingSyncCount > 0
+                          ? flushPendingAppSync()
+                          : refreshFromServer())
+                      }
+                      disabled={appSyncStatus.syncInFlight}
+                      className="h-8 px-2.5 bg-indigo-50 hover:bg-indigo-100 text-[#3138A0] text-[11px] font-semibold rounded-lg flex items-center gap-1 transition-colors shrink-0"
+                    >
+                      <RefreshCw
+                        size={12}
+                        className={appSyncStatus.syncInFlight ? 'animate-spin' : ''}
+                      />
+                      <span>Jetzt abgleichen</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+
               <PWAInstallCard />
 
               <div className="grid grid-cols-2 gap-2 text-center">

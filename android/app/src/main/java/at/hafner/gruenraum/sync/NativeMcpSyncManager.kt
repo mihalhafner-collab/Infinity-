@@ -408,34 +408,39 @@ class NativeMcpSyncManager(
             put("deviceModel", "Google Pixel 10 Pro")
         }.toString().toByteArray(Charsets.UTF_8)
 
-        val conn = (URL("$cleanUrl/api/pair/exchange").openConnection() as HttpURLConnection).apply {
-            requestMethod = "POST"
-            doOutput = true
-            connectTimeout = 12_000
-            readTimeout = 15_000
-            useCaches = false
-            setRequestProperty("Content-Type", "application/json; charset=utf-8")
-            setRequestProperty("Accept", "application/json")
-            setRequestProperty("X-Device-Model", "Google Pixel 10 Pro")
-            setFixedLengthStreamingMode(exchangeBody.size)
-        }
-        try {
-            conn.outputStream.use { out ->
-                out.write(exchangeBody)
-                out.flush()
+        for (endpointPath in listOf("/api/pair/auto", "/api/pair/exchange")) {
+            val conn = (URL("$cleanUrl$endpointPath").openConnection() as HttpURLConnection).apply {
+                requestMethod = "POST"
+                doOutput = true
+                connectTimeout = 10_000
+                readTimeout = 12_000
+                useCaches = false
+                setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                setRequestProperty("Accept", "application/json")
+                setRequestProperty("X-Device-Model", "Google Pixel 10 Pro")
+                setFixedLengthStreamingMode(exchangeBody.size)
             }
-            val status = conn.responseCode
-            if (status !in 200..299) return null
-            val respText = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
-            val json = JSONObject(respText)
-            val deviceToken = json.optString("deviceToken", "").trim()
-            if (deviceToken.length < 16) return null
-            return credentialStore.saveCredentials(cleanUrl, deviceToken)
-        } catch (_: Exception) {
-            return null
-        } finally {
-            conn.disconnect()
+            try {
+                conn.outputStream.use { out ->
+                    out.write(exchangeBody)
+                    out.flush()
+                }
+                val status = conn.responseCode
+                if (status in 200..299) {
+                    val respText = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+                    val json = JSONObject(respText)
+                    val deviceToken = json.optString("deviceToken", "").trim()
+                    if (deviceToken.length >= 16) {
+                        return credentialStore.saveCredentials(cleanUrl, deviceToken)
+                    }
+                }
+            } catch (_: Exception) {
+                // Nächsten Kopplungsendpunkt versuchen
+            } finally {
+                conn.disconnect()
+            }
         }
+        return null
     }
 
     private fun performSyncCycle(reason: String) {
@@ -470,6 +475,7 @@ class NativeMcpSyncManager(
             // 1. Aktuellen Serverstand abrufen
             val remoteStore = httpGetJson("${creds.baseUrl}/api/internal/state", creds.token)
             val remoteRev = remoteStore.optInt("revision", 0)
+            val remoteActor = remoteStore.optString("lastActor", "init")
             val remoteData = remoteStore.optJSONObject("data")
             val remoteStr = remoteData?.toString()
             val hasRemoteNonEmpty = hasAnyRecords(remoteStr)
@@ -492,6 +498,7 @@ class NativeMcpSyncManager(
                         !hasRemoteNonEmpty ||
                         remoteRev == 0 ||
                         remoteRev < lastKnownRevision ||
+                        (localRaw != remoteStr && remoteActor != "web" && remoteActor != "mcp") ||
                         (isInteractiveReason && localRaw != remoteStr)
                     ))
                 )
@@ -555,7 +562,7 @@ class NativeMcpSyncManager(
                 emitStatus()
                 scheduleImmediateSync("auto_reprovisioned")
             } else {
-                lastError = "Gerätekopplung wird erneuert…"
+                lastError = "Server unter ${creds.baseUrl} muss in AI Studio aktualisiert werden (Deploy -> Update)."
                 connectionState = "reconnecting"
                 closeActiveSseConnection()
                 emitStatus()

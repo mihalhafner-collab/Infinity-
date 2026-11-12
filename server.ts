@@ -918,13 +918,13 @@ async function startServer() {
     let nextSnapshot: AppDataSnapshot = body.data;
 
     if (isAndroidPrimary) {
-      if (current.revision > 0 && baseRev === 0 && hasSnapshotAnyRecords(current.data)) {
-        shouldMerge = true;
-        nextSnapshot = mergeSnapshotsWithAndroidPrimary(current.data, body.data);
-      } else if (
-        baseRev > 0 &&
+      // Die Android-App auf dem Google Pixel 10 Pro ist die primäre Datenbank.
+      // Nur wenn zwischenzeitlich explizit in der Web-App (während das Pixel kurzfristig nicht erreichbar war)
+      // oder über MCP geändert wurde, werden diese neuen Einträge zusammengeführt.
+      if (
         baseRev < current.revision &&
-        (current.lastActor === 'mcp' || current.lastActor === 'web')
+        hasSnapshotAnyRecords(current.data) &&
+        (current.lastActor === 'web' || current.lastActor === 'mcp')
       ) {
         shouldMerge = true;
         nextSnapshot = mergeSnapshotsWithAndroidPrimary(current.data, body.data);
@@ -1355,8 +1355,29 @@ async function startServer() {
     });
   } else {
     const distPath = path.resolve(process.cwd(), 'dist');
-    app.use(express.static(distPath));
+    app.use(
+      express.static(distPath, {
+        setHeaders: (res, filePath) => {
+          if (
+            filePath.endsWith('index.html') ||
+            filePath.endsWith('sw.js') ||
+            filePath.endsWith('registerSW.js') ||
+            filePath.endsWith('manifest.webmanifest')
+          ) {
+            res.setHeader(
+              'Cache-Control',
+              'no-store, no-cache, must-revalidate, proxy-revalidate'
+            );
+            res.setHeader('Pragma', 'no-cache');
+            res.setHeader('Expires', '0');
+          }
+        }
+      })
+    );
     app.get('*', (req, res) => {
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
       if (isTrustedOwnerBrowserContext(req)) {
         setOwnerSessionCookie(req, res);
       }
