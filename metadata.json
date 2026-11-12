@@ -1,6 +1,6 @@
 {
   "name": "Eisbär – Haus & Garten",
   "description": "Mobiles Servicemanagement für Haus- und Gartenpflege, optimiert für Google Pixel 10 Pro.",
-  "requestFramePermissions": [],
+  "requestFramePermissions": ["camera"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

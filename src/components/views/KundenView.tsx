@@ -25,6 +25,7 @@ import {
   KeyRound,
   Ruler,
   Camera,
+  ImagePlus,
   X,
   Copy,
   Receipt,
@@ -700,7 +701,7 @@ export const KundenView: React.FC = () => {
                         </div>
                       )}
 
-                      {/* Fotos Leiste + Direkt-Upload */}
+                      {/* Fotos Leiste + Direkt-Kamera & Galerie-Upload */}
                       <div className="flex items-center gap-2 overflow-x-auto pt-0.5">
                         {propPhotos.map((src, idx) => (
                           <button
@@ -716,9 +717,26 @@ export const KundenView: React.FC = () => {
                             />
                           </button>
                         ))}
-                        <label className="h-14 px-3 rounded-xl border border-dashed border-slate-300 hover:border-[#3138A0] bg-slate-50/70 hover:bg-indigo-50/40 text-slate-600 hover:text-[#3138A0] text-[11px] font-semibold flex flex-col items-center justify-center gap-0.5 shrink-0 cursor-pointer transition-colors">
-                          <Camera size={15} />
-                          <span>+ Foto</span>
+                        <label
+                          className="h-14 px-3 rounded-xl bg-indigo-50 hover:bg-indigo-100 active:scale-95 border border-indigo-200 text-[#3138A0] text-[11px] font-bold flex flex-col items-center justify-center gap-0.5 shrink-0 cursor-pointer transition-all"
+                          title="Mit Kamera öffnen"
+                        >
+                          <Camera size={16} />
+                          <span>Kamera</span>
+                          <input
+                            type="file"
+                            accept="image/*"
+                            capture="environment"
+                            onChange={(e) => handleInlinePhotoUpload(prop.id, propPhotos, e)}
+                            className="hidden"
+                          />
+                        </label>
+                        <label
+                          className="h-14 px-3 rounded-xl border border-dashed border-slate-300 hover:border-[#3138A0] active:scale-95 bg-slate-50/70 hover:bg-indigo-50/40 text-slate-600 hover:text-[#3138A0] text-[11px] font-semibold flex flex-col items-center justify-center gap-0.5 shrink-0 cursor-pointer transition-all"
+                          title="Foto aus Galerie wählen"
+                        >
+                          <ImagePlus size={16} />
+                          <span>Galerie</span>
                           <input
                             type="file"
                             accept="image/*"

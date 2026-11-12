@@ -1,6 +1,9 @@
 import crypto from 'node:crypto';
-import fs from 'node:fs';
-import path from 'node:path';
+import {
+  hydrateStoreFromCloudOrDisk,
+  persistStoreToDiskAndCloud,
+  readLocalJsonSync
+} from './cloudPersistence.ts';
 import type {
   Appointment,
   BusinessExpense,
@@ -88,9 +91,10 @@ export interface McpConfig {
   totalCalls: number;
 }
 
-const DATA_DIR = path.resolve(process.cwd(), 'data');
-const STORE_PATH = path.join(DATA_DIR, 'app-state.json');
-const CONFIG_PATH = path.join(DATA_DIR, 'mcp-config.json');
+const STORE_KEY = 'app_state';
+const STORE_FILENAME = 'app-state.json';
+const CONFIG_KEY = 'mcp_config';
+const CONFIG_FILENAME = 'mcp-config.json';
 
 const DEFAULT_TAX_SETTINGS: TaxSettings = {
   selected_year: 2026,
@@ -125,23 +129,8 @@ function generateSecureToken(): string {
   return `hgh_mcp_${crypto.randomBytes(24).toString('hex')}`;
 }
 
-function ensureDataDir(): void {
-  if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true, mode: 0o700 });
-  }
-}
-
 function writeSecretConfigFile(cfg: Omit<McpConfig, 'tokenSource'>): void {
-  ensureDataDir();
-  fs.writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2), {
-    encoding: 'utf-8',
-    mode: 0o600
-  });
-  try {
-    fs.chmodSync(CONFIG_PATH, 0o600);
-  } catch {
-    // ignore chmod restrictions on non-POSIX filesystems
-  }
+  persistStoreToDiskAndCloud(CONFIG_KEY, CONFIG_FILENAME, cfg);
 }
 
 function assertIsoDate(dateStr: string, fieldName: string): string {
@@ -223,34 +212,78 @@ function notifyStoreListeners(store: PersistedAppStore): void {
   }
 }
 
+function normalizePersistedAppStore(raw: Partial<PersistedAppStore> | null | undefined): PersistedAppStore {
+  if (!raw || typeof raw !== 'object') {
+    return {
+      revision: 0,
+      updatedAt: new Date().toISOString(),
+      lastActor: 'init',
+      lastActionSummary: 'Initialisiert',
+      data: createEmptySnapshot()
+    };
+  }
+  const actor: PersistedAppStore['lastActor'] =
+    raw.lastActor === 'app' || raw.lastActor === 'mcp' ? raw.lastActor : 'init';
+  return {
+    revision: typeof raw.revision === 'number' ? raw.revision : 0,
+    updatedAt: raw.updatedAt || new Date().toISOString(),
+    lastActor: actor,
+    lastActionSummary: raw.lastActionSummary || 'Initialisiert',
+    data: normalizeSnapshot(raw.data)
+  };
+}
+
+function normalizePersistedMcpConfig(
+  raw: Partial<McpConfig> | null | undefined
+): Omit<McpConfig, 'tokenSource'> {
+  return {
+    adminToken:
+      typeof raw?.adminToken === 'string' && raw.adminToken.trim().length >= 24
+        ? raw.adminToken.trim()
+        : generateSecureToken(),
+    requireToken: true,
+    createdAt: raw?.createdAt || new Date().toISOString(),
+    lastAccessAt: raw?.lastAccessAt || null,
+    lastOperation: raw?.lastOperation || null,
+    totalCalls: typeof raw?.totalCalls === 'number' ? raw.totalCalls : 0
+  };
+}
+
+export async function hydrateAdminEngineStores(): Promise<void> {
+  const hydratedStore = await hydrateStoreFromCloudOrDisk<Partial<PersistedAppStore>>(
+    STORE_KEY,
+    STORE_FILENAME,
+    true
+  );
+  if (hydratedStore) {
+    cachedStore = normalizePersistedAppStore(hydratedStore);
+  } else {
+    cachedStore = normalizePersistedAppStore(null);
+    persistStoreToDiskAndCloud(STORE_KEY, STORE_FILENAME, cachedStore);
+  }
+
+  const hydratedCfg = await hydrateStoreFromCloudOrDisk<Partial<McpConfig>>(
+    CONFIG_KEY,
+    CONFIG_FILENAME,
+    false
+  );
+  if (hydratedCfg) {
+    cachedFileConfig = normalizePersistedMcpConfig(hydratedCfg);
+  } else {
+    cachedFileConfig = normalizePersistedMcpConfig(null);
+    writeSecretConfigFile(cachedFileConfig);
+  }
+}
+
 export function getStore(): PersistedAppStore {
   if (cachedStore) return cachedStore;
-  ensureDataDir();
-  if (fs.existsSync(STORE_PATH)) {
-    try {
-      const raw = JSON.parse(fs.readFileSync(STORE_PATH, 'utf-8')) as Partial<PersistedAppStore>;
-      const actor: PersistedAppStore['lastActor'] =
-        raw.lastActor === 'app' || raw.lastActor === 'mcp' ? raw.lastActor : 'init';
-      cachedStore = {
-        revision: typeof raw.revision === 'number' ? raw.revision : 0,
-        updatedAt: raw.updatedAt || new Date().toISOString(),
-        lastActor: actor,
-        lastActionSummary: raw.lastActionSummary || 'Initialisiert',
-        data: normalizeSnapshot(raw.data)
-      };
-      return cachedStore;
-    } catch {
-      // fall through to fresh store
-    }
+  const localRaw = readLocalJsonSync<Partial<PersistedAppStore>>(STORE_FILENAME);
+  if (localRaw) {
+    cachedStore = normalizePersistedAppStore(localRaw);
+    return cachedStore;
   }
-  cachedStore = {
-    revision: 0,
-    updatedAt: new Date().toISOString(),
-    lastActor: 'init',
-    lastActionSummary: 'Initialisiert',
-    data: createEmptySnapshot()
-  };
-  fs.writeFileSync(STORE_PATH, JSON.stringify(cachedStore, null, 2), 'utf-8');
+  cachedStore = normalizePersistedAppStore(null);
+  persistStoreToDiskAndCloud(STORE_KEY, STORE_FILENAME, cachedStore);
   return cachedStore;
 }
 
@@ -259,7 +292,6 @@ export function saveStore(
   actor: PersistedAppStore['lastActor'],
   summary: string
 ): PersistedAppStore {
-  ensureDataDir();
   const current = getStore();
   const updated: PersistedAppStore = {
     revision: current.revision + 1,
@@ -269,42 +301,15 @@ export function saveStore(
     data: normalizeSnapshot(nextData)
   };
   cachedStore = updated;
-  fs.writeFileSync(STORE_PATH, JSON.stringify(updated, null, 2), 'utf-8');
+  persistStoreToDiskAndCloud(STORE_KEY, STORE_FILENAME, updated);
   notifyStoreListeners(updated);
   return updated;
 }
 
 function loadOrInitFileConfig(): Omit<McpConfig, 'tokenSource'> {
   if (cachedFileConfig) return cachedFileConfig;
-  ensureDataDir();
-  if (fs.existsSync(CONFIG_PATH)) {
-    try {
-      const raw = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8')) as Partial<McpConfig>;
-      cachedFileConfig = {
-        adminToken:
-          typeof raw.adminToken === 'string' && raw.adminToken.trim().length >= 24
-            ? raw.adminToken.trim()
-            : generateSecureToken(),
-        requireToken: true,
-        createdAt: raw.createdAt || new Date().toISOString(),
-        lastAccessAt: raw.lastAccessAt || null,
-        lastOperation: raw.lastOperation || null,
-        totalCalls: typeof raw.totalCalls === 'number' ? raw.totalCalls : 0
-      };
-      writeSecretConfigFile(cachedFileConfig);
-      return cachedFileConfig;
-    } catch {
-      // fall through
-    }
-  }
-  cachedFileConfig = {
-    adminToken: generateSecureToken(),
-    requireToken: true,
-    createdAt: new Date().toISOString(),
-    lastAccessAt: null,
-    lastOperation: null,
-    totalCalls: 0
-  };
+  const localRaw = readLocalJsonSync<Partial<McpConfig>>(CONFIG_FILENAME);
+  cachedFileConfig = normalizePersistedMcpConfig(localRaw);
   writeSecretConfigFile(cachedFileConfig);
   return cachedFileConfig;
 }
@@ -459,7 +464,7 @@ export function getAdminOverview(includeFullSnapshot = false) {
 }
 
 export function queryCollection(params: {
-  collection: CollectionName | 'taxSettings';
+  collection: CollectionName | 'taxSettings' | 'all';
   id?: string;
   customer_id?: string;
   status?: string;
@@ -478,6 +483,29 @@ export function queryCollection(params: {
       collection: 'taxSettings',
       data: data.taxSettings,
       guvSummary: calculateGuvSummary(data.invoices, data.expenses, data.taxSettings)
+    };
+  }
+
+  if (params.collection === 'all') {
+    const perCollectionLimit = params.limit && params.limit > 0 ? params.limit : 25;
+    const grouped: Record<string, unknown[]> = {};
+    let totalMatched = 0;
+    for (const col of COLLECTION_NAMES) {
+      const sub = queryCollection({
+        ...params,
+        collection: col,
+        limit: perCollectionLimit
+      }) as { totalMatched: number; items: unknown[] };
+      if (sub.items.length > 0) {
+        grouped[col] = sub.items;
+        totalMatched += sub.totalMatched;
+      }
+    }
+    return {
+      revision,
+      collection: 'all',
+      totalMatched,
+      resultsByCollection: grouped
     };
   }
 
@@ -1683,7 +1711,7 @@ export function createInvoiceAdminAction(
 export function payInvoiceAdminAction(
   params: {
     invoice_id: string;
-    action?: 'pay' | 'reverse_payment' | 'delete_payment' | 'refund';
+    action?: 'pay' | 'update_payment' | 'reverse_payment' | 'delete_payment' | 'refund';
     amount?: number;
     payment_id?: string;
     date?: string;
@@ -1702,6 +1730,41 @@ export function payInvoiceAdminAction(
   const inv = next.invoices[idx];
   const mode = params.action || 'pay';
   const date = params.date ? assertIsoDate(params.date, 'date') : getTodayLocalIso();
+
+  if (mode === 'update_payment') {
+    if (!params.payment_id || !inv.payments.some((p) => p.id === params.payment_id)) {
+      throw new Error(`Zahlung "${params.payment_id || ''}" in Rechnung ${inv.invoice_number} nicht gefunden.`);
+    }
+    const updatedPayments = inv.payments.map((p) =>
+      p.id === params.payment_id
+        ? {
+            ...p,
+            ...(params.date ? { date } : {}),
+            ...(typeof params.amount === 'number' ? { amount: round2(params.amount) } : {}),
+            ...(typeof params.note === 'string' ? { note: params.note } : {})
+          }
+        : p
+    );
+    const totalPaid = round2(updatedPayments.reduce((s, p) => s + p.amount, 0));
+    const status: Invoice['status'] =
+      inv.status === 'cancelled'
+        ? 'cancelled'
+        : totalPaid >= inv.total_amount && inv.total_amount > 0
+          ? 'paid'
+          : totalPaid > 0
+            ? 'partially_paid'
+            : 'unpaid';
+    const nextRefund =
+      inv.status === 'cancelled' && !inv.is_storno ? Math.max(0, totalPaid) : inv.open_refund_amount;
+    next.invoices[idx] = {
+      ...inv,
+      payments: updatedPayments,
+      status,
+      open_refund_amount: nextRefund
+    };
+    const saved = saveStore(next, actor, `Zahlungseintrag auf ${inv.invoice_number} geändert`);
+    return { revision: saved.revision, invoice: next.invoices[idx] };
+  }
 
   if (mode === 'reverse_payment') {
     // Exact AppContext.correctPayment (Gegenbuchung)
@@ -2123,8 +2186,8 @@ export const MCP_TOOLS = [
       properties: {
         collection: {
           type: 'string',
-          enum: [...COLLECTION_NAMES, 'taxSettings'],
-          description: 'Name der abzufragenden Tabelle / Collection.'
+          enum: [...COLLECTION_NAMES, 'taxSettings', 'all'],
+          description: 'Name der abzufragenden Tabelle / Collection oder "all" für globale Suche über alle Bereiche.'
         },
         id: { type: 'string', description: 'Optionale exakte Datensatz-ID.' },
         customer_id: {
@@ -2327,8 +2390,8 @@ export const MCP_TOOLS = [
         },
         action: {
           type: 'string',
-          enum: ['pay', 'reverse_payment', 'delete_payment', 'refund'],
-          description: 'Standard "pay". Weitere Optionen: "reverse_payment" (Gegenbuchung), "delete_payment", "refund" (Rückzahlung nach Storno).'
+          enum: ['pay', 'update_payment', 'reverse_payment', 'delete_payment', 'refund'],
+          description: 'Standard "pay". Weitere Optionen: "update_payment" (Zahlung ändern), "reverse_payment" (Gegenbuchung), "delete_payment", "refund" (Rückzahlung nach Storno).'
         },
         amount: {
           type: 'number',
@@ -2336,7 +2399,7 @@ export const MCP_TOOLS = [
         },
         payment_id: {
           type: 'string',
-          description: 'Erforderlich bei "reverse_payment" oder "delete_payment": ID des Zahlungseintrags.'
+          description: 'Erforderlich bei "update_payment", "reverse_payment" oder "delete_payment": ID des Zahlungseintrags.'
         },
         date: { type: 'string', description: 'Buchungsdatum YYYY-MM-DD.' },
         note: { type: 'string', description: 'Optionale Buchungsnotiz / Begründung.' }
@@ -2468,7 +2531,7 @@ export function callMcpTool(name: string, args: Record<string, unknown> = {}): u
       return getAdminOverview(Boolean(args.include_full_snapshot));
     case 'admin_read_records': {
       const col = String(args.collection || '');
-      if (col !== 'taxSettings' && !isCollectionName(col)) {
+      if (col !== 'taxSettings' && col !== 'all' && !isCollectionName(col)) {
         throw new Error(`Unbekannte Collection "${col}".`);
       }
       return queryCollection({
@@ -2548,6 +2611,7 @@ export function callMcpTool(name: string, args: Record<string, unknown> = {}): u
         {
           invoice_id: String(args.invoice_id || ''),
           action:
+            args.action === 'update_payment' ||
             args.action === 'reverse_payment' ||
             args.action === 'delete_payment' ||
             args.action === 'refund'

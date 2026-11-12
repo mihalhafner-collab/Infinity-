@@ -19,6 +19,7 @@ import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -28,7 +29,10 @@ import at.hafner.gruenraum.bridge.PixelNativeBridge
 import at.hafner.gruenraum.calendar.NativeCalendarReader
 import at.hafner.gruenraum.documents.NativeDocumentManager
 import at.hafner.gruenraum.storage.NativeStoreManager
+import at.hafner.gruenraum.sync.NativeMcpSyncManager
+import at.hafner.gruenraum.sync.SecureMcpCredentialStore
 import org.json.JSONObject
+import java.io.File
 
 class MainActivity : AppCompatActivity() {
 
@@ -36,9 +40,12 @@ class MainActivity : AppCompatActivity() {
     private lateinit var storeManager: NativeStoreManager
     private lateinit var documentManager: NativeDocumentManager
     private lateinit var calendarReader: NativeCalendarReader
+    private lateinit var credentialStore: SecureMcpCredentialStore
+    private lateinit var mcpSyncManager: NativeMcpSyncManager
     private lateinit var inAppBackCallback: OnBackPressedCallback
 
     private var fileUploadCallback: ValueCallback<Array<Uri>>? = null
+    private var pendingCameraCaptureUri: Uri? = null
 
     private data class PendingDocSave(
         val requestId: String,
@@ -65,6 +72,19 @@ class MainActivity : AppCompatActivity() {
         ActivityResultContracts.GetMultipleContents()
     ) { uris ->
         fileUploadCallback?.onReceiveValue(uris.toTypedArray())
+        fileUploadCallback = null
+    }
+
+    private val takePictureLauncher = registerForActivityResult(
+        ActivityResultContracts.TakePicture()
+    ) { success ->
+        val capturedUri = pendingCameraCaptureUri
+        pendingCameraCaptureUri = null
+        if (success && capturedUri != null) {
+            fileUploadCallback?.onReceiveValue(arrayOf(capturedUri))
+        } else {
+            fileUploadCallback?.onReceiveValue(null)
+        }
         fileUploadCallback = null
     }
 
@@ -179,6 +199,25 @@ class MainActivity : AppCompatActivity() {
         storeManager = NativeStoreManager(applicationContext)
         documentManager = NativeDocumentManager(applicationContext)
         calendarReader = NativeCalendarReader(applicationContext)
+        credentialStore = SecureMcpCredentialStore(applicationContext)
+        mcpSyncManager = NativeMcpSyncManager(
+            context = applicationContext,
+            storeManager = storeManager,
+            credentialStore = credentialStore,
+            onRemoteStateApplied = { stateJson, revision, summary ->
+                runOnUiThread {
+                    dispatchRemoteMcpStateToWeb(stateJson, revision, summary)
+                }
+            },
+            onStatusChanged = { statusJson ->
+                runOnUiThread {
+                    dispatchMcpStatusToWeb(statusJson)
+                }
+            }
+        )
+        storeManager.onLocalStateChanged = {
+            mcpSyncManager.onLocalStateSaved()
+        }
 
         webView = WebView(this).apply {
             setBackgroundColor(Color.parseColor("#F8F9FA"))
@@ -239,7 +278,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         webView.addJavascriptInterface(
-            PixelNativeBridge(this, storeManager, documentManager),
+            PixelNativeBridge(this, storeManager, documentManager, mcpSyncManager),
             "HafnerNative"
         )
 
@@ -279,6 +318,24 @@ class MainActivity : AppCompatActivity() {
                 fileUploadCallback = filePathCallback
                 val accept = fileChooserParams?.acceptTypes?.firstOrNull()
                     ?.takeIf { it.isNotBlank() } ?: "image/*"
+
+                if (fileChooserParams?.isCaptureEnabled == true && accept.startsWith("image")) {
+                    try {
+                        val captureDir = File(cacheDir, "camera_captures").apply { mkdirs() }
+                        val photoFile = File(captureDir, "foto_${System.currentTimeMillis()}.jpg")
+                        val photoUri = FileProvider.getUriForFile(
+                            this@MainActivity,
+                            "${applicationContext.packageName}.fileprovider",
+                            photoFile
+                        )
+                        pendingCameraCaptureUri = photoUri
+                        takePictureLauncher.launch(photoUri)
+                        return true
+                    } catch (_: Exception) {
+                        pendingCameraCaptureUri = null
+                    }
+                }
+
                 return try {
                     fileChooserLauncher.launch(accept)
                     true
@@ -306,7 +363,41 @@ class MainActivity : AppCompatActivity() {
         }
         onBackPressedDispatcher.addCallback(this, inAppBackCallback)
 
+        handleIncomingPairingIntent(intent)
         webView.loadUrl("https://appassets.androidplatform.net/")
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleIncomingPairingIntent(intent)
+    }
+
+    override fun onStart() {
+        super.onStart()
+        if (::mcpSyncManager.isInitialized) {
+            mcpSyncManager.onAppForegrounded()
+        }
+    }
+
+    override fun onStop() {
+        if (::mcpSyncManager.isInitialized) {
+            mcpSyncManager.onAppBackgrounded()
+        }
+        super.onStop()
+    }
+
+    private fun handleIncomingPairingIntent(incoming: Intent?) {
+        val uri = incoming?.data ?: return
+        if (uri.scheme?.lowercase() == "hafnermcp" && uri.host?.lowercase() == "pair") {
+            val pairUrl = uri.getQueryParameter("url").orEmpty()
+            val pairCode = uri.getQueryParameter("code").orEmpty()
+            if (pairCode.isNotBlank()) {
+                mcpSyncManager.pairWithOneTimeCode(pairUrl, pairCode)
+            }
+            // Bereinige Einmal-Kopplungscode sofort aus dem Activity-Intent im Arbeitsspeicher
+            incoming.data = null
+        }
     }
 
     fun updateCanGoBackInApp(canGoBack: Boolean) {
@@ -453,7 +544,26 @@ class MainActivity : AppCompatActivity() {
         webView.evaluateJavascript(js, null)
     }
 
+    private fun dispatchRemoteMcpStateToWeb(stateJson: String, revision: Int, summary: String) {
+        if (!::webView.isInitialized) return
+        val safeJson = JSONObject.quote(stateJson)
+        val safeSummary = JSONObject.quote(summary)
+        val js =
+            "window.__onHafnerNativeRemoteState && window.__onHafnerNativeRemoteState($safeJson, $revision, $safeSummary);"
+        webView.evaluateJavascript(js, null)
+    }
+
+    private fun dispatchMcpStatusToWeb(statusJson: String) {
+        if (!::webView.isInitialized) return
+        val safeJson = JSONObject.quote(statusJson)
+        val js = "window.__onHafnerNativeMcpStatus && window.__onHafnerNativeMcpStatus($safeJson);"
+        webView.evaluateJavascript(js, null)
+    }
+
     override fun onDestroy() {
+        if (::mcpSyncManager.isInitialized) {
+            mcpSyncManager.shutdown()
+        }
         webView.destroy()
         super.onDestroy()
     }

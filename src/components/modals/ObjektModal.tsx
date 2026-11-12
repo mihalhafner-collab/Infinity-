@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useApp } from '../../context/AppContext.tsx';
 import {
   X,
@@ -7,6 +7,7 @@ import {
   KeyRound,
   Ruler,
   Camera,
+  ImagePlus,
   Trash2,
   Check,
   Copy,
@@ -76,8 +77,6 @@ export const ObjektModal: React.FC = () => {
   const [notes, setNotes] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
-
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const formattedCustomerAddress = customer
     ? [customer.street, [customer.zip, customer.city].filter(Boolean).join(' ')]
@@ -355,29 +354,53 @@ export const ObjektModal: React.FC = () => {
           </div>
 
           {/* Objektfotos */}
-          <div>
-            <div className="flex items-center justify-between mb-1.5">
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
               <label className="font-semibold text-slate-700 flex items-center gap-1">
                 <Camera size={13} className="text-slate-500" />
                 <span>Objektfotos ({photos.length})</span>
               </label>
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={isUploading}
-                className="min-h-[34px] px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-[#3138A0] font-semibold rounded-lg text-[11px] flex items-center gap-1 transition-colors"
+              {isUploading && (
+                <span className="text-[11px] font-semibold text-[#3138A0]">
+                  Wird geladen…
+                </span>
+              )}
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <label
+                className={`h-11 px-3 bg-[#3138A0] hover:bg-[#272d82] active:scale-98 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-2xs transition-all cursor-pointer ${
+                  isUploading ? 'opacity-60 pointer-events-none' : ''
+                }`}
               >
-                <Camera size={12} />
-                <span>{isUploading ? 'Wird geladen…' : '+ Foto hinzufügen'}</span>
-              </button>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                multiple
-                onChange={handlePhotoFiles}
-                className="hidden"
-              />
+                <Camera size={15} />
+                <span>Mit Kamera öffnen</span>
+                <input
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  disabled={isUploading}
+                  onChange={handlePhotoFiles}
+                  className="hidden"
+                />
+              </label>
+
+              <label
+                className={`h-11 px-3 bg-indigo-50 hover:bg-indigo-100 active:scale-98 text-[#3138A0] border border-indigo-200/80 font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                  isUploading ? 'opacity-60 pointer-events-none' : ''
+                }`}
+              >
+                <ImagePlus size={15} />
+                <span>Aus Galerie</span>
+                <input
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  disabled={isUploading}
+                  onChange={handlePhotoFiles}
+                  className="hidden"
+                />
+              </label>
             </div>
 
             {photos.length > 0 && (

@@ -30,13 +30,16 @@ import {
   getNativeBackupMeta,
   isNativeAndroidApp,
   loadNativeStoreJson,
+  migrateLegacyWebStorageCredentialsIfNeeded,
   registerNativeBackHandler,
   resolveBackendEndpoint,
   restoreNativeVerifiedBackup,
   runNativeVerifiedBackup,
   saveNativeStoreJson,
+  subscribeNativeRemoteState,
   syncNativeCanGoBack
 } from '../services/nativeBridge.ts';
+import { validateFirestoreBootConnection } from '../services/firebaseClient.ts';
 
 // Re-export canonical data contracts (DATA-02, DATA-04, DATA-09, DATA-10, M11) directly from AppContext
 export type {
@@ -217,9 +220,23 @@ interface AppContextType {
   // Device orientation / Pixel frame toggle (for comfortable testing)
   pixelFrameEnabled: boolean;
   setPixelFrameEnabled: (enabled: boolean) => void;
+
+  // Sync status & pending synchronization queue
+  appSyncStatus: {
+    pendingSyncCount: number;
+    syncInFlight: boolean;
+    online: boolean;
+    revision: number;
+    lastSyncAt: string | null;
+    lastSyncError: string | null;
+  };
+  flushPendingAppSync: () => Promise<void>;
 }
 
 const STORAGE_KEY = 'eisbaer_app_clean_v1';
+const PENDING_SYNC_COUNT_KEY = `${STORAGE_KEY}_pending_sync_count`;
+const LAST_KNOWN_REV_KEY = `${STORAGE_KEY}_last_known_rev`;
+const LAST_SYNC_AT_KEY = `${STORAGE_KEY}_last_sync_at`;
 
 const initialCustomers: Customer[] = [];
 const initialProperties: CustomerProperty[] = [];
@@ -421,8 +438,68 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Live Bidirectional Sync mit Backend (für vollen lesenden & schreibenden MCP / ChatGPT-Plugin Zugriff)
   const serverSyncInitializedRef = useRef(false);
-  const lastKnownRevisionRef = useRef<number>(0);
+  const lastKnownRevisionRef = useRef<number>(
+    (() => {
+      const saved = Number(localStorage.getItem(LAST_KNOWN_REV_KEY) || '0');
+      return Number.isFinite(saved) && saved >= 0 ? saved : 0;
+    })()
+  );
   const lastSyncedSnapshotJsonRef = useRef<string>('');
+  const lastTrackedMutationJsonRef = useRef<string>('');
+  const pendingSyncCountRef = useRef<number>(
+    (() => {
+      const saved = Number(localStorage.getItem(PENDING_SYNC_COUNT_KEY) || '0');
+      return Number.isFinite(saved) && saved > 0 ? saved : 0;
+    })()
+  );
+
+  const [appSyncStatus, setAppSyncStatus] = useState<{
+    pendingSyncCount: number;
+    syncInFlight: boolean;
+    online: boolean;
+    revision: number;
+    lastSyncAt: string | null;
+    lastSyncError: string | null;
+  }>(() => ({
+    pendingSyncCount: pendingSyncCountRef.current,
+    syncInFlight: false,
+    online: typeof navigator !== 'undefined' ? navigator.onLine : true,
+    revision: lastKnownRevisionRef.current,
+    lastSyncAt: localStorage.getItem(LAST_SYNC_AT_KEY),
+    lastSyncError: null
+  }));
+
+  const updateSyncMeta = useCallback(
+    (patch: {
+      pendingSyncCount?: number;
+      syncInFlight?: boolean;
+      online?: boolean;
+      revision?: number;
+      lastSyncAt?: string | null;
+      lastSyncError?: string | null;
+    }) => {
+      if (typeof patch.pendingSyncCount === 'number') {
+        pendingSyncCountRef.current = Math.max(0, patch.pendingSyncCount);
+        localStorage.setItem(PENDING_SYNC_COUNT_KEY, String(pendingSyncCountRef.current));
+      }
+      if (typeof patch.revision === 'number') {
+        lastKnownRevisionRef.current = patch.revision;
+        localStorage.setItem(LAST_KNOWN_REV_KEY, String(patch.revision));
+      }
+      if (patch.lastSyncAt) {
+        localStorage.setItem(LAST_SYNC_AT_KEY, patch.lastSyncAt);
+      }
+      setAppSyncStatus((prev) => ({
+        ...prev,
+        ...patch,
+        pendingSyncCount:
+          typeof patch.pendingSyncCount === 'number'
+            ? Math.max(0, patch.pendingSyncCount)
+            : prev.pendingSyncCount
+      }));
+    },
+    []
+  );
 
   const buildCurrentSnapshot = () => ({
     customers,
@@ -457,7 +534,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           ? { ...defaultTaxSettings, ...remote.taxSettings }
           : { ...defaultTaxSettings }
     };
-    lastSyncedSnapshotJsonRef.current = JSON.stringify(normalized);
+    const serialized = JSON.stringify(normalized);
+    lastSyncedSnapshotJsonRef.current = serialized;
+    lastTrackedMutationJsonRef.current = serialized;
     setCustomers(normalized.customers);
     setProperties(normalized.properties);
     setAppointments(normalized.appointments);
@@ -472,44 +551,253 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setTaxSettings(normalized.taxSettings);
   };
 
-  // Hydrate from Kotlin atomic filesDir storage on startup when running as standalone Android APK
+  const lastNativeSavedJsonRef = useRef<string>('');
+  const nativeHydratedRef = useRef<boolean>(!isNativeAndroidApp());
+
+  // Hydrate from Kotlin atomic filesDir storage + live NativeMcpSyncManager listener on Pixel 10 Pro
   useEffect(() => {
     if (!isNativeAndroidApp()) return;
+    migrateLegacyWebStorageCredentialsIfNeeded();
+
     const rawNative = loadNativeStoreJson();
-    if (!rawNative) return;
-    try {
-      const parsed = JSON.parse(rawNative) as Partial<ReturnType<typeof buildCurrentSnapshot>>;
-      if (parsed && typeof parsed === 'object') {
-        applyServerData(parsed);
+    if (rawNative) {
+      try {
+        const parsed = JSON.parse(rawNative) as Partial<ReturnType<typeof buildCurrentSnapshot>>;
+        if (parsed && typeof parsed === 'object') {
+          applyServerData(parsed);
+          lastNativeSavedJsonRef.current = lastSyncedSnapshotJsonRef.current;
+        }
+      } catch {
+        // Ignore malformed native snapshot
       }
-    } catch {
-      // Ignore malformed native snapshot
+    } else {
+      lastNativeSavedJsonRef.current = JSON.stringify(buildCurrentSnapshot());
     }
+    nativeHydratedRef.current = true;
+
+    const unsubRemote = subscribeNativeRemoteState((stateJson, revision) => {
+      try {
+        const parsed = JSON.parse(stateJson) as Partial<ReturnType<typeof buildCurrentSnapshot>>;
+        if (parsed && typeof parsed === 'object') {
+          updateSyncMeta({ revision, lastSyncAt: new Date().toISOString() });
+          applyServerData(parsed);
+          lastNativeSavedJsonRef.current = lastSyncedSnapshotJsonRef.current;
+        }
+      } catch {
+        // Ignore malformed remote payload
+      }
+    });
+
+    return () => {
+      unsubRemote();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const pushSnapshotToServer = useCallback(
+    async (
+      snap: ReturnType<typeof buildCurrentSnapshot>,
+      snapJson: string,
+      summary: string
+    ): Promise<boolean> => {
+      const endpoint = resolveBackendEndpoint('/api/internal/state');
+      if (!endpoint.url) return false;
+      if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        updateSyncMeta({
+          online: false,
+          syncInFlight: false,
+          lastSyncError: 'Offline – Synchronisation wartet auf Verbindung'
+        });
+        return false;
+      }
+
+      const countAtStart = pendingSyncCountRef.current;
+      updateSyncMeta({ syncInFlight: true, online: true });
+
+      try {
+        const res = await fetch(endpoint.url, {
+          method: 'PUT',
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json',
+            ...endpoint.headers
+          },
+          body: JSON.stringify({
+            data: snap,
+            baseRevision: lastKnownRevisionRef.current,
+            summary
+          })
+        });
+
+        if (!res.ok) {
+          updateSyncMeta({
+            syncInFlight: false,
+            lastSyncError:
+              res.status === 401
+                ? 'Sitzung gesperrt – Synchronisation ausstehend'
+                : `Synchronisation ausstehend (HTTP ${res.status})`
+          });
+          return false;
+        }
+
+        const info = (await res.json()) as {
+          revision: number;
+          merged?: boolean;
+          data?: Partial<ReturnType<typeof buildCurrentSnapshot>>;
+        };
+
+        lastSyncedSnapshotJsonRef.current = snapJson;
+        const remaining = Math.max(0, pendingSyncCountRef.current - Math.max(1, countAtStart));
+        const nowIso = new Date().toISOString();
+
+        updateSyncMeta({
+          pendingSyncCount: remaining,
+          syncInFlight: false,
+          online: true,
+          revision: typeof info.revision === 'number' ? info.revision : lastKnownRevisionRef.current,
+          lastSyncAt: nowIso,
+          lastSyncError: null
+        });
+
+        if (info.merged && info.data) {
+          applyServerData(info.data);
+        }
+        return true;
+      } catch {
+        updateSyncMeta({
+          syncInFlight: false,
+          online: typeof navigator !== 'undefined' ? navigator.onLine : false,
+          lastSyncError: 'Verbindung unterbrochen – Synchronisation ausstehend'
+        });
+        return false;
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [updateSyncMeta]
+  );
+
+  const flushPendingAppSync = useCallback(async () => {
+    if (isNativeAndroidApp()) return;
+    const snap = buildCurrentSnapshot();
+    const snapJson = JSON.stringify(snap);
+    await pushSnapshotToServer(snap, snapJson, 'Manueller Abgleich aus App');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    customers,
+    properties,
+    appointments,
+    workRecords,
+    invoices,
+    inquiries,
+    offers,
+    orders,
+    equipments,
+    materials,
+    expenses,
+    taxSettings,
+    pushSnapshotToServer
+  ]);
+
   useEffect(() => {
+    if (isNativeAndroidApp()) {
+      serverSyncInitializedRef.current = true;
+      return;
+    }
+
+    void validateFirestoreBootConnection();
+
     let cancelled = false;
     let eventSource: EventSource | null = null;
+
+    const connectEventStream = () => {
+      const eventsEndpoint = resolveBackendEndpoint('/api/internal/events');
+      if (!eventsEndpoint.url || cancelled) return;
+      eventSource?.close();
+      eventSource = new EventSource(eventsEndpoint.url, { withCredentials: true });
+      eventSource.onmessage = async (ev) => {
+        try {
+          const payload = JSON.parse(ev.data) as { revision?: number };
+          if (
+            typeof payload.revision === 'number' &&
+            payload.revision > lastKnownRevisionRef.current
+          ) {
+            if (pendingSyncCountRef.current > 0) {
+              const currentSnap = buildCurrentSnapshot();
+              await pushSnapshotToServer(
+                currentSnap,
+                JSON.stringify(currentSnap),
+                'Abgleich ausstehender Änderungen'
+              );
+              return;
+            }
+            const latestEndpoint = resolveBackendEndpoint('/api/internal/state');
+            if (!latestEndpoint.url) return;
+            const latestRes = await fetch(latestEndpoint.url, {
+              headers: latestEndpoint.headers,
+              credentials: 'include'
+            });
+            if (!latestRes.ok || cancelled) return;
+            const latestStore = (await latestRes.json()) as {
+              revision: number;
+              data: Partial<ReturnType<typeof buildCurrentSnapshot>>;
+            };
+            if (latestStore.revision > lastKnownRevisionRef.current) {
+              updateSyncMeta({
+                revision: latestStore.revision,
+                lastSyncAt: new Date().toISOString(),
+                lastSyncError: null
+              });
+              applyServerData(latestStore.data);
+            }
+          }
+        } catch {
+          // ignore keepalive/event parse errors
+        }
+      };
+    };
 
     const initSync = async () => {
       try {
         const endpoint = resolveBackendEndpoint('/api/internal/state');
         if (!endpoint.url) {
-          // Eigenständiger Offline-Betrieb auf dem Pixel 10 Pro ohne Serverabhängigkeit
           serverSyncInitializedRef.current = true;
           return;
         }
 
-        const res = await fetch(endpoint.url, { headers: endpoint.headers });
-        if (!res.ok) return;
+        const localSnap = buildCurrentSnapshot();
+        const localJson = JSON.stringify(localSnap);
+        if (!lastTrackedMutationJsonRef.current) {
+          lastTrackedMutationJsonRef.current = localJson;
+        }
+
+        // Falls aus einer Offline-Phase ungesendete Änderungen ausstehen, diese zuerst übertragen (inkl. Server-Merge)
+        if (pendingSyncCountRef.current > 0) {
+          const flushed = await pushSnapshotToServer(
+            localSnap,
+            localJson,
+            'Nachsynchronisation ausstehender Offline-Änderungen'
+          );
+          if (flushed) {
+            serverSyncInitializedRef.current = true;
+            connectEventStream();
+            return;
+          }
+        }
+
+        const res = await fetch(endpoint.url, {
+          headers: endpoint.headers,
+          credentials: 'include'
+        });
+        if (!res.ok) {
+          serverSyncInitializedRef.current = true;
+          return;
+        }
         const store = (await res.json()) as {
           revision: number;
           data: Partial<ReturnType<typeof buildCurrentSnapshot>>;
         };
         if (cancelled) return;
 
-        const localSnap = buildCurrentSnapshot();
         const hasLocalData =
           localSnap.customers.length > 0 ||
           localSnap.properties.length > 0 ||
@@ -522,74 +810,60 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           localSnap.expenses.length > 0;
 
         if (store.revision === 0 && hasLocalData) {
-          // Bestehende lokale App-Daten initial auf den MCP-Server übertragen
-          const localJson = JSON.stringify(localSnap);
-          lastSyncedSnapshotJsonRef.current = localJson;
-          const putRes = await fetch(endpoint.url, {
-            method: 'PUT',
-            headers: {
-              'Content-Type': 'application/json',
-              ...endpoint.headers
-            },
-            body: JSON.stringify({
-              data: localSnap,
-              summary: 'Initiale Synchronisation aus Pixel 10 Pro App'
-            })
+          updateSyncMeta({ pendingSyncCount: Math.max(1, pendingSyncCountRef.current) });
+          await pushSnapshotToServer(localSnap, localJson, 'Initiale Synchronisation aus App');
+        } else if (store.revision > 0 && store.data && pendingSyncCountRef.current === 0) {
+          updateSyncMeta({
+            revision: store.revision,
+            online: true,
+            lastSyncAt: new Date().toISOString(),
+            lastSyncError: null
           });
-          if (putRes.ok) {
-            const putInfo = (await putRes.json()) as { revision: number };
-            lastKnownRevisionRef.current = putInfo.revision;
-          }
-        } else if (store.revision > 0 && store.data) {
-          lastKnownRevisionRef.current = store.revision;
           applyServerData(store.data);
         } else {
-          lastSyncedSnapshotJsonRef.current = JSON.stringify(localSnap);
+          lastSyncedSnapshotJsonRef.current = localJson;
+          lastTrackedMutationJsonRef.current = localJson;
+          updateSyncMeta({
+            revision: store.revision,
+            online: true,
+            lastSyncAt: new Date().toISOString(),
+            lastSyncError: null
+          });
         }
 
         serverSyncInitializedRef.current = true;
-
-        // Echtzeit-Empfang von Schreibzugriffen durch ChatGPT Plugin / MCP
-        const eventsEndpoint = resolveBackendEndpoint('/api/internal/events');
-        if (eventsEndpoint.url && !isNativeAndroidApp()) {
-          eventSource = new EventSource(eventsEndpoint.url);
-          eventSource.onmessage = async (ev) => {
-            try {
-              const payload = JSON.parse(ev.data) as { revision?: number };
-              if (
-                typeof payload.revision === 'number' &&
-                payload.revision > lastKnownRevisionRef.current
-              ) {
-                const latestEndpoint = resolveBackendEndpoint('/api/internal/state');
-                if (!latestEndpoint.url) return;
-                const latestRes = await fetch(latestEndpoint.url, {
-                  headers: latestEndpoint.headers
-                });
-                if (!latestRes.ok || cancelled) return;
-                const latestStore = (await latestRes.json()) as {
-                  revision: number;
-                  data: Partial<ReturnType<typeof buildCurrentSnapshot>>;
-                };
-                if (latestStore.revision > lastKnownRevisionRef.current) {
-                  lastKnownRevisionRef.current = latestStore.revision;
-                  applyServerData(latestStore.data);
-                }
-              }
-            } catch {
-              // ignore malformed keepalive/event
-            }
-          };
-        }
+        connectEventStream();
       } catch {
-        // Offline-Betrieb bleibt uneingeschränkt aktiv
+        updateSyncMeta({
+          online: typeof navigator !== 'undefined' ? navigator.onLine : false
+        });
         serverSyncInitializedRef.current = true;
       }
     };
 
+    const handleBrowserOnline = () => {
+      updateSyncMeta({ online: true });
+      void initSync();
+    };
+
+    const handleBrowserOffline = () => {
+      updateSyncMeta({
+        online: false,
+        lastSyncError:
+          pendingSyncCountRef.current > 0
+            ? 'Offline – Synchronisation wartet auf Verbindung'
+            : null
+      });
+    };
+
     void initSync();
+    window.addEventListener('online', handleBrowserOnline);
+    window.addEventListener('offline', handleBrowserOffline);
 
     return () => {
       cancelled = true;
+      window.removeEventListener('online', handleBrowserOnline);
+      window.removeEventListener('offline', handleBrowserOffline);
       eventSource?.close();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -599,35 +873,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const snap = buildCurrentSnapshot();
     const snapJson = JSON.stringify(snap);
 
-    // Atomare Spiegelung in den geschützten internen Android-App-Speicher (Kotlin filesDir)
-    saveNativeStoreJson(snapJson);
+    if (isNativeAndroidApp()) {
+      if (!nativeHydratedRef.current) return;
+      if (snapJson === lastNativeSavedJsonRef.current) return;
+      lastNativeSavedJsonRef.current = snapJson;
+      saveNativeStoreJson(snapJson);
+      return;
+    }
 
     if (!serverSyncInitializedRef.current) return;
     if (snapJson === lastSyncedSnapshotJsonRef.current) return;
 
-    const timer = setTimeout(async () => {
-      try {
-        lastSyncedSnapshotJsonRef.current = snapJson;
-        const endpoint = resolveBackendEndpoint('/api/internal/state');
-        if (!endpoint.url) return;
+    if (snapJson !== lastTrackedMutationJsonRef.current) {
+      lastTrackedMutationJsonRef.current = snapJson;
+      updateSyncMeta({
+        pendingSyncCount: pendingSyncCountRef.current + 1
+      });
+    }
 
-        const res = await fetch(endpoint.url, {
-          method: 'PUT',
-          headers: {
-            'Content-Type': 'application/json',
-            ...endpoint.headers
-          },
-          body: JSON.stringify({ data: snap, summary: 'Änderung in Pixel 10 Pro App' })
-        });
-        if (res.ok) {
-          const info = (await res.json()) as { revision: number };
-          if (typeof info.revision === 'number') {
-            lastKnownRevisionRef.current = info.revision;
-          }
-        }
-      } catch {
-        // Offline-Toleranz
-      }
+    const timer = setTimeout(() => {
+      void pushSnapshotToServer(snap, snapJson, 'Änderung in App');
     }, 180);
 
     return () => clearTimeout(timer);
@@ -2118,7 +2383,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         performBackup,
         restoreBackup,
         pixelFrameEnabled,
-        setPixelFrameEnabled
+        setPixelFrameEnabled,
+        appSyncStatus,
+        flushPendingAppSync
       }}
     >
       {children}

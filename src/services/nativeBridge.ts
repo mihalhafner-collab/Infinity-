@@ -1,11 +1,44 @@
 import type { GoogleCalendarNormalizedItem } from './googleCalendarService.ts';
 
+export type NativeMcpConnectionState =
+  | 'connected'
+  | 'reconnecting'
+  | 'offline_queued'
+  | 'offline'
+  | 'unpaired'
+  | 'auth_error';
+
+export interface NativeMcpSyncStatus {
+  state: NativeMcpConnectionState;
+  statusLabel: string;
+  configured: boolean;
+  baseUrl: string;
+  mcpEndpointUrl: string;
+  maskedToken: string;
+  keystoreProtected: boolean;
+  networkOnline: boolean;
+  pendingLocalChanges: boolean;
+  pendingSyncCount: number;
+  syncInFlight: boolean;
+  revision: number;
+  lastSyncAt: string | null;
+  lastError: string | null;
+  totalMcpCalls: number;
+  lastMcpAccessAt: string | null;
+  activeOAuthGrants: number;
+}
+
 interface HafnerNativeInterface {
   isNativeAndroid: () => boolean;
   getDeviceProfile: () => string;
   loadStateJson: () => string | null;
   saveStateJson: (json: string) => boolean;
   getBackupMetaJson: () => string;
+  getMcpSyncStatusJson?: () => string;
+  configureMcpSync?: (baseUrl: string, token: string) => string;
+  pairMcpWithCode?: (baseUrl: string, code: string) => string;
+  triggerMcpSyncNow?: () => boolean;
+  disconnectMcpSync?: () => string;
   saveDocumentToDevice: (
     requestId: string,
     base64Data: string,
@@ -37,6 +70,8 @@ declare global {
     HafnerNative?: HafnerNativeInterface;
     __onHafnerNativeCallback?: (requestId: string, ok: boolean, payloadOrError: string) => void;
     __hafnerNativeBack?: () => boolean;
+    __onHafnerNativeRemoteState?: (stateJson: string, revision: number, summary: string) => void;
+    __onHafnerNativeMcpStatus?: (statusJson: string) => void;
   }
 }
 
@@ -45,7 +80,15 @@ type PendingCallback = {
   reject: (err: Error) => void;
 };
 
+type RemoteStateListener = (stateJson: string, revision: number, summary: string) => void;
+type McpStatusListener = (status: NativeMcpSyncStatus) => void;
+
 const pendingCallbacks = new Map<string, PendingCallback>();
+const remoteStateListeners = new Set<RemoteStateListener>();
+const mcpStatusListeners = new Set<McpStatusListener>();
+
+const LEGACY_REMOTE_URL_KEY = 'hafner_remote_mcp_base_url';
+const LEGACY_REMOTE_TOKEN_KEY = 'hafner_remote_mcp_token';
 
 if (typeof window !== 'undefined') {
   window.__onHafnerNativeCallback = (requestId: string, ok: boolean, payloadOrError: string) => {
@@ -56,6 +99,31 @@ if (typeof window !== 'undefined') {
       entry.resolve(payloadOrError);
     } else {
       entry.reject(new Error(payloadOrError || 'Nativer Vorgang fehlgeschlagen.'));
+    }
+  };
+
+  window.__onHafnerNativeRemoteState = (stateJson: string, revision: number, summary: string) => {
+    for (const listener of remoteStateListeners) {
+      try {
+        listener(stateJson, revision, summary);
+      } catch {
+        // Ignore individual listener error
+      }
+    }
+  };
+
+  window.__onHafnerNativeMcpStatus = (statusJson: string) => {
+    try {
+      const parsed = JSON.parse(statusJson) as NativeMcpSyncStatus;
+      for (const listener of mcpStatusListeners) {
+        try {
+          listener(parsed);
+        } catch {
+          // Ignore individual listener error
+        }
+      }
+    } catch {
+      // Ignore malformed status payload
     }
   };
 }
@@ -70,6 +138,17 @@ export function isNativeAndroidApp(): boolean {
     return Boolean(window.HafnerNative?.isNativeAndroid?.());
   } catch {
     return false;
+  }
+}
+
+// Bereinigt etwaige frühere Klartext-Einträge aus localStorage auf dem Pixel 10 Pro
+export function migrateLegacyWebStorageCredentialsIfNeeded(): void {
+  if (typeof window === 'undefined' || !isNativeAndroidApp()) return;
+  try {
+    localStorage.removeItem(LEGACY_REMOTE_URL_KEY);
+    localStorage.removeItem(LEGACY_REMOTE_TOKEN_KEY);
+  } catch {
+    // Ignore storage cleanup error
   }
 }
 
@@ -89,6 +168,80 @@ export function saveNativeStoreJson(json: string): void {
   } catch {
     // localStorage remains active as secondary mirror
   }
+}
+
+export function getNativeMcpSyncStatus(): NativeMcpSyncStatus | null {
+  if (!isNativeAndroidApp()) return null;
+  migrateLegacyWebStorageCredentialsIfNeeded();
+  try {
+    const raw = window.HafnerNative?.getMcpSyncStatusJson?.();
+    if (!raw) return null;
+    return JSON.parse(raw) as NativeMcpSyncStatus;
+  } catch {
+    return null;
+  }
+}
+
+export function pairNativeMcpWithCode(
+  baseUrl: string,
+  code: string
+): NativeMcpSyncStatus | null {
+  if (!isNativeAndroidApp()) return null;
+  try {
+    const raw = window.HafnerNative?.pairMcpWithCode?.(baseUrl.trim(), code.trim());
+    if (!raw) return null;
+    return JSON.parse(raw) as NativeMcpSyncStatus;
+  } catch {
+    return null;
+  }
+}
+
+export function configureNativeMcpSync(
+  baseUrl: string,
+  token: string
+): NativeMcpSyncStatus | null {
+  if (!isNativeAndroidApp()) return null;
+  try {
+    const raw = window.HafnerNative?.configureMcpSync?.(baseUrl.trim(), token.trim());
+    if (!raw) return null;
+    return JSON.parse(raw) as NativeMcpSyncStatus;
+  } catch {
+    return null;
+  }
+}
+
+export function triggerNativeMcpSyncNow(): void {
+  if (!isNativeAndroidApp()) return;
+  try {
+    window.HafnerNative?.triggerMcpSyncNow?.();
+  } catch {
+    // Ignore
+  }
+}
+
+export function disconnectNativeMcpSync(): NativeMcpSyncStatus | null {
+  if (!isNativeAndroidApp()) return null;
+  try {
+    const raw = window.HafnerNative?.disconnectMcpSync?.();
+    if (!raw) return null;
+    return JSON.parse(raw) as NativeMcpSyncStatus;
+  } catch {
+    return null;
+  }
+}
+
+export function subscribeNativeRemoteState(listener: RemoteStateListener): () => void {
+  remoteStateListeners.add(listener);
+  return () => {
+    remoteStateListeners.delete(listener);
+  };
+}
+
+export function subscribeNativeMcpStatus(listener: McpStatusListener): () => void {
+  mcpStatusListeners.add(listener);
+  return () => {
+    mcpStatusListeners.delete(listener);
+  };
 }
 
 export interface NativeBackupMeta {
@@ -220,6 +373,13 @@ export async function restoreNativeVerifiedBackup(
   });
 }
 
+export function openExternalUrlNatively(url: string): boolean {
+  if (isNativeAndroidApp() && window.HafnerNative?.openExternalUrl) {
+    return window.HafnerNative.openExternalUrl(url);
+  }
+  return false;
+}
+
 export function registerNativeBackHandler(handler: () => boolean): () => void {
   if (typeof window === 'undefined') return () => {};
   window.__hafnerNativeBack = handler;
@@ -239,47 +399,14 @@ export function syncNativeCanGoBack(canGoBack: boolean): void {
   }
 }
 
-const REMOTE_SERVER_URL_KEY = 'hafner_remote_mcp_base_url';
-const REMOTE_SERVER_TOKEN_KEY = 'hafner_remote_mcp_token';
-
-export interface RemoteSyncConfig {
-  baseUrl: string;
-  token: string;
-}
-
-export function getRemoteSyncConfig(): RemoteSyncConfig {
-  if (typeof window === 'undefined') return { baseUrl: '', token: '' };
-  return {
-    baseUrl: (localStorage.getItem(REMOTE_SERVER_URL_KEY) || '').trim().replace(/\/+$/, ''),
-    token: (localStorage.getItem(REMOTE_SERVER_TOKEN_KEY) || '').trim()
-  };
-}
-
-export function setRemoteSyncConfig(baseUrl: string, token: string): void {
-  if (typeof window === 'undefined') return;
-  const cleanUrl = baseUrl.trim().replace(/\/mcp.*$/i, '').replace(/\/+$/, '');
-  localStorage.setItem(REMOTE_SERVER_URL_KEY, cleanUrl);
-  localStorage.setItem(REMOTE_SERVER_TOKEN_KEY, token.trim());
-}
-
 export function resolveBackendEndpoint(path: string): {
   url: string | null;
   headers: Record<string, string>;
 } {
   const cleanPath = path.startsWith('/') ? path : `/${path}`;
-  if (!isNativeAndroidApp()) {
-    return { url: cleanPath, headers: {} };
-  }
-  const { baseUrl, token } = getRemoteSyncConfig();
-  if (!baseUrl) {
+  if (isNativeAndroidApp()) {
+    // Im nativen Android-Betrieb übernimmt Kotlin NativeMcpSyncManager alle Server-Verbindungen
     return { url: null, headers: {} };
   }
-  const headers: Record<string, string> = {};
-  if (token) {
-    headers.Authorization = `Bearer ${token}`;
-  }
-  return {
-    url: `${baseUrl}${cleanPath}`,
-    headers
-  };
+  return { url: cleanPath, headers: {} };
 }
