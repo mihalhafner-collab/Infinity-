@@ -37,7 +37,8 @@ import {
   runNativeVerifiedBackup,
   saveNativeStoreJson,
   subscribeNativeRemoteState,
-  syncNativeCanGoBack
+  syncNativeCanGoBack,
+  triggerNativeMcpSyncNow
 } from '../services/nativeBridge.ts';
 import { validateFirestoreBootConnection } from '../services/firebaseClient.ts';
 import { consumeOAuthReturnScreen } from '../services/gmailService.ts';
@@ -230,8 +231,11 @@ interface AppContextType {
     revision: number;
     lastSyncAt: string | null;
     lastSyncError: string | null;
+    lastActor: string | null;
+    lastAndroidSyncAt: string | null;
   };
   flushPendingAppSync: () => Promise<void>;
+  refreshFromServer: () => Promise<void>;
 }
 
 const STORAGE_KEY = 'eisbaer_app_clean_v1';
@@ -474,13 +478,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     revision: number;
     lastSyncAt: string | null;
     lastSyncError: string | null;
+    lastActor: string | null;
+    lastAndroidSyncAt: string | null;
   }>(() => ({
     pendingSyncCount: pendingSyncCountRef.current,
     syncInFlight: false,
     online: typeof navigator !== 'undefined' ? navigator.onLine : true,
     revision: lastKnownRevisionRef.current,
     lastSyncAt: localStorage.getItem(LAST_SYNC_AT_KEY),
-    lastSyncError: null
+    lastSyncError: null,
+    lastActor: null,
+    lastAndroidSyncAt: null
   }));
 
   const updateSyncMeta = useCallback(
@@ -491,6 +499,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       revision?: number;
       lastSyncAt?: string | null;
       lastSyncError?: string | null;
+      lastActor?: string | null;
+      lastAndroidSyncAt?: string | null;
     }) => {
       if (typeof patch.pendingSyncCount === 'number') {
         pendingSyncCountRef.current = Math.max(0, patch.pendingSyncCount);
@@ -639,7 +649,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           body: JSON.stringify({
             data: snap,
             baseRevision: lastKnownRevisionRef.current,
-            summary
+            summary,
+            source: 'web'
           })
         });
 
@@ -656,6 +667,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
         const info = (await res.json()) as {
           revision: number;
+          lastActor?: string;
+          lastAndroidSyncAt?: string | null;
           merged?: boolean;
           data?: Partial<ReturnType<typeof buildCurrentSnapshot>>;
         };
@@ -670,7 +683,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           online: true,
           revision: typeof info.revision === 'number' ? info.revision : lastKnownRevisionRef.current,
           lastSyncAt: nowIso,
-          lastSyncError: null
+          lastSyncError: null,
+          ...(info.lastActor ? { lastActor: info.lastActor } : {}),
+          ...(info.lastAndroidSyncAt !== undefined
+            ? { lastAndroidSyncAt: info.lastAndroidSyncAt }
+            : {})
         });
 
         if (info.merged && info.data) {
@@ -691,10 +708,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   );
 
   const flushPendingAppSync = useCallback(async () => {
-    if (isNativeAndroidApp()) return;
+    if (isNativeAndroidApp()) {
+      triggerNativeMcpSyncNow();
+      return;
+    }
     const snap = buildCurrentSnapshot();
     const snapJson = JSON.stringify(snap);
-    await pushSnapshotToServer(snap, snapJson, 'Manueller Abgleich aus App');
+    await pushSnapshotToServer(snap, snapJson, 'Manueller Abgleich aus Web-App');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     customers,
@@ -711,6 +731,53 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     taxSettings,
     pushSnapshotToServer
   ]);
+
+  const refreshFromServer = useCallback(async () => {
+    if (isNativeAndroidApp()) {
+      triggerNativeMcpSyncNow();
+      return;
+    }
+    const endpoint = resolveBackendEndpoint('/api/internal/state');
+    if (!endpoint.url) return;
+    updateSyncMeta({ syncInFlight: true });
+    try {
+      const res = await fetch(endpoint.url, {
+        headers: endpoint.headers,
+        credentials: 'include'
+      });
+      if (!res.ok) {
+        updateSyncMeta({
+          syncInFlight: false,
+          lastSyncError: `Abruf fehlgeschlagen (HTTP ${res.status})`
+        });
+        return;
+      }
+      const store = (await res.json()) as {
+        revision: number;
+        lastActor?: string;
+        lastAndroidSyncAt?: string | null;
+        data?: Partial<ReturnType<typeof buildCurrentSnapshot>>;
+      };
+      if (store.data) {
+        applyServerData(store.data);
+      }
+      updateSyncMeta({
+        syncInFlight: false,
+        online: true,
+        revision: typeof store.revision === 'number' ? store.revision : lastKnownRevisionRef.current,
+        lastSyncAt: new Date().toISOString(),
+        lastSyncError: null,
+        lastActor: store.lastActor || null,
+        lastAndroidSyncAt: store.lastAndroidSyncAt || null
+      });
+    } catch {
+      updateSyncMeta({
+        syncInFlight: false,
+        lastSyncError: 'Verbindung zum Server fehlgeschlagen'
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [updateSyncMeta]);
 
   useEffect(() => {
     if (isNativeAndroidApp()) {
@@ -758,13 +825,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             if (!latestRes.ok || cancelled) return;
             const latestStore = (await latestRes.json()) as {
               revision: number;
+              lastActor?: string;
+              lastAndroidSyncAt?: string | null;
               data: Partial<ReturnType<typeof buildCurrentSnapshot>>;
             };
             if (latestStore.revision > lastKnownRevisionRef.current) {
               updateSyncMeta({
                 revision: latestStore.revision,
                 lastSyncAt: new Date().toISOString(),
-                lastSyncError: null
+                lastSyncError: null,
+                lastActor: latestStore.lastActor || null,
+                lastAndroidSyncAt: latestStore.lastAndroidSyncAt || null
               });
               applyServerData(latestStore.data);
             }
@@ -813,6 +884,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }
         const store = (await res.json()) as {
           revision: number;
+          lastActor?: string;
+          lastAndroidSyncAt?: string | null;
           data: Partial<ReturnType<typeof buildCurrentSnapshot>>;
         };
         if (cancelled) return;
@@ -830,13 +903,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
         if (store.revision === 0 && hasLocalData) {
           updateSyncMeta({ pendingSyncCount: Math.max(1, pendingSyncCountRef.current) });
-          await pushSnapshotToServer(localSnap, localJson, 'Initiale Synchronisation aus App');
+          await pushSnapshotToServer(localSnap, localJson, 'Initiale Synchronisation aus Web-App');
         } else if (store.revision > 0 && store.data && pendingSyncCountRef.current === 0) {
           updateSyncMeta({
             revision: store.revision,
             online: true,
             lastSyncAt: new Date().toISOString(),
-            lastSyncError: null
+            lastSyncError: null,
+            lastActor: store.lastActor || null,
+            lastAndroidSyncAt: store.lastAndroidSyncAt || null
           });
           applyServerData(store.data);
         } else {
@@ -846,7 +921,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             revision: store.revision,
             online: true,
             lastSyncAt: new Date().toISOString(),
-            lastSyncError: null
+            lastSyncError: null,
+            lastActor: store.lastActor || null,
+            lastAndroidSyncAt: store.lastAndroidSyncAt || null
           });
         }
 
@@ -2415,7 +2492,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         pixelFrameEnabled,
         setPixelFrameEnabled,
         appSyncStatus,
-        flushPendingAppSync
+        flushPendingAppSync,
+        refreshFromServer
       }}
     >
       {children}

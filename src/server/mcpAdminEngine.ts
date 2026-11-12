@@ -76,8 +76,9 @@ export interface AppDataSnapshot {
 export interface PersistedAppStore {
   revision: number;
   updatedAt: string;
-  lastActor: 'app' | 'mcp' | 'init';
+  lastActor: 'android' | 'web' | 'app' | 'mcp' | 'init';
   lastActionSummary: string;
+  lastAndroidSyncAt: string | null;
   data: AppDataSnapshot;
 }
 
@@ -219,16 +220,28 @@ function normalizePersistedAppStore(raw: Partial<PersistedAppStore> | null | und
       updatedAt: new Date().toISOString(),
       lastActor: 'init',
       lastActionSummary: 'Initialisiert',
+      lastAndroidSyncAt: null,
       data: createEmptySnapshot()
     };
   }
   const actor: PersistedAppStore['lastActor'] =
-    raw.lastActor === 'app' || raw.lastActor === 'mcp' ? raw.lastActor : 'init';
+    raw.lastActor === 'android' ||
+    raw.lastActor === 'web' ||
+    raw.lastActor === 'app' ||
+    raw.lastActor === 'mcp'
+      ? raw.lastActor
+      : 'init';
   return {
     revision: typeof raw.revision === 'number' ? raw.revision : 0,
     updatedAt: raw.updatedAt || new Date().toISOString(),
     lastActor: actor,
     lastActionSummary: raw.lastActionSummary || 'Initialisiert',
+    lastAndroidSyncAt:
+      typeof raw.lastAndroidSyncAt === 'string'
+        ? raw.lastAndroidSyncAt
+        : actor === 'android'
+          ? raw.updatedAt || null
+          : null,
     data: normalizeSnapshot(raw.data)
   };
 }
@@ -293,11 +306,13 @@ export function saveStore(
   summary: string
 ): PersistedAppStore {
   const current = getStore();
+  const nowIso = new Date().toISOString();
   const updated: PersistedAppStore = {
     revision: current.revision + 1,
-    updatedAt: new Date().toISOString(),
+    updatedAt: nowIso,
     lastActor: actor,
     lastActionSummary: summary,
+    lastAndroidSyncAt: actor === 'android' ? nowIso : current.lastAndroidSyncAt,
     data: normalizeSnapshot(nextData)
   };
   cachedStore = updated;
