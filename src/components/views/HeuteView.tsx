@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useApp } from '../../context/AppContext.tsx';
 import { Header } from '../common/Header.tsx';
 import { BottomActionBar } from '../common/BottomActionBar.tsx';
@@ -19,12 +19,25 @@ import {
   Clock,
   AlertTriangle,
   Wrench,
-  MessageSquare
+  MessageSquare,
+  Smartphone,
+  Building2,
+  Phone,
+  Mail,
+  FileText,
+  Search
 } from 'lucide-react';
 import {
   WeatherIconKind,
   useSmartphoneWeather
 } from '../../services/weatherService.ts';
+import {
+  getNativeMcpSyncStatus,
+  isNativeAndroidApp,
+  NativeMcpSyncStatus,
+  subscribeNativeMcpStatus
+} from '../../services/nativeBridge.ts';
+import { calculateGuvSummary } from '../../utils/guvCalculator.ts';
 
 function renderWeatherIcon(kind: WeatherIconKind, size = 18): React.ReactNode {
   switch (kind) {
@@ -47,6 +60,18 @@ function renderWeatherIcon(kind: WeatherIconKind, size = 18): React.ReactNode {
   }
 }
 
+function formatSyncTimeShort(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleString('de-AT', {
+    day: '2-digit',
+    month: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+}
+
 export const HeuteView: React.FC = () => {
   const {
     appointments,
@@ -54,12 +79,34 @@ export const HeuteView: React.FC = () => {
     equipments,
     inquiries,
     customers,
+    invoices,
+    expenses,
+    taxSettings,
+    appSyncStatus,
+    refreshFromServer,
     navigate,
-    setSelectedCustomerId
+    setSelectedCustomerId,
+    setSelectedInvoiceId
   } = useApp();
+
+  const isNative = isNativeAndroidApp();
+  const [nativeSyncStatus, setNativeSyncStatus] = useState<NativeMcpSyncStatus | null>(() =>
+    getNativeMcpSyncStatus()
+  );
+
+  useEffect(() => {
+    if (!isNative) return;
+    setNativeSyncStatus(getNativeMcpSyncStatus());
+    return subscribeNativeMcpStatus((status) => {
+      setNativeSyncStatus(status);
+    });
+  }, [isNative]);
 
   const { weather, refreshWeather } = useSmartphoneWeather();
   const [weatherDetailsOpen, setWeatherDetailsOpen] = useState(false);
+  // In der Web-App standardmäßig aufgeklappt (sofortige Betriebsdaten-Übersicht ohne Pixel), am Pixel zuklappbar
+  const [businessOverviewExpanded, setBusinessOverviewExpanded] = useState<boolean>(() => !isNative);
+  const [contactSearch, setContactSearch] = useState('');
   const [openHoursExpanded, setOpenHoursExpanded] = useState(false);
   const [tasksExpanded, setTasksExpanded] = useState(false);
 
@@ -84,6 +131,42 @@ export const HeuteView: React.FC = () => {
   const openHoursSum = openWork.reduce((sum, w) => sum + (w.hours || 0), 0);
   const openAmountSum = openWork.reduce((sum, w) => sum + (w.accounting_amount || 0), 0);
 
+  // LCR summary
+  const openLcrWork = workRecords.filter((w) => !w.settlement_id && w.is_lcr);
+  const openLcrAmountSum = openLcrWork.reduce((sum, w) => sum + (w.accounting_amount || 0), 0);
+
+  // GuV & Open Invoices for Business Overview
+  const guv = useMemo(
+    () => calculateGuvSummary(invoices, expenses, taxSettings),
+    [invoices, expenses, taxSettings]
+  );
+
+  const openInvoices = useMemo(
+    () =>
+      invoices.filter(
+        (inv) =>
+          !inv.is_storno &&
+          inv.status !== 'cancelled' &&
+          (inv.status === 'unpaid' || inv.status === 'partially_paid')
+      ),
+    [invoices]
+  );
+
+  const activeCustomers = useMemo(() => {
+    const base = customers.filter((c) => c.active !== false);
+    const q = contactSearch.trim().toLowerCase();
+    if (!q) return base;
+    return base.filter((c) => {
+      const addr = `${c.street || ''} ${c.zip || ''} ${c.city || ''}`.toLowerCase();
+      return (
+        c.name.toLowerCase().includes(q) ||
+        (c.phone || '').toLowerCase().includes(q) ||
+        (c.email || '').toLowerCase().includes(q) ||
+        addr.includes(q)
+      );
+    });
+  }, [customers, contactSearch]);
+
   // Due maintenance
   const dueEquipments = equipments.filter((e) => e.status === 'faellig');
   const newInquiries = inquiries.filter((i) => i.status === 'neu');
@@ -97,6 +180,21 @@ export const HeuteView: React.FC = () => {
     setSelectedCustomerId(custId);
     navigate('M03_KUNDEN');
   };
+
+  const handleOpenInvoice = (invId: string) => {
+    setSelectedInvoiceId(invId);
+    navigate('M04_ABRECHNUNG');
+  };
+
+  const activeRevision = isNative
+    ? nativeSyncStatus?.revision ?? appSyncStatus.revision
+    : appSyncStatus.revision;
+  const isSyncBusy = isNative
+    ? Boolean(nativeSyncStatus?.syncInFlight)
+    : appSyncStatus.syncInFlight;
+  const lastPixelSyncFormatted = formatSyncTimeShort(
+    isNative ? nativeSyncStatus?.lastSyncAt : appSyncStatus.lastAndroidSyncAt || appSyncStatus.lastSyncAt
+  );
 
   return (
     <div className="flex-1 min-h-0 flex flex-col h-full bg-[#F8F9FA] overflow-hidden relative">
@@ -195,6 +293,291 @@ export const HeuteView: React.FC = () => {
             </button>
           </div>
         )}
+
+        {/* Parallelbetrieb & Primärquellen-Synchronisationsstatus */}
+        <div className="px-3.5 py-2.5 bg-white border border-slate-200/90 rounded-2xl shadow-2xs flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="w-7 h-7 rounded-lg bg-indigo-50 text-[#3138A0] flex items-center justify-center shrink-0">
+              <Smartphone size={15} />
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="text-xs font-bold text-slate-900">
+                  {isNative
+                    ? 'Primärquelle: Pixel 10 Pro'
+                    : 'Parallel-Datenstand mit Pixel 10 Pro'}
+                </span>
+                <span className="text-[11px] font-semibold text-emerald-700 tabular-nums">
+                  · Rev. #{activeRevision}
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-500 truncate">
+                {isNative && nativeSyncStatus && !nativeSyncStatus.configured ? (
+                  <span>Für Web-Parallelbetrieb in Einstellungen koppeln</span>
+                ) : lastPixelSyncFormatted ? (
+                  <span>Letzter Abgleich: {lastPixelSyncFormatted}</span>
+                ) : (
+                  <span>Echtzeit-Synchronisation aktiv</span>
+                )}
+              </p>
+            </div>
+          </div>
+
+          {isNative && nativeSyncStatus && !nativeSyncStatus.configured ? (
+            <button
+              type="button"
+              onClick={() => navigate('M13_EINSTELLUNGEN')}
+              className="px-2.5 py-1.5 rounded-lg bg-indigo-50 text-[#3138A0] text-xs font-bold shrink-0"
+            >
+              Koppeln
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => void refreshFromServer()}
+              className="p-2 rounded-xl text-slate-600 hover:text-[#3138A0] active:bg-slate-100 shrink-0"
+              title="Datenstand jetzt abgleichen"
+            >
+              <RefreshCw size={15} className={isSyncBusy ? 'animate-spin text-[#3138A0]' : ''} />
+            </button>
+          )}
+        </div>
+
+        {/* Wichtigste Betriebsdaten & Notfall-Übersicht (Web-App sofort offen, am Pixel aufklappbar) */}
+        <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-2xs">
+          <button
+            type="button"
+            onClick={() => setBusinessOverviewExpanded((prev) => !prev)}
+            className="w-full min-h-[54px] px-3.5 py-3 flex items-center justify-between hover:bg-slate-50 active:bg-slate-100/70 transition-colors text-left"
+          >
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-9 h-9 rounded-xl bg-indigo-50 flex items-center justify-center text-[#3138A0] shrink-0">
+                <Building2 size={18} />
+              </div>
+              <div className="min-w-0">
+                <span className="text-sm font-bold text-slate-950 block leading-tight">
+                  Wichtigste Betriebsdaten & Kontakte
+                </span>
+                <span className="text-xs text-slate-600 tabular-nums truncate block">
+                  Einnahmen {guv.totalCashIncome.toFixed(0)} € · {openInvoices.length} offene Rg. ·{' '}
+                  {customers.filter((c) => c.active !== false).length} Kunden
+                </span>
+              </div>
+            </div>
+            <div className="shrink-0 ml-2">
+              {businessOverviewExpanded ? (
+                <ChevronDown size={18} className="text-slate-500" />
+              ) : (
+                <ChevronRight size={18} className="text-slate-500" />
+              )}
+            </div>
+          </button>
+
+          {businessOverviewExpanded && (
+            <div className="p-3.5 bg-slate-50/60 border-t border-slate-100 space-y-3.5">
+              {/* 4 Kern-Kennzahlen */}
+              <div className="grid grid-cols-2 gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => navigate('M20_UMSAETZE_KORREKTUREN')}
+                  className="p-3 bg-white border border-slate-200/90 rounded-xl text-left hover:border-[#3138A0] transition-colors"
+                >
+                  <span className="text-[11px] font-semibold text-slate-500 block">
+                    Einnahmen {guv.year} (bezahlt)
+                  </span>
+                  <span className="text-base font-bold text-emerald-700 tabular-nums mt-0.5 block">
+                    {guv.totalCashIncome.toFixed(2)} €
+                  </span>
+                  <span className="text-[11px] text-slate-500 tabular-nums">
+                    KU-Grenze: {guv.kuLimitUsedPercent.toFixed(0)}%
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => navigate('M04_ABRECHNUNG')}
+                  className="p-3 bg-white border border-slate-200/90 rounded-xl text-left hover:border-[#3138A0] transition-colors"
+                >
+                  <span className="text-[11px] font-semibold text-slate-500 block">
+                    Offene Rechnungen
+                  </span>
+                  <span className="text-base font-bold text-[#B4470B] tabular-nums mt-0.5 block">
+                    {guv.openReceivablesTotal.toFixed(2)} €
+                  </span>
+                  <span className="text-[11px] text-slate-500 tabular-nums">
+                    {openInvoices.length} {openInvoices.length === 1 ? 'Rechnung' : 'Rechnungen'} offen
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => navigate('M04_ABRECHNUNG')}
+                  className="p-3 bg-white border border-slate-200/90 rounded-xl text-left hover:border-[#3138A0] transition-colors"
+                >
+                  <span className="text-[11px] font-semibold text-slate-500 block">
+                    Offene Arbeitsstunden
+                  </span>
+                  <span className="text-base font-bold text-slate-900 tabular-nums mt-0.5 block">
+                    {openHoursSum.toFixed(1)} Std. ({openAmountSum.toFixed(0)} €)
+                  </span>
+                  <span className="text-[11px] text-slate-500 tabular-nums">
+                    {openLcrWork.length > 0
+                      ? `+ L.C.R.: ${openLcrAmountSum.toFixed(0)} €`
+                      : `${openWork.length} Einträge unabgerechnet`}
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => navigate('M20_UMSAETZE_KORREKTUREN')}
+                  className="p-3 bg-white border border-slate-200/90 rounded-xl text-left hover:border-[#3138A0] transition-colors"
+                >
+                  <span className="text-[11px] font-semibold text-slate-500 block">
+                    Vorl. Gewinn ({guv.year})
+                  </span>
+                  <span className="text-base font-bold text-[#3138A0] tabular-nums mt-0.5 block">
+                    {guv.activeResult.preliminaryProfit.toFixed(2)} €
+                  </span>
+                  <span className="text-[11px] text-slate-500 truncate block">
+                    {guv.activeResult.shortTitle}
+                  </span>
+                </button>
+              </div>
+
+              {/* Offene Rechnungen Schnellzugriff */}
+              {openInvoices.length > 0 && (
+                <div className="bg-white border border-slate-200/90 rounded-xl p-3 space-y-2">
+                  <div className="flex items-center justify-between text-xs font-bold text-slate-800">
+                    <span className="flex items-center gap-1.5">
+                      <FileText size={14} className="text-[#B4470B]" />
+                      Offene Rechnungen ({openInvoices.length})
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => navigate('M04_ABRECHNUNG')}
+                      className="text-[#3138A0] hover:underline"
+                    >
+                      Alle öffnen →
+                    </button>
+                  </div>
+                  <div className="divide-y divide-slate-100">
+                    {openInvoices.slice(0, 5).map((inv) => {
+                      const cust = customers.find((c) => c.id === inv.customer_id);
+                      const paidSum = (inv.payments || []).reduce(
+                        (s, p) => s + (p.amount || 0),
+                        0
+                      );
+                      const remaining = Math.max(0, (inv.total_amount || 0) - paidSum);
+                      return (
+                        <button
+                          key={inv.id}
+                          type="button"
+                          onClick={() => handleOpenInvoice(inv.id)}
+                          className="w-full py-2 flex items-center justify-between gap-2 text-left hover:bg-slate-50 rounded-lg px-1 transition-colors"
+                        >
+                          <div className="min-w-0">
+                            <span className="text-xs font-bold text-slate-900 block truncate">
+                              {inv.invoice_number} · {cust?.name || inv.billing_customer_name || 'Kunde'}
+                            </span>
+                            <span className="text-[11px] text-slate-500 tabular-nums">
+                              Datum: {inv.issue_date}
+                              {inv.due_date ? ` · Fällig: ${inv.due_date}` : ''}
+                            </span>
+                          </div>
+                          <span className="text-xs font-bold text-[#B4470B] tabular-nums shrink-0">
+                            {remaining.toFixed(2)} €
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Wichtige Kunden- & Notfallkontakte (Schnellzugriff ohne Pixel) */}
+              <div className="bg-white border border-slate-200/90 rounded-xl p-3 space-y-2.5">
+                <div className="flex items-center justify-between text-xs font-bold text-slate-800">
+                  <span>Kunden- & Kontaktdaten ({activeCustomers.length})</span>
+                  <button
+                    type="button"
+                    onClick={() => navigate('M03_KUNDEN')}
+                    className="text-[#3138A0] hover:underline"
+                  >
+                    Kundenkartei →
+                  </button>
+                </div>
+
+                {customers.length > 3 && (
+                  <div className="relative">
+                    <Search
+                      size={14}
+                      className="text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2"
+                    />
+                    <input
+                      type="text"
+                      value={contactSearch}
+                      onChange={(e) => setContactSearch(e.target.value)}
+                      placeholder="Kunde, Telefon oder Adresse suchen…"
+                      className="w-full pl-8 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg text-slate-900 focus:outline-none focus:border-[#3138A0]"
+                    />
+                  </div>
+                )}
+
+                {activeCustomers.length === 0 ? (
+                  <p className="text-xs text-slate-500 py-1 italic">
+                    Keine passenden Kundendaten gefunden.
+                  </p>
+                ) : (
+                  <div className="divide-y divide-slate-100 max-h-56 overflow-y-auto">
+                    {activeCustomers.slice(0, 8).map((c) => {
+                      const formattedAddress = [c.street, [c.zip, c.city].filter(Boolean).join(' ')]
+                        .filter(Boolean)
+                        .join(', ');
+                      return (
+                        <div
+                          key={c.id}
+                          className="py-2 flex items-center justify-between gap-2 text-xs"
+                        >
+                          <button
+                            type="button"
+                            onClick={() => handleOpenCustomer(c.id)}
+                            className="min-w-0 text-left flex-1 hover:text-[#3138A0]"
+                          >
+                            <span className="font-bold text-slate-900 block truncate">{c.name}</span>
+                            <span className="text-[11px] text-slate-500 block truncate">
+                              {[c.phone, formattedAddress].filter(Boolean).join(' · ') ||
+                                'Keine Kontaktdaten'}
+                            </span>
+                          </button>
+                          <div className="flex items-center gap-1 shrink-0">
+                            {c.phone && (
+                              <a
+                                href={`tel:${c.phone.replace(/\s+/g, '')}`}
+                                className="p-1.5 rounded-lg bg-slate-100 text-slate-700 hover:bg-indigo-50 hover:text-[#3138A0]"
+                                title={`Anrufen: ${c.phone}`}
+                              >
+                                <Phone size={13} />
+                              </a>
+                            )}
+                            {c.email && (
+                              <a
+                                href={`mailto:${c.email}`}
+                                className="p-1.5 rounded-lg bg-slate-100 text-slate-700 hover:bg-indigo-50 hover:text-[#3138A0]"
+                                title={`E-Mail: ${c.email}`}
+                              >
+                                <Mail size={13} />
+                              </a>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
 
         {/* Dein Tag / Tagestour Teaser */}
         <div className="flex items-center justify-between text-sm font-semibold px-0.5">

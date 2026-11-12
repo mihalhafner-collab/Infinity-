@@ -412,24 +412,21 @@ class NativeMcpSyncManager(
             val localRaw = storeManager.loadAppState()
             val hasLocalNonEmpty = hasAnyRecords(localRaw)
 
-            if (queuedAtStart > 0 && localRaw != null) {
-                val pushed = pushLocalSnapshot(creds, localRaw, lastKnownRevision, "Pixel 10 Pro ($reason)")
-                val newRev = pushed.optInt("revision", remoteRev)
+            if ((queuedAtStart > 0 || (lastKnownRevision == 0 && hasLocalNonEmpty)) && localRaw != null) {
+                val pushSummary = if (lastKnownRevision == 0 && queuedAtStart == 0) {
+                    "Erstsynchronisation von Primärquelle (Google Pixel 10 Pro)"
+                } else {
+                    "Primärquelle Pixel 10 Pro ($reason)"
+                }
+                val pushed = pushLocalSnapshot(creds, localRaw, lastKnownRevision, pushSummary)
+                val newRev = pushed.optInt("revision", maxOf(1, remoteRev))
                 val mergedData = pushed.optJSONObject("data")
                 if (pushed.optBoolean("merged", false) && mergedData != null) {
                     val mergedStr = mergedData.toString()
                     storeManager.saveAppStateFromRemote(mergedStr)
-                    onRemoteStateApplied(mergedStr, newRev, "Offline-Änderungen zusammengeführt")
+                    onRemoteStateApplied(mergedStr, newRev, "Primärquelle Pixel 10 Pro abgeglichen")
                 }
                 acknowledgeSyncedMutations(queuedAtStart, newRev)
-            } else if (remoteRev == 0 && hasLocalNonEmpty && localRaw != null) {
-                val pushed = pushLocalSnapshot(
-                    creds,
-                    localRaw,
-                    0,
-                    "Erstsynchronisation vom Google Pixel 10 Pro"
-                )
-                acknowledgeSyncedMutations(queuedAtStart, pushed.optInt("revision", 1))
             } else if (remoteData != null && (remoteRev > lastKnownRevision || localRaw == null)) {
                 val remoteStr = remoteData.toString()
                 storeManager.saveAppStateFromRemote(remoteStr)
@@ -605,6 +602,8 @@ class NativeMcpSyncManager(
             put("data", JSONObject(localSnapshotJson))
             put("baseRevision", baseRevision)
             put("summary", summary)
+            put("source", "android")
+            put("isPrimarySource", true)
         }
         val payloadBytes = bodyObj.toString().toByteArray(Charsets.UTF_8)
 

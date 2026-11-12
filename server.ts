@@ -194,6 +194,7 @@ function isTrustedOwnerBrowserContext(req: Request): boolean {
     ?.trim();
   const effectiveHost = forwardedHost || req.get('host') || '';
   const secFetchSite = String(req.headers['sec-fetch-site'] || '').toLowerCase();
+  const secFetchMode = String(req.headers['sec-fetch-mode'] || '').toLowerCase();
   const origin = String(req.headers.origin || '').toLowerCase();
 
   // Standalone Android WebView must always authenticate via Bearer token from Android Keystore
@@ -201,10 +202,13 @@ function isTrustedOwnerBrowserContext(req: Request): boolean {
     return false;
   }
 
-  // In AI Studio preview (protected by Google Workspace/Account proxy) or local loopback browser
+  // Same-origin Web App browser access (Preview, Published Cloud Run Web App, or localhost)
   if (
-    (isPreviewEnvironment || isLocalHostname(effectiveHost)) &&
-    (secFetchSite === 'same-origin' || secFetchSite === 'same-site' || isLocalHostname(effectiveHost))
+    secFetchSite === 'same-origin' ||
+    secFetchSite === 'same-site' ||
+    (req.method === 'GET' && secFetchMode === 'navigate') ||
+    isPreviewEnvironment ||
+    isLocalHostname(effectiveHost)
   ) {
     return true;
   }
@@ -296,6 +300,61 @@ function mergeConcurrentOfflineSnapshot(
     expenses: mergeArrayById(serverSnap.expenses, clientSnap.expenses),
     taxSettings: clientSnap.taxSettings || serverSnap.taxSettings
   };
+}
+
+/**
+ * Primärquellen-Merge: Wenn die Android-App (Pixel 10 Pro) nach einer Offline-Phase oder
+ * bei der Erstsynchronisation (baseRevision === 0) mit einem bereits befüllten Server
+ * synchronisiert, hat der Datenstand des Pixel 10 Pro bei Konflikten immer Vorrang.
+ */
+function mergeArrayWithAndroidPrimary<T extends { id: string; updated_at?: string }>(
+  serverArr: T[],
+  androidArr: T[]
+): T[] {
+  const byId = new Map<string, T>();
+  for (const s of serverArr) {
+    byId.set(s.id, s);
+  }
+  for (const a of androidArr) {
+    byId.set(a.id, a);
+  }
+  return Array.from(byId.values());
+}
+
+function mergeSnapshotsWithAndroidPrimary(
+  serverSnap: AppDataSnapshot,
+  androidSnap: AppDataSnapshot
+): AppDataSnapshot {
+  return {
+    customers: mergeArrayWithAndroidPrimary(serverSnap.customers, androidSnap.customers),
+    properties: mergeArrayWithAndroidPrimary(serverSnap.properties, androidSnap.properties),
+    appointments: mergeArrayWithAndroidPrimary(serverSnap.appointments, androidSnap.appointments),
+    workRecords: mergeArrayWithAndroidPrimary(serverSnap.workRecords, androidSnap.workRecords),
+    invoices: mergeArrayWithAndroidPrimary(serverSnap.invoices, androidSnap.invoices),
+    inquiries: mergeArrayWithAndroidPrimary(serverSnap.inquiries, androidSnap.inquiries),
+    offers: mergeArrayWithAndroidPrimary(serverSnap.offers, androidSnap.offers),
+    orders: mergeArrayWithAndroidPrimary(serverSnap.orders, androidSnap.orders),
+    equipments: mergeArrayWithAndroidPrimary(serverSnap.equipments, androidSnap.equipments),
+    materials: mergeArrayWithAndroidPrimary(serverSnap.materials, androidSnap.materials),
+    expenses: mergeArrayWithAndroidPrimary(serverSnap.expenses, androidSnap.expenses),
+    taxSettings: androidSnap.taxSettings || serverSnap.taxSettings
+  };
+}
+
+function hasSnapshotAnyRecords(snap: AppDataSnapshot): boolean {
+  return (
+    (snap.customers?.length || 0) > 0 ||
+    (snap.properties?.length || 0) > 0 ||
+    (snap.appointments?.length || 0) > 0 ||
+    (snap.workRecords?.length || 0) > 0 ||
+    (snap.invoices?.length || 0) > 0 ||
+    (snap.inquiries?.length || 0) > 0 ||
+    (snap.offers?.length || 0) > 0 ||
+    (snap.orders?.length || 0) > 0 ||
+    (snap.equipments?.length || 0) > 0 ||
+    (snap.materials?.length || 0) > 0 ||
+    (snap.expenses?.length || 0) > 0
+  );
 }
 
 interface JsonRpcRequest {
@@ -789,6 +848,8 @@ async function startServer() {
       data?: AppDataSnapshot;
       summary?: string;
       baseRevision?: number;
+      source?: 'android' | 'web';
+      isPrimarySource?: boolean;
     };
     if (!body || !body.data) {
       res.status(400).json({ error: 'Missing state data' });
@@ -796,25 +857,73 @@ async function startServer() {
     }
 
     const devHeader = req.headers['x-device-model'];
-    if (typeof devHeader === 'string' && devHeader.trim()) {
-      recordAndroidSyncActivity('push', devHeader);
+    const authKind = (req as Request & { authKind?: string }).authKind;
+    const isAndroidPrimary =
+      (typeof devHeader === 'string' && devHeader.trim().length > 0) ||
+      body.source === 'android' ||
+      body.isPrimarySource === true ||
+      authKind === 'android_device';
+
+    if (isAndroidPrimary) {
+      recordAndroidSyncActivity(
+        'push',
+        typeof devHeader === 'string' && devHeader.trim() ? devHeader : 'Google Pixel 10 Pro'
+      );
     }
 
     const current = getStore();
-    const shouldMerge =
-      typeof body.baseRevision === 'number' &&
-      body.baseRevision > 0 &&
-      body.baseRevision < current.revision &&
-      current.lastActor === 'mcp';
+    const baseRev = typeof body.baseRevision === 'number' ? body.baseRevision : 0;
 
-    const nextSnapshot = shouldMerge
-      ? mergeConcurrentOfflineSnapshot(current.data, body.data)
-      : body.data;
+    // Schutz der Primärquelle (Pixel 10 Pro): Ein leerer Web-Browser-Tab mit baseRevision 0
+    // darf niemals einen bereits vorhandenen Server-/Android-Datenstand überschreiben.
+    if (
+      !isAndroidPrimary &&
+      current.revision > 0 &&
+      baseRev === 0 &&
+      !hasSnapshotAnyRecords(body.data) &&
+      hasSnapshotAnyRecords(current.data)
+    ) {
+      res.json({
+        revision: current.revision,
+        updatedAt: current.updatedAt,
+        lastActor: current.lastActor,
+        lastAndroidSyncAt: current.lastAndroidSyncAt,
+        merged: true,
+        data: current.data
+      });
+      return;
+    }
 
-    const saved = saveStore(nextSnapshot, 'app', body.summary || 'App-Synchronisation');
+    let shouldMerge = false;
+    let nextSnapshot: AppDataSnapshot = body.data;
+
+    if (isAndroidPrimary) {
+      if (current.revision > 0 && baseRev === 0 && hasSnapshotAnyRecords(current.data)) {
+        shouldMerge = true;
+        nextSnapshot = mergeSnapshotsWithAndroidPrimary(current.data, body.data);
+      } else if (
+        baseRev > 0 &&
+        baseRev < current.revision &&
+        (current.lastActor === 'mcp' || current.lastActor === 'web')
+      ) {
+        shouldMerge = true;
+        nextSnapshot = mergeSnapshotsWithAndroidPrimary(current.data, body.data);
+      }
+    } else if (baseRev > 0 && baseRev < current.revision) {
+      shouldMerge = true;
+      nextSnapshot = mergeConcurrentOfflineSnapshot(current.data, body.data);
+    }
+
+    const actor = isAndroidPrimary ? 'android' : 'web';
+    const defaultSummary = isAndroidPrimary
+      ? 'Synchronisation von Primärquelle (Pixel 10 Pro)'
+      : 'Synchronisation aus Web-App';
+    const saved = saveStore(nextSnapshot, actor, body.summary || defaultSummary);
     res.json({
       revision: saved.revision,
       updatedAt: saved.updatedAt,
+      lastActor: saved.lastActor,
+      lastAndroidSyncAt: saved.lastAndroidSyncAt,
       merged: shouldMerge,
       ...(shouldMerge ? { data: saved.data } : {})
     });
@@ -838,6 +947,7 @@ async function startServer() {
         revision: current.revision,
         updatedAt: current.updatedAt,
         lastActor: current.lastActor,
+        lastAndroidSyncAt: current.lastAndroidSyncAt,
         summary: current.lastActionSummary
       })}\n\n`
     );
@@ -848,6 +958,7 @@ async function startServer() {
           revision: updated.revision,
           updatedAt: updated.updatedAt,
           lastActor: updated.lastActor,
+          lastAndroidSyncAt: updated.lastAndroidSyncAt,
           summary: updated.lastActionSummary
         })}\n\n`
       );
@@ -886,6 +997,7 @@ async function startServer() {
       totalCalls: cfg.totalCalls,
       revision: store.revision,
       lastActor: store.lastActor,
+      lastAndroidSyncAt: store.lastAndroidSyncAt,
       lastActionSummary: store.lastActionSummary,
       toolCount: MCP_TOOLS.length,
       isPreviewEnvironment,
