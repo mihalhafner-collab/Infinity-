@@ -1,0 +1,1830 @@
+INFINITY: DIREKTER PIXEL-TUNNEL NACH GARTENPIRAT-VORBILD
+Recherche und konkrete Übergabe an AI Studio, 13.11.2026
+
+STATUS
+Nur Quellcode und vorhandene Statusmeldungen gelesen. Nichts implementiert, installiert, bereitgestellt oder an Betriebsdaten geändert. Diese Datei ist eine Übergabe mit Referenzcode, kein fertiges oder kompilierbares Infinity-Modul.
+
+QUELLSTÄNDE
+Gartenpirat: mihalhafner-collab/Gartenpirat-
+Korrekte Repository-Adresse: https://github.com/mihalhafner-collab/Gartenpirat-
+Referenzcommit: 8101f3c395c9770005727bc37fc2f2057fca9130
+Dieser Commit wurde von der installierten Haus-&-Garten-App (at.hausgarten.service, 1.71.0, Build 158) in der Statusabfrage gemeldet und ist im Repository vorhanden.
+Zusätzlich main geprüft: 6f10b5b3f29e1e02117e88c6111508cc9bccbd9b. Wire, Config, Service, BootReceiver und AndroidManifest sind dort blob-identisch; Activity und Fachwerkzeuge haben weitere Änderungen.
+Infinity-Abgleich: https://github.com/mihalhafner-collab/Infinity-
+Geprüfter Quellstand: 440005f9d7d1bc4eb13f6a5a39aaab0bab1030f1. Das ist kein Nachweis des derzeit installierten oder veröffentlichten Infinity-Builds.
+
+1. WAS DIE ALTE VERBINDUNG TATSÄCHLICH MACHT
+
+- Nativer Android-Foreground-Service mit Benachrichtigung und Stoppschalter.
+- Ausgehendes HTTPS zu api.openai.com. Zuerst Prüfung der Tunnel-ID, dann Long-Polling, danach Antworten an den Tunnel.
+- Feste Tunnel-ID, optionaler Organisationsheader, Runtime-Schlüssel als Bearer.
+- Kein eigener OAuth-Login und kein Refresh-Token-Flow in diesem Android-Tunnelpfad.
+- Runtime-Schlüssel mit AES/GCM geschützt; der AES-Schlüssel bleibt im Android Keystore.
+- Verbindungsfreigabe und Schreibfreigabe getrennt.
+- Netzfehler: erneute Verbindung mit Wartezeit. Rate Limit: Retry-After beachten.
+- Authentifizierungsfehler: Dienst deaktiviert den betroffenen Zugang und meldet den Grund. Es findet keine automatische Schlüsselreparatur statt.
+- BootReceiver versucht den Wiederstart nach Neustart und App-Update, sofern bereits eingerichtet/freigegeben. Android kann den Start einschränken; das wird angezeigt.
+- Ein Anfrage-Timeout ist kein Ablaufdatum des Tunnels.
+- Im Android-Konfigurationscode gibt es keine eigene Ablaufzeit der gespeicherten Zugangsdaten. Daraus folgt NICHT, dass OpenAI die Berechtigung niemals widerruft oder ablaufen lässt.
+- Es wird weder ein zusätzlicher Desktop-Tunnel noch ein Cloud-Run-Dienst für diesen konkreten Direktzugriff benötigt. Das Pixel muss erreichbar sein.
+
+2. WIE AI STUDIO DIE VORLAGE ERHÄLT
+
+Diese Datei als Referenzmaterial im Infinity-Projekt bereitstellen oder ihren Inhalt in den Projektkontext übernehmen. Die fünf Tunnelklassen und das Manifest stehen unten vollständig; ein Zugriff auf das alte Repository ist für deren Lesen dadurch nicht nötig.
+Die Originaldateien sind Referenzen. Sie nicht blind in das Projekt kopieren: Sie hängen teilweise an Gartenpirat-Klassen und dessen Datenmodell.
+Kein automatischer Zugriff von AI Studio auf das Pixel, ChatGPT-Einstellungen oder OpenAI-Zugangsdaten ist damit verbunden.
+Die aktuelle Infinity-Projektfassung ist für die Umsetzung maßgeblich; vor Änderungen Abweichungen vom hier geprüften Commit feststellen.
+
+3. KONKRETER IMPLEMENTIERUNGSAUFTRAG
+
+A. Native Transportebene übernehmen
+Nutze PixelTunnelWire, PixelTunnelConfig, PixelTunnelService, PixelTunnelBootReceiver und PixelTunnelActivity als Vorlage.
+Passe Paket, Anzeigenamen, Intent-Aktionen, Benachrichtigungskanal, Preferences und Keystore-Alias an Infinity an. Bestehende Infinity-Paketkennung und APK-Signatur erhalten; eine reine Namensänderung erfordert keinen Paketwechsel.
+Verwende eine eigene Infinity-Tunnel-ID und dafür berechtigte Zugangsdaten. Nicht die laufende Haus-&-Garten-Verbindung umwidmen.
+Prüfe den aus der funktionierenden App übernommenen Tunnel-Protokollpfad gegen die aktuell verfügbare OpenAI-Tunnel-Anbindung. Keine Ersatzendpunkte erfinden.
+
+B. Gartenpirat-Abhängigkeiten ersetzen
+PixelTunnelWire ist derzeit direkt an PixelMcpReadTools gekoppelt (tools.rpc). Ersetze diese Kopplung durch einen kleinen Infinity-Dispatcher, der dieselben MCP-JSON-RPC-Anfragen verarbeitet.
+PixelTunnelService hängt an PixelLocalStore, PixelOwnerAccess, RevierApplication und RestoreStartupGuard. Diese Teile anhand der tatsächlich vorhandenen Infinity-Speicherung/Startlogik ersetzen; keine alte SQLite-Datenbank oder alte Oberfläche importieren.
+PixelTunnelConfig ist als Mechanismus übertragbar, aber die Namen für privaten Speicher müssen Infinity gehören.
+PixelTunnelActivity enthält ebenfalls Gartenpirat-spezifische Darstellung/Statuszugriffe. Einrichtungsfelder, Prüfungen und Start/Stop übernehmen; vorhandene Infinity-Oberfläche beibehalten.
+
+C. An echte Infinity-Daten anbinden
+Infinity besitzt NativeStoreManager mit einer nativen JSON-Datei, keine Gartenpirat-SQLite-Struktur.
+NativeMcpSyncManager kommuniziert mit dem Infinity-Webserver über /api/internal/state und /api/internal/events; das ist ein anderer Verbindungsweg als der direkte OpenAI-Tunnel.
+Der Manager hängt bisher an MainActivity. Der neue Direktzugriff muss auch bei nicht sichtbarer Oberfläche funktionieren.
+Implementiere einen gemeinsamen Lese-Prüf-Ändere-Speichere-Pfad für Oberfläche, MCP und vorhandene Synchronisierung.
+Revisionen prüfen; einen veralteten vollständigen WebView-Snapshot nicht über neuere MCP-Änderungen speichern.
+Schreibauftrag und dauerhaften Wiederholungsbeleg zusammen sicher speichern. Gleiche request_id mit identischem Inhalt liefert dasselbe Ergebnis; andere Daten unter derselben ID müssen abgewiesen werden. Das flüchtige 128-Antworten-Cache des alten Transports reicht dafür nicht.
+Fehlgeschlagenes Speichern als Fehler zurückgeben. Erst nach bestätigtem Speichern Erfolg melden.
+Oberfläche nach Änderungen benachrichtigen; lokale Speicherung und Cloud-Abgleich getrennt ausweisen.
+Die Fachregeln aus Infinity src/server/mcpAdminEngine.ts sind Referenz für das Verhalten, laufen aber nicht automatisch als Kotlin auf Android. Keine zweite abweichende Rechnungs-/Zahlungslogik schaffen. Bei einer Funktion ohne sicheren lokalen Schreibpfad zunächst ausdrücklich nicht verfügbar melden, statt den falschen Bestand zu verändern.
+
+D. Zugangsdaten nativ halten
+Einmalige private Einrichtung mit Tunnel-ID, Organisation (wenn erforderlich) und Runtime-Schlüssel. Native Schlüsselverwaltung nach Gartenpirat-Vorbild.
+Infinity gibt in der geprüften Fassung über getStatusJson()/getRevealedMcpToken Geräteschlüssel an JavaScript weiter. Den OpenAI-Runtime-Schlüssel NICHT in diese vorhandenen Felder oder WebView-Wege einspeisen.
+Statusmeldungen dürfen nur eingerichtet/verbunden/Fehler und sichere Metadaten enthalten.
+Schreibzugriff benötigt eine ausdrückliche, jederzeit abschaltbare Freigabe am Gerät. Jede Schreiboperation muss diese Freigabe prüfen.
+
+E. Android-Lebenszyklus integrieren
+Service, Receiver und benötigte Rechte im Infinity-Manifest ergänzen. Die Referenz verwendet foregroundServiceType=specialUse mit begründetem Subtype.
+Für Infinitys konkrete Ziel-Androidversion und Verteilung prüfen, ob dieser Einsatz zulässig und funktionsfähig ist; nicht bloß einen Typ setzen, um Plattformlimits zu umgehen.
+Start durch den Nutzer, laufende Benachrichtigung, Stoppschalter, Netzwechsel, Wiederanlauf nach Neustart/Update und ehrliche Fehleranzeige umsetzen. Android-Einschränkungen und ein ausgeschaltetes Pixel nicht als verbunden melden.
+
+F. MCP-Funktionsumfang
+Zuerst den Pfad Ende-zu-Ende mit Status, Betriebsübersicht, Kundensuche, Lesen eines Kunden und einem synthetischen Kundenschreibvorgang nachweisen.
+Dann die tatsächlich vorhandenen Infinity-Fachfunktionen gezielt verfügbar machen, jeweils mit passendem Eingabeschema, Fehlern, Rechteprüfung und korrekten readOnlyHint-Angaben.
+Nicht die 155/169 Werkzeuge der alten App unverändert registrieren: Namen und Umfang müssen zum implementierten Infinity-Verhalten passen.
+Die Statusantwort soll Infinity, Paket, Appversion, Datenbestandskennung und Revision eindeutig ausweisen; keine geheimen Zugangswerte.
+MCP initialize, ping, tools/list, tools/call und Benachrichtigungen sauber behandeln. Der alte Dispatcher ist in PixelMcpReadTools.kt ab Zeile 384 nachzulesen.
+
+G. Bauen und Verbinden
+Die geprüfte Infinity-Pipeline baut aus dem Repository-Root: Web-Assets erzeugen, scripts/prepare-android-assets.mjs, Android-APK. Den duplizierten Unterordner Infinity/ nicht ungeprüft als aktive Codebasis behandeln.
+Vor APK-Update vorhandene Signatur prüfen. In .github/workflows/build-apk.yml gibt es ohne hinterlegtes Keystore-Secret einen Fallback, der einen neuen Schlüssel erzeugt. Ob das Secret gesetzt ist, wurde NICHT geprüft. Kein neuer Signierschlüssel und keine Deinstallation als beiläufiger Workaround.
+OpenAI-Tunnel und Runtime-Berechtigung müssen im passenden Konto bereitgestellt und danach im nativen Infinity-Einrichtungsdialog eingegeben werden. Diese Referenzklassen erzeugen den Tunnel nicht selbst.
+Die ChatGPT-Verbindung anschließend dem Infinity-Tunnel zuordnen und die Werkzeuge neu erkennen lassen. Eine installierte APK allein richtet diesen Konto-Schritt nicht ein.
+
+4. ABNAHME
+
+- Status identifiziert eindeutig Infinity und den richtigen Datenbestand.
+- Bereits vorhandenen Kunden Michael Hafner lesend prüfen; bei fehlendem Treffer Quelle/Stand untersuchen, nicht automatisch anlegen.
+- Isolierte synthetische Änderung anlegen, rücklesen, ändern, rücklesen und wieder entfernen.
+- Derselbe Schreibauftrag nach Antwortverlust und nach Prozessneustart erzeugt keinen zweiten Datensatz.
+- Bei gleichzeitiger UI-Änderung wird ein veralteter Stand erkannt und nicht blind gespeichert.
+- Schreiben abgeschaltet: Lesen funktioniert, Schreiben wird abgelehnt.
+- Ungültiger/widerrufener Schlüssel: klarer Authfehler; keine Endlosschleife und keine falsche Erfolgsmeldung.
+- Bildschirm aus, Activity geschlossen, WLAN/Mobilfunk-Wechsel, Flugmodus-Rückkehr, App-Update und Geräteneustart prüfen.
+- Lokale Änderung bleibt nach Neustart erhalten und wird nicht durch einen älteren Cloud-/WebView-Snapshot überschrieben.
+- Testprotokoll unterscheidet Code gebaut, APK installiert, Tunnel erreichbar, echte Fachfunktion geprüft.
+- Keine Produktivdaten für die Abnahme verändern; Testdaten isolieren.
+
+5. WEITERE QUELLEN
+
+Gartenpirat-MCP-Dispatcher:
+https://github.com/mihalhafner-collab/Gartenpirat-/blob/8101f3c395c9770005727bc37fc2f2057fca9130/struktur-neu/android/app/src/main/java/at/hausgarten/service/PixelMcpReadTools.kt
+Dauerhafte fachliche Schreibbelege und Transaktion, PixelLocalStore ab Zeile 880:
+https://github.com/mihalhafner-collab/Gartenpirat-/blob/8101f3c395c9770005727bc37fc2f2057fca9130/struktur-neu/android/app/src/main/java/at/hausgarten/service/PixelLocalStore.kt#L880
+
+Infinity-Anpassungspunkte:
+https://github.com/mihalhafner-collab/Infinity-/blob/440005f9d7d1bc4eb13f6a5a39aaab0bab1030f1/android/app/src/main/java/at/hafner/gruenraum/storage/NativeStoreManager.kt
+https://github.com/mihalhafner-collab/Infinity-/blob/440005f9d7d1bc4eb13f6a5a39aaab0bab1030f1/android/app/src/main/java/at/hafner/gruenraum/sync/NativeMcpSyncManager.kt
+https://github.com/mihalhafner-collab/Infinity-/blob/440005f9d7d1bc4eb13f6a5a39aaab0bab1030f1/src/services/nativeBridge.ts
+https://github.com/mihalhafner-collab/Infinity-/blob/440005f9d7d1bc4eb13f6a5a39aaab0bab1030f1/src/server/mcpAdminEngine.ts
+https://github.com/mihalhafner-collab/Infinity-/blob/440005f9d7d1bc4eb13f6a5a39aaab0bab1030f1/.github/workflows/build-apk.yml
+
+Offizielle Protokoll-/Kontoeinrichtung:
+https://developers.openai.com/api/docs/guides/secure-mcp-tunnels
+https://developers.openai.com/api/docs/guides/custom-mcp-server
+
+ANHANG: VOLLSTÄNDIGER ORIGINAL-REFERENZCODE
+Die folgenden Dateien sind unverändert aus dem oben festgelegten Gartenpirat-Commit.
+Sie dokumentieren dessen Implementierung. Sie erteilen keine Befugnis für Datenänderungen
+und übertragen weder das alte UI-Konzept noch dessen Geschäfts-/Speichermodell auf Infinity.
+
+
+===== DATEI: struktur-neu/android/app/src/main/java/at/hausgarten/service/PixelTunnelConfig.kt =====
+Quelle: https://github.com/mihalhafner-collab/Gartenpirat-/blob/8101f3c395c9770005727bc37fc2f2057fca9130/struktur-neu/android/app/src/main/java/at/hausgarten/service/PixelTunnelConfig.kt
+Git-Blob-SHA: 1e705269248aef037bb7a4156c9cb185c56ba01a
+
+package at.hausgarten.service
+
+import android.annotation.SuppressLint
+import android.content.Context
+import android.content.SharedPreferences
+import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyProperties
+import android.util.Base64
+import java.io.IOException
+import java.security.KeyStore
+import javax.crypto.Cipher
+import javax.crypto.KeyGenerator
+import javax.crypto.SecretKey
+import javax.crypto.spec.GCMParameterSpec
+
+/** Keystore keys stay on Android; runtime secrets never enter the UI data bridge. */
+class PixelTunnelConfig(context: Context) {
+    private val prefs: SharedPreferences = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+
+    private fun key(): SecretKey {
+        val store = KeyStore.getInstance("AndroidKeyStore")
+        store.load(null)
+        if (!store.containsAlias(ALIAS)) {
+            val generator =
+                KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore")
+            generator.init(
+                KeyGenParameterSpec.Builder(
+                        ALIAS,
+                        KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT,
+                    )
+                    .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+                    .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+                    .build()
+            )
+            generator.generateKey()
+        }
+        return store.getKey(ALIAS, null) as SecretKey
+    }
+
+    @Synchronized
+    @Throws(Exception::class)
+    fun save(id: String, secret: String?) {
+        save(id, organization(), secret)
+    }
+
+    @Synchronized
+    @Throws(Exception::class)
+    fun save(id: String, organization: String?, secret: String?) {
+        validateId(id)
+        validateOrganization(organization)
+        if (
+            secret == null ||
+                secret.length < 20 ||
+                secret.length > 4096 ||
+                secret.matches(Regex("(?s).*\\s.*"))
+        ) {
+            throw IllegalArgumentException("Bitte den Runtime-Schlüssel vollständig eingeben.")
+        }
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.ENCRYPT_MODE, key())
+        val ciphertext = cipher.doFinal(secret.toByteArray(Charsets.UTF_8))
+        if (
+            !prefs
+                .edit()
+                .putString("id", id)
+                .putString("organization", organization)
+                .putString("iv", Base64.encodeToString(cipher.iv, Base64.NO_WRAP))
+                .putString("secret", Base64.encodeToString(ciphertext, Base64.NO_WRAP))
+                .commit()
+        ) {
+            throw IOException("Die Verbindungseinstellungen konnten nicht gespeichert werden.")
+        }
+    }
+
+    fun id(): String = prefs.getString("id", "") ?: ""
+
+    fun organization(): String = prefs.getString("organization", "") ?: ""
+
+    fun organization(value: String?) {
+        validateOrganization(value)
+        if (!prefs.edit().putString("organization", value).commit())
+            throw IllegalStateException("Die Organisationsangabe konnte nicht gespeichert werden.")
+    }
+
+    fun configured(): Boolean =
+        id().isNotEmpty() && !(prefs.getString("secret", "") ?: "").isEmpty()
+
+    @Throws(Exception::class)
+    fun secret(): String {
+        validateId(id())
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(
+            Cipher.DECRYPT_MODE,
+            key(),
+            GCMParameterSpec(128, Base64.decode(prefs.getString("iv", ""), Base64.NO_WRAP)),
+        )
+        return String(
+            cipher.doFinal(Base64.decode(prefs.getString("secret", ""), Base64.NO_WRAP)),
+            Charsets.UTF_8,
+        )
+    }
+
+    fun enabled(): Boolean = prefs.getBoolean("enabled", false)
+
+    fun writeEnabled(): Boolean = prefs.getBoolean("worklog_write_enabled", false)
+
+    fun writeEnabled(value: Boolean) {
+        if (!prefs.edit().putBoolean("worklog_write_enabled", value).commit())
+            throw IllegalStateException("Die Schreibfreigabe konnte nicht gespeichert werden.")
+    }
+
+    @SuppressLint("ApplySharedPref")
+    fun enabled(value: Boolean) {
+        if (!prefs.edit().putBoolean("enabled", value).commit())
+            throw IllegalStateException("Die Verbindungsfreigabe konnte nicht gespeichert werden.")
+    }
+
+    companion object {
+        private const val ALIAS = "hausgarten_pixel_tunnel_v1"
+        private const val PREFS = "pixel_tunnel_private"
+
+        @JvmStatic
+        fun validateId(id: String) {
+            if (!id.matches(Regex("tunnel_(?:[a-z0-9]{4}_)?[a-z0-9]{32}")))
+                throw IllegalArgumentException("Bitte die vollständige private Tunnel-ID eingeben.")
+        }
+
+        @JvmStatic
+        fun validateOrganization(organization: String?) {
+            if (
+                organization == null ||
+                    organization.isNotEmpty() &&
+                        !organization.matches(Regex("org-[a-zA-Z0-9]{4,64}"))
+            )
+                throw IllegalArgumentException(
+                    "Bitte die OpenAI-Organisations-ID im Format org-… eingeben."
+                )
+        }
+    }
+}
+
+===== ENDE DATEI =====
+
+
+===== DATEI: struktur-neu/android/app/src/main/java/at/hausgarten/service/PixelTunnelWire.kt =====
+Quelle: https://github.com/mihalhafner-collab/Gartenpirat-/blob/8101f3c395c9770005727bc37fc2f2057fca9130/struktur-neu/android/app/src/main/java/at/hausgarten/service/PixelTunnelWire.kt
+Git-Blob-SHA: 04a73c1a1047affc97891acec71dca7a1deeba24
+
+package at.hausgarten.service
+
+import java.io.*
+import java.net.*
+import java.nio.charset.StandardCharsets
+import java.util.*
+import org.json.JSONArray
+import org.json.JSONObject
+
+class PixelTunnelWire {
+    fun interface Transport {
+        @Throws(Exception::class)
+        fun request(
+            method: String,
+            path: String,
+            body: JSONObject?,
+            shard: String?,
+            timeoutMs: Int,
+        ): Reply
+    }
+
+    class Reply {
+        @JvmField val code: Int
+        @JvmField val json: JSONObject
+        @JvmField val receivedNanos: Long
+
+        constructor(code: Int, json: JSONObject) : this(code, json, System.nanoTime()) {}
+
+        constructor(code: Int, json: JSONObject, time: Long) {
+            this.code = code
+            this.json = json
+            this.receivedNanos = time
+        }
+    }
+
+    class AccessError : IOException {
+        @JvmField val httpCode: Int
+        @JvmField val reason: String
+
+        constructor(code: Int) : this(code, "auth_denied") {}
+
+        constructor(
+            code: Int,
+            reason: String,
+        ) : super("Tunnel-ID oder Runtime-Berechtigung prüfen.") {
+            httpCode = code
+            this.reason = reason
+        }
+
+        fun userMessage(): String {
+            when (reason) {
+                "organization_required" -> {
+                    return "Die OpenAI-Organisationsangabe fehlt. Verbindungseinstellungen öffnen und die Organisation des Pixel-Tunnels bestätigen."
+                }
+                "organization_mismatch" -> {
+                    return "Der gespeicherte Schlüssel gehört zu einer anderen OpenAI-Organisation als der Pixel-Tunnel. Bitte einen Schlüssel aus der Organisation des Tunnels eingeben."
+                }
+                "tunnel_access_denied" -> {
+                    return "Der Schlüssel darf diesen Tunnel nicht verwenden. Im richtigen OpenAI-Konto Tunnels Read + Use prüfen."
+                }
+                "invalid_api_key" -> {
+                    return "OpenAI erkennt den gespeicherten Schlüssel nicht. Bitte den gültigen Runtime-Schlüssel erneut im privaten Einrichtungsfenster eingeben."
+                }
+                else -> {
+                    return (("OpenAI verweigert die Tunnel-Anmeldung (HTTP " + httpCode) +
+                        "). Organisation, Schlüssel und Tunnels Read + Use prüfen.")
+                }
+            }
+        }
+    }
+
+    class RateLimit : IOException {
+        @JvmField val retryAfterMs: Long
+
+        constructor(wait: Long) : super("Tunnel-Anfragen sind vorübergehend begrenzt.") {
+            retryAfterMs = Math.max(1000, Math.min(900000, wait))
+        }
+    }
+
+    private val id: String
+    private val transport: Transport
+    private val tools: PixelMcpReadTools
+
+    private class Cached {
+        @JvmField val fingerprint: String
+        @JvmField val response: JSONObject
+
+        constructor(fingerprint: String, response: JSONObject) {
+            this.fingerprint = fingerprint
+            this.response = response
+        }
+    }
+
+    private val results: MutableMap<String, Cached> =
+        object : LinkedHashMap<String, Cached>() {
+            override fun removeEldestEntry(e: MutableMap.MutableEntry<String, Cached>?): Boolean {
+                return (size > 128)
+            }
+        }
+
+    constructor(id: String, transport: Transport, tools: PixelMcpReadTools) {
+        PixelTunnelConfig.validateId(id)
+        this.id = id
+        this.transport = transport
+        this.tools = tools
+    }
+
+    private fun path(suffix: String): String {
+        return (("/v1/tunnels/" + id) + suffix)
+    }
+
+    @Throws(Exception::class)
+    fun verify(): Unit {
+        check(transport.request("GET", path(""), null, null, 15000))
+    }
+
+    @Throws(Exception::class)
+    fun cycle(): Int {
+        var poll =
+            transport.request("GET", path("/poll?limit=1&timeout_ms=15000"), null, null, 35000)
+        check(poll)
+        if (poll.code == 204) {
+            return 0
+        }
+        val commands = poll.json.getJSONArray("commands")
+        var delivered: Int = 0
+        for (i in 0 until commands.length()) {
+            if (Thread.currentThread().isInterrupted()) {
+                throw InterruptedException()
+            }
+            val command = commands.getJSONObject(i)
+            val expiry: Long = deadline(command.opt("response_timeout"), poll.receivedNanos)
+            if ((expiry != Long.MAX_VALUE) && (System.nanoTime() >= expiry)) {
+                continue
+            }
+            val requestId = command.getString("request_id")
+            val shard = command.getString("shard_token")
+            if (
+                (((((requestId.isEmpty() || (requestId.length > 4096)) || shard.isEmpty()) ||
+                    (shard.length > 16384)) || (shard.indexOf('\r') >= 0)) ||
+                    (shard.indexOf('\n') >= 0))
+            ) {
+                throw IOException("Ungültige Tunnel-Antwort.")
+            }
+            val type = command.optString("command_type")
+            val channel = command.optString("channel", "main")
+            if (!("jsonrpc" == type) && !("session_termination" == type)) {
+                continue
+            }
+            var fingerprint =
+                ((((type + "\n") + channel) + "\n") + canonical(command.optJSONObject("jsonrpc")))
+            val cached = results.get(requestId)
+            if ((cached != null) && !(cached.fingerprint == fingerprint)) {
+                throw IOException("Widersprüchliche Anfrage-ID. Verbindung wird erneut geprüft.")
+            }
+            var response = (if (cached == null) null else cached.response)
+            if (response == null) {
+                response = JSONObject().put("request_id", requestId).put("channel", channel)
+                if (type == "session_termination") {
+                    response.put("resp_code", 204).put("resp_type", "session_termination_response")
+                } else {
+                    val rpc = command.getJSONObject("jsonrpc")
+                    var result: JSONObject?
+                    if (!("main" == channel)) {
+                        result =
+                            JSONObject()
+                                .put("jsonrpc", "2.0")
+                                .put(
+                                    "id",
+                                    (if (rpc.opt("id") == null) JSONObject.NULL else rpc.opt("id")),
+                                )
+                                .put(
+                                    "error",
+                                    JSONObject()
+                                        .put("code", -(32601))
+                                        .put("message", "Channel nicht unterstützt."),
+                                )
+                    } else {
+                        result = tools.rpc(rpc)
+                    }
+                    response
+                        .put("resp_code", (if (result == null) 202 else 200))
+                        .put(
+                            "resp_type",
+                            (if (result == null) "notify_ack" else "jsonrpc_response"),
+                        )
+                    if (result != null) {
+                        response
+                            .put("resp_json", result)
+                            .put(
+                                "resp_headers",
+                                JSONObject()
+                                    .put("Content-Type", JSONArray().put("application/json")),
+                            )
+                    }
+                }
+                results.put(requestId, Cached(fingerprint, response))
+            }
+            if ((expiry != Long.MAX_VALUE) && (System.nanoTime() >= expiry)) {
+                continue
+            }
+            var timeout: Int =
+                (if (expiry == Long.MAX_VALUE) 15000
+                else
+                    (Math.max(1, Math.min(15000, ((expiry - System.nanoTime()) / 1000000))))
+                        .toInt())
+            check(transport.request("POST", path("/response"), response, shard, timeout))
+            delivered++
+        }
+        return delivered
+    }
+
+    class HttpTransport : Transport {
+        private val root: String
+        private val secret: String
+        private val organization: String
+        private val instance: String = UUID.randomUUID().toString()
+        @Volatile private var active: HttpURLConnection? = null
+
+        constructor(secret: String) : this("https://api.openai.com", secret, false) {}
+
+        constructor(
+            secret: String,
+            organization: String,
+        ) : this("https://api.openai.com", secret, false, organization) {}
+
+        constructor(root: String, secret: String, test: Boolean) : this(root, secret, test, "") {}
+
+        constructor(root: String, secret: String, test: Boolean, organization: String) {
+            if (
+                (!(root == "https://api.openai.com") &&
+                    !(test && root.matches(Regex("http://127\\.0\\.0\\.1:[0-9]{1,5}"))))
+            ) {
+                throw IllegalArgumentException("Nicht erlaubtes Tunnel-Ziel.")
+            }
+            PixelTunnelConfig.validateOrganization(organization)
+            this.root = root
+            this.secret = secret
+            this.organization = organization
+        }
+
+        fun close(): Unit {
+            var current = active
+            if (current != null) {
+                current.disconnect()
+            }
+        }
+
+        override @Throws(Exception::class) fun request(
+            method: String,
+            path: String,
+            body: JSONObject?,
+            shard: String?,
+            timeoutMs: Int,
+        ): Reply {
+            if (!(path.startsWith("/v1/tunnels/")) || path.contains("..")) {
+                throw IOException("Ungültiger Tunnel-Pfad.")
+            }
+            val connection = (URL(root + path).openConnection() as HttpURLConnection)
+            active = connection
+            try {
+                connection.setInstanceFollowRedirects(false)
+                connection.setConnectTimeout(Math.min(timeoutMs, 15000))
+                connection.setReadTimeout(timeoutMs)
+                connection.setRequestMethod(method)
+                connection.setRequestProperty("Authorization", ("Bearer " + secret))
+                connection.setRequestProperty("Accept", "application/json")
+                if (!(organization.isEmpty())) {
+                    connection.setRequestProperty("OpenAI-Organization", organization)
+                }
+                connection.setRequestProperty("X-Tunnel-Client-Name", "hausgarten-android")
+                connection.setRequestProperty("X-Tunnel-Client-Version", "0.1.0")
+                connection.setRequestProperty("X-Tunnel-Client-Instance-Id", instance)
+                connection.setRequestProperty(
+                    "X-Tunnel-MCP-Server-Info",
+                    "{\"version\":1,\"channels\":[{\"name\":\"main\",\"proc_affinity\":true}]}",
+                )
+                if (shard != null) {
+                    connection.setRequestProperty("X-Tunnel-Shard-Token", shard)
+                }
+                if (body != null) {
+                    connection.setDoOutput(true)
+                    connection.setRequestProperty("Content-Type", "application/json")
+                    val bytes = body.toString().toByteArray(StandardCharsets.UTF_8)
+                    connection.setFixedLengthStreamingMode(bytes.size)
+                    connection.outputStream.use { out -> out.write(bytes) }
+                }
+                val code: Int = connection.responseCode
+                val receipt: Long = System.nanoTime()
+                if (code == 204) {
+                    return Reply(code, JSONObject(), receipt)
+                }
+                if ((code < 200) || (code >= 300)) {
+                    val safe = JSONObject()
+                    if (code == 429) {
+                        safe.put(
+                            "retry_after_ms",
+                            retryAfter(
+                                connection.getHeaderField("Retry-After"),
+                                System.currentTimeMillis(),
+                            ),
+                        )
+                    }
+                    if ((code == 401) || (code == 403)) {
+                        safe.put("access_reason", readAccessReason(connection))
+                    }
+                    return Reply(code, safe, receipt)
+                }
+                connection.inputStream.use { input ->
+                    ByteArrayOutputStream().use { out ->
+                        val buffer = ByteArray(8192)
+                        var count: Int
+                        var total: Int = 0
+                        while (true) {
+                            count = input.read(buffer)
+                            if (count == -1) break
+                            total += count
+                            if (total > ((2 * 1024) * 1024)) {
+                                throw IOException("Tunnel-Antwort zu groß.")
+                            }
+                            out.write(buffer, 0, count)
+                        }
+                        var value = String(out.toByteArray(), StandardCharsets.UTF_8)
+                        return Reply(
+                            code,
+                            (if (value.trim().isEmpty()) JSONObject() else JSONObject(value)),
+                            receipt,
+                        )
+                    }
+                }
+            } finally {
+                connection.disconnect()
+                if (active == connection) {
+                    active = null
+                }
+            }
+        }
+
+        companion object {
+            private @JvmStatic fun readAccessReason(connection: HttpURLConnection): String {
+                try {
+                    connection.errorStream.use { input ->
+                        ByteArrayOutputStream().use { out ->
+                            if (input == null) {
+                                return "auth_denied"
+                            }
+                            val buffer = ByteArray(4096)
+                            var count: Int
+                            var total: Int = 0
+                            while (true) {
+                                count = input.read(buffer)
+                                if (count == -1) break
+                                total += count
+                                if (total > 65536) {
+                                    return "auth_denied"
+                                }
+                                out.write(buffer, 0, count)
+                            }
+                            return accessReason(
+                                JSONObject(String(out.toByteArray(), StandardCharsets.UTF_8))
+                            )
+                        }
+                    }
+                } catch (ignored: Exception) {
+                    return "auth_denied"
+                }
+            }
+        }
+    }
+
+    companion object {
+        @JvmStatic
+        fun retryAfter(value: String?, now: Long): Long {
+            if (value == null) {
+                return 15000
+            }
+            try {
+                return Math.max(
+                    1000,
+                    Math.min(
+                        900000,
+                        Math.multiplyExact(java.lang.Long.parseLong(value.trim()), 1000L),
+                    ),
+                )
+            } catch (ignored: Exception) {
+                try {
+                    return Math.max(
+                        1000,
+                        Math.min(
+                            900000,
+                            (java.time.ZonedDateTime.parse(
+                                    value,
+                                    java.time.format.DateTimeFormatter.RFC_1123_DATE_TIME,
+                                )
+                                .toInstant()
+                                .toEpochMilli() - now),
+                        ),
+                    )
+                } catch (invalid: Exception) {
+                    return 15000
+                }
+            }
+        }
+
+        private @JvmStatic @Throws(Exception::class) fun check(r: Reply): Unit {
+            if (r.code == 429) {
+                throw RateLimit(r.json.optLong("retry_after_ms", 15000))
+            }
+            if ((r.code == 401) || (r.code == 403)) {
+                throw AccessError(r.code, r.json.optString("access_reason", "auth_denied"))
+            }
+            if ((r.code < 200) || (r.code >= 300)) {
+                throw IOException(
+                    (("Tunnel vorübergehend nicht erreichbar (HTTP " + r.code) + ").")
+                )
+            }
+        }
+
+        @JvmStatic
+        fun deadline(timeout: Any?, receipt: Long): Long {
+            if (
+                (!(timeout is String) ||
+                    !((timeout as String).matches(Regex("[0-9]+(?:ns|us|ms|s|m|h)"))))
+            ) {
+                return Long.MAX_VALUE
+            }
+            val m = java.util.regex.Pattern.compile("([0-9]+)([a-z]+)").matcher(timeout as String)
+            m.matches()
+            try {
+                var amount: Long = java.lang.Long.parseLong(m.group(1)!!)
+                var factor: Long
+                when (m.group(2)) {
+                    "ns" -> {
+                        factor = 1
+                    }
+                    "us" -> {
+                        factor = 1000
+                    }
+                    "ms" -> {
+                        factor = 1000000
+                    }
+                    "s" -> {
+                        factor = 1000000000
+                    }
+                    "m" -> {
+                        factor = 60000000000L
+                    }
+                    else -> {
+                        factor = 3600000000000L
+                    }
+                }
+                return Math.addExact(receipt, Math.multiplyExact(amount, factor))
+            } catch (invalid: Exception) {
+                return Long.MAX_VALUE
+            }
+        }
+
+        private @JvmStatic @Throws(Exception::class) fun canonical(value: Any?): String {
+            if (value is JSONObject) {
+                val obj = (value as JSONObject)
+                val keys = ArrayList<String>()
+                val iterator = obj.keys()
+                while (iterator.hasNext()) {
+                    keys.add(iterator.next())
+                }
+                Collections.sort(keys)
+                var out = StringBuilder("{")
+                for (key in keys) {
+                    out.append(JSONObject.quote(key))
+                        .append(':')
+                        .append(canonical(obj.get(key)))
+                        .append(',')
+                }
+                return out.append('}').toString()
+            }
+            if (value is JSONArray) {
+                val array = (value as JSONArray)
+                var out = StringBuilder("[")
+                for (i in 0 until array.length()) {
+                    out.append(canonical(array.get(i))).append(',')
+                }
+                return out.append(']').toString()
+            }
+            return (if ((value == null) || (value == JSONObject.NULL)) "null"
+            else (if (value is String) JSONObject.quote(value as String) else value.toString()))
+        }
+
+        @JvmStatic
+        fun accessReason(json: JSONObject): String {
+            var error = json.optJSONObject("error")
+            var message =
+                ((((java.lang.String.valueOf(
+                    (if (error == null) "" else error.optString("message"))
+                ) + " ") + json.optString("detail")) + " ") + json.optString("message"))
+            if (json.opt("error") is String) {
+                message += (" " + json.optString("error"))
+            }
+            message = message.lowercase(Locale.ROOT)
+            if (
+                message.contains("openai-organization header should match organization for api key")
+            ) {
+                return "organization_mismatch"
+            }
+            if (message.contains("requires an active organization context")) {
+                return "organization_required"
+            }
+            if (message.contains("does not have permission to use this tunnel")) {
+                return "tunnel_access_denied"
+            }
+            if ((error != null) && ("invalid_api_key" == error.optString("code"))) {
+                return "invalid_api_key"
+            }
+            return "auth_denied"
+        }
+    }
+}
+
+===== ENDE DATEI =====
+
+
+===== DATEI: struktur-neu/android/app/src/main/java/at/hausgarten/service/PixelTunnelService.kt =====
+Quelle: https://github.com/mihalhafner-collab/Gartenpirat-/blob/8101f3c395c9770005727bc37fc2f2057fca9130/struktur-neu/android/app/src/main/java/at/hausgarten/service/PixelTunnelService.kt
+Git-Blob-SHA: cae2bc7477d48a76acddd681652fae6c77b11058
+
+package at.hausgarten.service
+
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.app.Service
+import android.content.Context
+import android.content.Intent
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.os.IBinder
+import android.os.PowerManager
+import java.io.IOException
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
+import org.json.JSONObject
+
+/** User-visible and user-stoppable private MCP responder. */
+class PixelTunnelService : Service() {
+    private val closing = AtomicBoolean()
+    private var worker: Thread? = null
+    @Volatile private var http: PixelTunnelWire.HttpTransport? = null
+    private var manager: ConnectivityManager? = null
+    private var callback: ConnectivityManager.NetworkCallback? = null
+    @Volatile private var store: PixelLocalStore? = null
+    @Volatile private var activeBinding = ""
+    private val control =
+        Executors.newSingleThreadExecutor { task ->
+            Thread(task, "pixel-tunnel-control").apply { isDaemon = true }
+        }
+
+    override fun onCreate() {
+        super.onCreate()
+        val channel =
+            NotificationChannel(CHANNEL, "ChatGPT-Verbindung", NotificationManager.IMPORTANCE_LOW)
+        (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(
+            channel
+        )
+        startForeground(NOTICE, notice("Verbindung startet"))
+        running = true
+        closing.set(false)
+        manager = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
+        callback =
+            object : ConnectivityManager.NetworkCallback() {
+                private var ready: Network? = null
+
+                override fun onLost(network: Network) {
+                    if (network == ready) ready = null
+                    http?.close()
+                }
+
+                override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
+                    if (caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) {
+                        if (network != ready) ready = network
+                    } else if (network == ready) ready = null
+                }
+            }
+        manager!!.registerDefaultNetworkCallback(callback!!)
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == STOP) {
+            closing.set(true)
+            http?.close()
+            worker?.interrupt()
+            control.execute {
+                try {
+                    RevierApplication.awaitStartup(this)
+                    PixelTunnelConfig(this).enabled(false)
+                } catch (_: RuntimeException) {} finally {
+                    stopSelf(startId)
+                }
+            }
+            return START_NOT_STICKY
+        }
+        if (worker?.isAlive != true) {
+            worker = Thread(::runTunnel, "pixel-mcp-tunnel")
+            worker!!.start()
+        }
+        return START_STICKY
+    }
+
+    private fun online(): Boolean {
+        val current = manager!!
+        val network = current.activeNetwork ?: return false
+        return current
+            .getNetworkCapabilities(network)
+            ?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) == true
+    }
+
+    private fun runTunnel() {
+        try {
+            if (recoveryStartBlocked(this) || closing.get()) return
+            val initial = PixelTunnelConfig(this)
+            activeBinding = connectionBinding(initial)
+            if (!initial.enabled() || !initial.configured()) {
+                status("not_configured", "Pixel-Verbindung einmalig einrichten.")
+                return
+            }
+            PixelLocalStore(this).use { localStore ->
+                store = localStore
+                runTunnel(localStore)
+            }
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
+        } catch (_: Exception) {
+            if (!closing.get())
+                status("local_review_required", "Gespeicherten lokalen Datenstand prüfen.")
+        } finally {
+            store = null
+            if (!closing.get()) stopSelf()
+        }
+    }
+
+    private fun runTunnel(localStore: PixelLocalStore) {
+        var failures = 0
+        while (!closing.get()) {
+            try {
+                val config = PixelTunnelConfig(this)
+                if (!config.enabled()) break
+                val binding = connectionBinding(config)
+                activeBinding = binding
+                if (!online()) {
+                    status("offline", "Kein Internet. Verbindung wird automatisch erneut versucht.")
+                    Thread.sleep(5000)
+                    continue
+                }
+                readState()
+                val transport =
+                    PixelTunnelWire.HttpTransport(config.secret(), config.organization())
+                http = transport
+                val allowed =
+                    if (config.writeEnabled())
+                        object : PixelMcpWriteTools.Sink {
+                            override fun writable(): Boolean =
+                                PixelTunnelConfig(this@PixelTunnelService).writeEnabled()
+
+                            override fun execute(tool: String, args: JSONObject): JSONObject {
+                                if (!PixelTunnelConfig(this@PixelTunnelService).writeEnabled())
+                                    throw PixelMcpWriteTools.Rejected(
+                                        "WRITE_DISABLED",
+                                        "Schreibzugriff wurde beendet.",
+                                    )
+                                return localStore.execute(tool, args)
+                            }
+
+                            override fun status(id: String, state: JSONObject): JSONObject =
+                                localStore.status(id, state)
+                        }
+                    else null
+                val tunnel =
+                    PixelTunnelWire(
+                        config.id(),
+                        transport,
+                        PixelMcpReadTools(
+                            localStore.readSource(),
+                            allowed,
+                            PixelOwnerAccess(this, localStore),
+                        ),
+                    )
+                status("connecting", "OpenAI-Tunnel wird geprüft.")
+                tunnel.verify()
+                failures = 0
+                while (!closing.get() && config.enabled() && connectionBinding(config) == binding) {
+                    if (config.writeEnabled() != (allowed != null)) break
+                    val delivered = tunnel.cycle()
+                    status(
+                        "ready",
+                        if (delivered > 0) "Anfrageantwort an den Tunnel übergeben."
+                        else "Tunnel erreichbar · wartet auf Anfragen.",
+                        contact = true,
+                        response = delivered > 0,
+                    )
+                }
+            } catch (limited: PixelTunnelWire.RateLimit) {
+                failures = minOf(8, failures + 1)
+                status(
+                    "rate_limited",
+                    "Tunnel-Anfragen vorübergehend begrenzt. Nach der Wartezeit wird erneut verbunden.",
+                )
+                try {
+                    Thread.sleep(maxOf(limited.retryAfterMs, minOf(60000L, 1000L shl failures)))
+                } catch (_: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    break
+                }
+            } catch (denied: PixelTunnelWire.AccessError) {
+                status("auth_error", denied.userMessage())
+                val current = PixelTunnelConfig(this)
+                if (connectionBinding(current) == activeBinding) current.enabled(false)
+                break
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+                break
+            } catch (_: Exception) {
+                failures++
+                status(
+                    "reconnecting",
+                    "Verbindung oder lokalen Datenstand prüfen. Neuer Versuch folgt.",
+                )
+                try {
+                    Thread.sleep(minOf(60000L, 1000L shl minOf(failures, 6)))
+                } catch (_: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    break
+                }
+            } finally {
+                http?.close()
+            }
+        }
+    }
+
+    private fun readState(): JSONObject {
+        val state = store!!.getState()
+        if (state.has("error")) throw IOException("Gespeicherten lokalen Datenstand prüfen.")
+        return state
+    }
+
+    private fun notice(detail: String): Notification {
+        val open =
+            PendingIntent.getActivity(
+                this,
+                0,
+                Intent(this, PixelTunnelActivity::class.java),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
+        val stop =
+            PendingIntent.getService(
+                this,
+                1,
+                Intent(this, PixelTunnelService::class.java).setAction(STOP),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
+        return Notification.Builder(this, CHANNEL)
+            .setSmallIcon(android.R.drawable.stat_sys_upload)
+            .setContentTitle("Haus & Garten · ChatGPT")
+            .setContentText(detail)
+            .setContentIntent(open)
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .addAction(Notification.Action.Builder(null, "Beenden", stop).build())
+            .build()
+    }
+
+    private fun status(
+        state: String,
+        detail: String,
+        contact: Boolean = false,
+        response: Boolean = false,
+    ) {
+        val prefs = getSharedPreferences("pixel_tunnel_status", MODE_PRIVATE)
+        val now = System.currentTimeMillis()
+        val edit = prefs.edit()
+        if (prefs.getString("binding", "") != activeBinding) {
+            edit.remove("last_contact_at").remove("last_response_at")
+        }
+        edit
+            .putString("binding", activeBinding)
+            .putString("state", state)
+            .putString("detail", detail)
+            .putLong("at", now)
+        if (contact) edit.putLong("last_contact_at", now)
+        if (response) edit.putLong("last_response_at", now)
+        edit.apply()
+        (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).notify(
+            NOTICE,
+            notice(detail),
+        )
+    }
+
+    override fun onDestroy() {
+        closing.set(true)
+        running = false
+        http?.close()
+        worker?.interrupt()
+        val currentManager = manager
+        val currentCallback = callback
+        if (currentManager != null && currentCallback != null)
+            try {
+                currentManager.unregisterNetworkCallback(currentCallback)
+            } catch (_: Exception) {}
+        control.execute {
+            try {
+                RevierApplication.awaitStartup(this)
+                val prefs = getSharedPreferences("pixel_tunnel_status", MODE_PRIVATE)
+                if (
+                    prefs.getString("binding", "") == activeBinding &&
+                        prefs.getString("state", "") != "auth_error"
+                )
+                    prefs
+                        .edit()
+                        .putString("state", "stopped")
+                        .putString("detail", "Verbindung beendet.")
+                        .apply()
+            } catch (_: RuntimeException) {}
+        }
+        control.shutdown()
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        super.onDestroy()
+    }
+
+    override fun onBind(intent: Intent?): IBinder? = null
+
+    companion object {
+        const val STOP = "at.hausgarten.service.PIXEL_TUNNEL_STOP"
+        private const val CHANNEL = "pixel_tunnel"
+        private const val NOTICE = 2810
+        @Volatile private var running = false
+
+        private fun connectionBinding(config: PixelTunnelConfig): String =
+            PixelMcpWriteTools.hash(config.id() + "\n" + config.organization())
+
+        @JvmStatic
+        fun recoveryStartBlocked(context: Context): Boolean {
+            if (RevierApplication.recoveryRequired()) return true
+            return try {
+                RestoreStartupGuard.assertStoreMayOpen(context)
+                false
+            } catch (_: RuntimeException) {
+                true
+            }
+        }
+
+        @JvmStatic
+        fun status(context: Context): JSONObject {
+            val result = JSONObject()
+            val prefs = context.getSharedPreferences("pixel_tunnel_status", MODE_PRIVATE)
+            val power = context.getSystemService(POWER_SERVICE) as PowerManager
+            try {
+                val config = PixelTunnelConfig(context)
+                val bound = prefs.getString("binding", "") == connectionBinding(config)
+                var state =
+                    if (bound) prefs.getString("state", "stopped") ?: "stopped" else "stopped"
+                val preserve = state == "auth_error" || state == "start_blocked"
+                if (!running && !preserve) state = "stopped"
+                val contact = if (bound) prefs.getLong("last_contact_at", 0) else 0
+                val response = if (bound) prefs.getLong("last_response_at", 0) else 0
+                val stale =
+                    running &&
+                        state == "ready" &&
+                        (contact == 0L || System.currentTimeMillis() - contact > 90000)
+                if (stale) state = "reconnecting"
+                result
+                    .put("running", running)
+                    .put("state", state)
+                    .put(
+                        "detail",
+                        if (stale) "Verbindung länger nicht bestätigt. Wird erneut geprüft."
+                        else if (!running && !preserve) "Pixel-Verbindung ist beendet."
+                        else if (bound)
+                            prefs.getString("detail", "Verbindung noch nicht gestartet.")
+                        else "Für diese Verbindung liegt noch keine lokale Statusmeldung vor.",
+                    )
+                    .put(
+                        "battery_exempt",
+                        power.isIgnoringBatteryOptimizations(context.packageName),
+                    )
+                    .put("configured", config.configured())
+                    .put("enabled", config.enabled())
+                    .put("write_enabled", config.writeEnabled())
+                    .put("last_contact_at", contact)
+                    .put("last_response_at", response)
+                    .put(
+                        "transport_confirmed",
+                        config.enabled() && running && state == "ready" && !stale,
+                    )
+            } catch (_: Exception) {
+                result
+                    .put("state", "status_unavailable")
+                    .put("detail", "Lokaler Verbindungsstatus derzeit nicht lesbar.")
+            }
+            return result
+        }
+    }
+}
+
+===== ENDE DATEI =====
+
+
+===== DATEI: struktur-neu/android/app/src/main/java/at/hausgarten/service/PixelTunnelBootReceiver.kt =====
+Quelle: https://github.com/mihalhafner-collab/Gartenpirat-/blob/8101f3c395c9770005727bc37fc2f2057fca9130/struktur-neu/android/app/src/main/java/at/hausgarten/service/PixelTunnelBootReceiver.kt
+Git-Blob-SHA: ffef94d6e7f3f993759480a5aae557726e8c257a
+
+package at.hausgarten.service
+
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import java.util.concurrent.Executors
+
+/** Reboot/update recovery after explicit opt-in and complete configuration. */
+class PixelTunnelBootReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        if (
+            intent.action != Intent.ACTION_BOOT_COMPLETED &&
+                intent.action != Intent.ACTION_MY_PACKAGE_REPLACED
+        )
+            return
+        val pending = goAsync()
+        executor.execute {
+            try {
+                // Broadcasts have a short completion deadline; a protected restore resumes in-app.
+                try {
+                    RevierApplication.awaitStartup(context, 5000)
+                } catch (_: RuntimeException) {
+                    return@execute
+                }
+                if (PixelTunnelService.recoveryStartBlocked(context)) return@execute
+                val config = PixelTunnelConfig(context)
+                if (!config.enabled() || !config.configured()) return@execute
+                try {
+                    context.startForegroundService(Intent(context, PixelTunnelService::class.java))
+                } catch (_: RuntimeException) {
+                    context
+                        .getSharedPreferences("pixel_tunnel_status", Context.MODE_PRIVATE)
+                        .edit()
+                        .putString("state", "start_blocked")
+                        .putString(
+                            "detail",
+                            "Android hat den Start eingeschränkt. Bitte Verbindung in der App starten.",
+                        )
+                        .apply()
+                }
+            } finally {
+                pending.finish()
+            }
+        }
+    }
+
+    companion object {
+        private val executor =
+            Executors.newSingleThreadExecutor { task ->
+                Thread(task, "pixel-tunnel-boot").apply { isDaemon = true }
+            }
+    }
+}
+
+===== ENDE DATEI =====
+
+
+===== DATEI: struktur-neu/android/app/src/main/java/at/hausgarten/service/PixelTunnelActivity.kt =====
+Quelle: https://github.com/mihalhafner-collab/Gartenpirat-/blob/8101f3c395c9770005727bc37fc2f2057fca9130/struktur-neu/android/app/src/main/java/at/hausgarten/service/PixelTunnelActivity.kt
+Git-Blob-SHA: d30b36ee925ab376f45e20ccc0a6f660a5414357
+
+package at.hausgarten.service
+
+import android.Manifest
+import android.app.AlertDialog
+import android.content.ActivityNotFoundException
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
+import android.os.Bundle
+import android.provider.Settings
+import android.view.WindowManager
+import android.widget.Toast
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Text
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.lifecycleScope
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.util.Locale
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
+/** Native credential setup; secrets stay outside saved state and business data. */
+class PixelTunnelActivity : ComponentActivity() {
+    private lateinit var config: PixelTunnelConfig
+    private var status by mutableStateOf("Status wird geprüft …")
+    private var battery by mutableStateOf("")
+    private var diagnosis by mutableStateOf("")
+    private var lastContact by mutableStateOf("Noch kein bestätigter Tunnelkontakt.")
+    private var lastResponse by mutableStateOf("Noch keine beantwortete Anfrage bestätigt.")
+    private var access by mutableStateOf("")
+    private var statusTone by mutableStateOf(NativeStatusTone.Neutral)
+    private var enabled by mutableStateOf(false)
+    private var advanced by mutableStateOf(false)
+    private var tunnelId by mutableStateOf("")
+    private var organization by mutableStateOf("")
+    private var runtimeKey by mutableStateOf("")
+    private var write by mutableStateOf(false)
+    private var configured by mutableStateOf(false)
+    private var busy by mutableStateOf(true)
+    private var requestedWrite: Boolean? = null
+    private val notificationPermission =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            if (requestedWrite == null) return@registerForActivityResult
+            pendingNotificationResult = granted
+            consumeNotificationResult()
+        }
+    private var pendingNotificationResult: Boolean? = null
+    private var configurationReady = false
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        if (savedInstanceState?.containsKey("pending_notification_write") == true) {
+            requestedWrite = savedInstanceState.getBoolean("pending_notification_write")
+            if (savedInstanceState.containsKey("pending_notification_result"))
+                pendingNotificationResult =
+                    savedInstanceState.getBoolean("pending_notification_result")
+        }
+        window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        lifecycleScope.launch {
+            try {
+                val initial =
+                    withContext(Dispatchers.IO) {
+                        RevierApplication.awaitStartup(this@PixelTunnelActivity)
+                        config = PixelTunnelConfig(this@PixelTunnelActivity)
+                        listOf(
+                            config.id(),
+                            config.organization(),
+                            config.enabled().toString(),
+                            config.writeEnabled().toString(),
+                            config.configured().toString(),
+                        )
+                    }
+                tunnelId = initial[0]
+                organization = initial[1]
+                enabled = initial[2].toBoolean()
+                write = requestedWrite ?: initial[3].toBoolean()
+                configured = initial[4].toBoolean()
+                refreshStatus()
+                configurationReady = true
+                busy = false
+                consumeNotificationResult()
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                status = "Der lokale Bestand benötigt zuerst eine Wiederherstellungsprüfung."
+                startActivity(Intent(this@PixelTunnelActivity, RestoreRecoveryActivity::class.java))
+                finish()
+            }
+        }
+        window.nativeLightSystemBars()
+        setContent {
+            HausGartenTheme {
+                Scaffold(
+                    modifier = Modifier.safeDrawingPadding().imePadding(),
+                    bottomBar = {
+                        NativeActionBar(
+                            "Status erneut prüfen",
+                            { lifecycleScope.launch { refreshStatus() } },
+                            if (enabled) "Verbindung beenden" else "Zurück",
+                            { if (enabled) stopConnection() else finish() },
+                            enabled = !busy,
+                            secondaryEnabled = !busy,
+                        )
+                    },
+                ) { insets ->
+                    Column(
+                        Modifier.fillMaxSize()
+                            .padding(insets)
+                            .verticalScroll(rememberScrollState())
+                            .padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        Text("ChatGPT-Verbindung", style = MaterialTheme.typography.headlineSmall)
+
+                        NativeStatus(status, statusTone)
+                        NativeInfoRow("Letzte beantwortete Anfrage", lastResponse)
+                        NativeInfoRow("Letzter Tunnelkontakt", lastContact)
+                        NativeInfoRow("Zugriff", access)
+
+                        Row {
+                            Text("Pixel-Verbindung eingeschaltet", Modifier.weight(1f))
+                            Switch(
+                                enabled,
+                                { on ->
+                                    if (on) {
+                                        if (!configured) {
+                                            advanced = true
+                                            toast("Bitte die Verbindung einmalig einrichten.")
+                                        } else startSavedConnection()
+                                    } else stopConnection()
+                                },
+                                enabled = !busy,
+                            )
+                        }
+                        Row {
+                            Text("ChatGPT darf Daten ändern", Modifier.weight(1f))
+                            Switch(write, ::changeWrite, enabled = !busy)
+                        }
+
+                        NativeTextButton(onClick = { advanced = !advanced }) {
+                            Text(
+                                if (advanced) "Einrichtung und Diagnose schließen"
+                                else "Einrichtung und Diagnose"
+                            )
+                        }
+                        if (advanced) {
+                            HorizontalDivider()
+                            Text(battery)
+                            Text(diagnosis)
+                            Text(
+                                "Einmalig einrichten",
+                                style = MaterialTheme.typography.titleMedium,
+                            )
+
+                            OutlinedTextField(
+                                tunnelId,
+                                { tunnelId = it },
+                                label = { Text("Pixel-Tunnel-ID") },
+                                placeholder = { Text("tunnel_…") },
+                                singleLine = true,
+                                enabled = !busy,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            OutlinedTextField(
+                                organization,
+                                { organization = it },
+                                label = { Text("OpenAI-Organisation des Tunnels") },
+                                placeholder = { Text("org-…") },
+                                singleLine = true,
+                                enabled = !busy,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+
+                            OutlinedTextField(
+                                runtimeKey,
+                                { runtimeKey = it },
+                                label = { Text("Runtime-Schlüssel") },
+                                placeholder = {
+                                    Text(
+                                        if (configured) "Bereits gespeichert · leer lassen"
+                                        else "Schlüssel hier einfügen"
+                                    )
+                                },
+                                singleLine = true,
+                                visualTransformation = PasswordVisualTransformation(),
+                                keyboardOptions =
+                                    KeyboardOptions(
+                                        keyboardType = KeyboardType.Password,
+                                        autoCorrectEnabled = false,
+                                    ),
+                                enabled = !busy,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            NativeButton(onClick = ::startConnection, enabled = !busy) {
+                                Text("Einrichtung und Freigabe übernehmen")
+                            }
+                            NativeTextButton(onClick = ::stopConnection, enabled = !busy) {
+                                Text("Verbindung beenden")
+                            }
+                            Text("Hintergrundbetrieb", style = MaterialTheme.typography.titleMedium)
+
+                            NativeTextButton(
+                                onClick = {
+                                    open(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS, null)
+                                }
+                            ) {
+                                Text("Akku-Einstellungen öffnen")
+                            }
+                            NativeTextButton(
+                                onClick = {
+                                    open(
+                                        Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                        Uri.parse("package:$packageName"),
+                                    )
+                                }
+                            ) {
+                                Text("App- und Hintergrunddaten-Einstellungen")
+                            }
+                            NativeTextButton(
+                                onClick = {
+                                    open(
+                                        Intent.ACTION_VIEW,
+                                        Uri.parse(
+                                            "https://platform.openai.com/settings/organization/tunnels"
+                                        ),
+                                    )
+                                }
+                            ) {
+                                Text("OpenAI-Tunnel verwalten")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (configurationReady) lifecycleScope.launch { refreshStatus() }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        requestedWrite?.let { outState.putBoolean("pending_notification_write", it) }
+        pendingNotificationResult?.let { outState.putBoolean("pending_notification_result", it) }
+    }
+
+    private fun open(action: String, uri: Uri?) {
+        try {
+            startActivity(Intent(action).apply { if (uri != null) data = uri })
+        } catch (_: ActivityNotFoundException) {
+            toast("Diese Einstellung ist auf dem Gerät nicht verfügbar.")
+        }
+    }
+
+    private fun startConnection() {
+        if (busy) return
+        busy = true
+        val entered = runtimeKey.trim()
+        val tunnel = tunnelId.trim()
+        val org = organization.trim()
+        lifecycleScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    PixelTunnelConfig.validateId(tunnel)
+                    PixelTunnelConfig.validateOrganization(org)
+                    if (entered.isNotEmpty()) {
+                        stopService(
+                            Intent(this@PixelTunnelActivity, PixelTunnelService::class.java)
+                        )
+                        config.save(tunnel, org, entered)
+                    } else if (!config.configured() || config.id() != tunnel)
+                        throw IllegalArgumentException(
+                            "Bitte für den neuen Tunnel den Runtime-Schlüssel eingeben."
+                        )
+                    else if (config.organization() != org) {
+                        stopService(
+                            Intent(this@PixelTunnelActivity, PixelTunnelService::class.java)
+                        )
+                        config.organization(org)
+                    }
+                }
+                if (entered.isNotEmpty()) runtimeKey = ""
+                configured = true
+                requestConnection(write)
+            } catch (error: Exception) {
+                AlertDialog.Builder(this@PixelTunnelActivity)
+                    .setTitle("Verbindung noch nicht eingerichtet")
+                    .setMessage(
+                        if (error is IllegalArgumentException) error.message
+                        else
+                            "Einstellungen konnten nicht sicher gespeichert werden. Bitte erneut versuchen."
+                    )
+                    .setPositiveButton("OK", null)
+                    .show()
+            } finally {
+                busy = false
+            }
+        }
+    }
+
+    /**
+     * Takes effect at once: a running connection restarts with the new access, otherwise only the
+     * choice is saved.
+     */
+    private fun changeWrite(permitted: Boolean) {
+        if (busy) return
+        write = permitted
+        busy = true
+        lifecycleScope.launch {
+            try {
+                if (enabled && configured) requestConnection(permitted)
+                else {
+                    withContext(Dispatchers.IO) { config.writeEnabled(permitted) }
+                    refreshStatus()
+                }
+            } finally {
+                busy = false
+            }
+        }
+    }
+
+    private fun startSavedConnection() {
+        if (busy) return
+        busy = true
+        lifecycleScope.launch {
+            try {
+                requestConnection(withContext(Dispatchers.IO) { config.writeEnabled() })
+            } finally {
+                busy = false
+            }
+        }
+    }
+
+    private suspend fun requestConnection(permitted: Boolean) {
+        pendingNotificationResult = null
+        if (
+            Build.VERSION.SDK_INT >= 33 &&
+                checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
+                    PackageManager.PERMISSION_GRANTED
+        ) {
+            requestedWrite = permitted
+            try {
+                notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+            } catch (failure: RuntimeException) {
+                requestedWrite = null
+                throw failure
+            }
+        } else {
+            requestedWrite = null
+            launchConnection(permitted)
+        }
+    }
+
+    private suspend fun launchConnection(permitted: Boolean) {
+        try {
+            withContext(Dispatchers.IO) {
+                if (config.writeEnabled() != permitted)
+                    stopService(Intent(this@PixelTunnelActivity, PixelTunnelService::class.java))
+                config.writeEnabled(permitted)
+                config.enabled(true)
+                startForegroundService(
+                    Intent(this@PixelTunnelActivity, PixelTunnelService::class.java)
+                )
+            }
+            refreshStatus()
+        } catch (_: RuntimeException) {
+            withContext(Dispatchers.IO) { config.enabled(false) }
+            enabled = false
+            toast("Android hat den Dienststart eingeschränkt. Bitte die Akku-Einstellungen prüfen.")
+        }
+    }
+
+    private fun stopConnection() {
+        if (busy) return
+        requestedWrite = null
+        pendingNotificationResult = null
+        lifecycleScope.launch {
+            busy = true
+            try {
+                withContext(Dispatchers.IO) {
+                    config.enabled(false)
+                    stopService(Intent(this@PixelTunnelActivity, PixelTunnelService::class.java))
+                }
+                refreshStatus()
+            } finally {
+                busy = false
+            }
+        }
+    }
+
+    private fun consumeNotificationResult() {
+        if (!configurationReady) return
+        val permitted = requestedWrite ?: return
+        val granted = pendingNotificationResult ?: return
+        requestedWrite = null
+        pendingNotificationResult = null
+        if (!granted) {
+            toast(
+                "Bitte Benachrichtigungen freigeben, damit du die laufende Verbindung sehen und beenden kannst."
+            )
+            return
+        }
+        busy = true
+        lifecycleScope.launch {
+            try {
+                launchConnection(permitted)
+            } finally {
+                busy = false
+            }
+        }
+    }
+
+    private suspend fun refreshStatus() {
+        try {
+            val info =
+                withContext(Dispatchers.IO) { PixelTunnelService.status(this@PixelTunnelActivity) }
+            diagnosis = info.optString("detail")
+            enabled = info.optBoolean("enabled")
+            configured = info.optBoolean("configured")
+            status = pixelConnectionLabel(info)
+            statusTone = pixelConnectionTone(info)
+            lastContact =
+                pixelConnectionTime(
+                    info.optLong("last_contact_at"),
+                    "Noch kein bestätigter Tunnelkontakt.",
+                )
+            lastResponse =
+                pixelConnectionTime(
+                    info.optLong("last_response_at"),
+                    "Noch keine beantwortete Anfrage bestätigt.",
+                )
+            access =
+                (if (enabled) "Lesen lokal eingeschaltet."
+                else "Verbindung und Zugriff ausgeschaltet.") +
+                    "\nGespeicherte Schreibfreigabe: " +
+                    (if (info.optBoolean("write_enabled")) "EIN." else "AUS.") +
+                    " Keine Schreibprobe ausgeführt."
+            battery =
+                if (info.optBoolean("battery_exempt")) "Akku-Ausnahme ist aktiv."
+                else
+                    "Akku-Ausnahme noch nicht aktiv. Bei Energiesparen kann die Verbindung unterbrochen werden."
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            status = "Lokaler Verbindungsstatus derzeit nicht lesbar."
+            statusTone = NativeStatusTone.Attention
+        }
+    }
+
+    private fun toast(text: String) {
+        Toast.makeText(this, text, Toast.LENGTH_LONG).show()
+    }
+}
+
+internal fun pixelConnectionLabel(info: org.json.JSONObject): String =
+    when {
+        info.optString("state") == "status_unavailable" -> "Lokaler Status nicht lesbar"
+        info.optString("state") == "auth_error" -> "Verbindungsfreigabe prüfen"
+        !info.optBoolean("configured") -> "Noch nicht eingerichtet"
+        !info.optBoolean("enabled") -> "Pixel-Verbindung ausgeschaltet"
+        !info.optBoolean("running") -> "Tunnel eingeschaltet · Pixel-Dienst läuft nicht"
+        info.optBoolean("transport_confirmed") -> "Tunnel eingeschaltet · letzter Kontakt bestätigt"
+        info.optString("state") in
+            listOf(
+                "offline",
+                "reconnecting",
+                "rate_limited",
+                "local_review_required",
+                "start_blocked",
+            ) -> "Tunnel eingeschaltet · derzeit nicht bestätigt"
+        else -> "Tunnel eingeschaltet · Verbindung ausstehend"
+    }
+
+internal fun pixelConnectionTone(info: org.json.JSONObject): NativeStatusTone =
+    when {
+        info.optString("state") in
+            listOf("auth_error", "local_review_required", "start_blocked", "status_unavailable") ->
+            NativeStatusTone.Attention
+        !info.optBoolean("enabled") -> NativeStatusTone.Neutral
+        info.optBoolean("transport_confirmed") -> NativeStatusTone.Confirmed
+        else -> NativeStatusTone.Attention
+    }
+
+internal fun pixelConnectionTime(value: Long, empty: String): String =
+    if (value <= 0) empty
+    else
+        DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm:ss", Locale.GERMAN)
+            .withZone(ZoneId.of("Europe/Vienna"))
+            .format(Instant.ofEpochMilli(value))
+
+===== ENDE DATEI =====
+
+
+===== DATEI: struktur-neu/android/app/src/main/AndroidManifest.xml =====
+Quelle: https://github.com/mihalhafner-collab/Gartenpirat-/blob/8101f3c395c9770005727bc37fc2f2057fca9130/struktur-neu/android/app/src/main/AndroidManifest.xml
+Git-Blob-SHA: 05913b921c245fb60edf7f32ac2a12798dccaa3b
+
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <queries>
+        <intent><action android:name="android.intent.action.SENDTO" /><data android:scheme="mailto" /></intent>
+        <package android:name="com.whatsapp" /><package android:name="com.whatsapp.w4b" />
+    </queries>
+
+    <application
+        android:name=".RevierApplication"
+        android:allowBackup="false"
+        android:fullBackupContent="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:icon="@drawable/app_icon"
+        android:label="Haus &amp; Garten"
+        android:networkSecurityConfig="@xml/network_security_config"
+        android:supportsRtl="true"
+        android:theme="@style/AppTheme">
+        <provider android:name=".OfferFileProvider" android:authorities="${applicationId}.offerfiles" android:exported="false" android:grantUriPermissions="true" />
+        <provider android:name=".PhotoCaptureProvider" android:authorities="${applicationId}.photocapture" android:exported="false" android:grantUriPermissions="true" />
+        <provider android:name=".PhotoThumbnailProvider" android:authorities="${applicationId}.photothumbnails" android:exported="false" android:grantUriPermissions="false" />
+        <activity android:name=".PixelTunnelActivity" android:exported="false" android:windowSoftInputMode="adjustResize" />
+        <activity android:name=".PlanningConnectionActivity" android:exported="false" />
+        <service android:name=".PlanningJob" android:permission="android.permission.BIND_JOB_SERVICE" android:exported="true" />
+        <activity android:name=".FullBackupActivity" android:exported="false" />
+        <activity android:name=".RestoreRecoveryActivity" android:exported="false" />
+        <service android:name=".PixelTunnelService" android:exported="false" android:foregroundServiceType="specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="User-enabled private MCP responder for ChatGPT, outbound HTTPS polling with persistent notification and stop control" />
+        </service>
+        <service android:name=".WorkTileService" android:exported="true" android:icon="@drawable/app_icon" android:label="Arbeit"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+        <receiver android:name=".PlanningAlertReceiver" android:exported="false" />
+        <receiver android:name=".PixelTunnelBootReceiver" android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+        <activity
+            android:name=".MainActivity"
+            android:configChanges="orientation|screenSize"
+            android:exported="true"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
+
+===== ENDE DATEI =====
+

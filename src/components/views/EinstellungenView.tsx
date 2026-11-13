@@ -29,15 +29,24 @@ import {
 import { useSmartphoneWeather } from '../../services/weatherService.ts';
 import { useApp } from '../../context/AppContext.tsx';
 import {
+  DEFAULT_INFINITY_CLOUD_URL,
   NativeMcpSyncStatus,
+  NativePixelTunnelStatus,
+  configureNativeMcpSync,
   copyTextRobustly,
   getNativeMcpSyncStatus,
+  getNativePixelTunnelStatus,
   getRevealedNativeMcpToken,
   isNativeAndroidApp,
+  normalizeInfinityCloudBaseUrl,
   openExternalUrlNatively,
+  openNativePixelTunnelSetup,
   pairNativeMcpWithCode,
   resolveMcpAdminEndpoint,
+  setNativePixelTunnelEnabled,
+  setNativePixelTunnelWriteEnabled,
   subscribeNativeMcpStatus,
+  subscribeNativePixelTunnelStatus,
   triggerNativeMcpSyncNow
 } from '../../services/nativeBridge.ts';
 import {
@@ -121,8 +130,11 @@ export const EinstellungenView: React.FC = () => {
   const [nativeSyncStatus, setNativeSyncStatus] = useState<NativeMcpSyncStatus | null>(() =>
     getNativeMcpSyncStatus()
   );
-  const [nativeBaseUrlInput, setNativeBaseUrlInput] = useState<string>(
-    () => getNativeMcpSyncStatus()?.baseUrl || 'https://hafner-gruenraum.ai.studio'
+  const [pixelTunnelStatus, setPixelTunnelStatus] = useState<NativePixelTunnelStatus | null>(() =>
+    getNativePixelTunnelStatus()
+  );
+  const [nativeBaseUrlInput, setNativeBaseUrlInput] = useState<string>(() =>
+    normalizeInfinityCloudBaseUrl(getNativeMcpSyncStatus()?.baseUrl)
   );
 
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
@@ -173,9 +185,13 @@ export const EinstellungenView: React.FC = () => {
 
     const latest = getNativeMcpSyncStatus();
     setNativeSyncStatus(latest);
-    if (latest?.baseUrl) {
-      setNativeBaseUrlInput(latest.baseUrl);
+    const latestTunnel = getNativePixelTunnelStatus();
+    if (latestTunnel) {
+      setPixelTunnelStatus(latestTunnel);
     }
+    const cleanBase = normalizeInfinityCloudBaseUrl(latest?.baseUrl);
+    setNativeBaseUrlInput(cleanBase);
+
     const immediateNativeToken =
       getRevealedNativeMcpToken() ||
       latest?.revealedToken?.trim() ||
@@ -187,7 +203,7 @@ export const EinstellungenView: React.FC = () => {
     try {
       const endpoint = resolveMcpAdminEndpoint(
         '/api/internal/mcp-config',
-        customBaseUrl || nativeBaseUrlInput
+        customBaseUrl || cleanBase
       );
       const res = await fetch(endpoint.url, {
         headers: endpoint.headers,
@@ -205,7 +221,7 @@ export const EinstellungenView: React.FC = () => {
       // Offline tolerance
     }
 
-    void fetchRevealedToken(customBaseUrl);
+    void fetchRevealedToken(customBaseUrl || cleanBase);
   };
 
   useEffect(() => {
@@ -227,10 +243,13 @@ export const EinstellungenView: React.FC = () => {
       };
     }
 
+    // Falls in älteren APK-Ständen noch hafner-gruenraum.ai.studio gespeichert war, sofort auf infinity-hafner.ai.studio aktualisieren
+    configureNativeMcpSync(DEFAULT_INFINITY_CLOUD_URL, '');
+
     const unsubNativeStatus = subscribeNativeMcpStatus((status) => {
       setNativeSyncStatus(status);
       if (status.baseUrl) {
-        setNativeBaseUrlInput(status.baseUrl);
+        setNativeBaseUrlInput(normalizeInfinityCloudBaseUrl(status.baseUrl));
       }
       const nextToken = status.revealedToken?.trim() || status.deviceToken?.trim();
       if (nextToken && nextToken.length >= 16) {
@@ -238,12 +257,17 @@ export const EinstellungenView: React.FC = () => {
       }
     });
 
-    void loadMcpInfo();
+    const unsubTunnelStatus = subscribeNativePixelTunnelStatus((tStatus) => {
+      setPixelTunnelStatus(tStatus);
+    });
+
+    void loadMcpInfo(DEFAULT_INFINITY_CLOUD_URL);
 
     return () => {
       unsubGmail();
       unsubOwner();
       unsubNativeStatus();
+      unsubTunnelStatus();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isNativeAndroid]);
@@ -351,10 +375,8 @@ export const EinstellungenView: React.FC = () => {
     if (!isNativeAndroid) return;
     setPairingError(null);
     setPairingFeedback(null);
-    const targetUrl = (nativeBaseUrlInput.trim() || 'https://hafner-gruenraum.ai.studio').replace(
-      /\/+$/,
-      ''
-    );
+    const targetUrl = normalizeInfinityCloudBaseUrl(nativeBaseUrlInput);
+    configureNativeMcpSync(targetUrl, '');
     const opened = openExternalUrlNatively(`${targetUrl}/android-connect`);
     if (!opened) {
       setPairingError('Browser konnte nicht geöffnet werden.');
@@ -372,27 +394,51 @@ export const EinstellungenView: React.FC = () => {
     setPairingFeedback(null);
     setResetInProgress(true);
     try {
-      const targetUrl = (nativeBaseUrlInput.trim() || 'https://hafner-gruenraum.ai.studio').replace(
-        /\/+$/,
-        ''
-      );
+      const targetUrl = normalizeInfinityCloudBaseUrl(nativeBaseUrlInput);
       const updated = pairNativeMcpWithCode(targetUrl, digits);
       if (updated) {
         setNativeSyncStatus(updated);
       }
       setPairingCodeInput('');
       setPairingFeedback('Kopplungscode wird geprüft und synchronisiert…');
-      await loadMcpInfo();
+      await loadMcpInfo(targetUrl);
       setTimeout(() => setPairingFeedback(null), 4000);
     } finally {
       setResetInProgress(false);
     }
   };
 
+  const handleTogglePixelTunnelEnabled = () => {
+    if (!isNativeAndroid) return;
+    const nextVal = !pixelTunnelStatus?.enabled;
+    const updated = setNativePixelTunnelEnabled(nextVal);
+    if (updated) {
+      setPixelTunnelStatus(updated);
+    }
+  };
+
+  const handleTogglePixelTunnelWrite = () => {
+    if (!isNativeAndroid) return;
+    const nextVal = !pixelTunnelStatus?.write_enabled;
+    const updated = setNativePixelTunnelWriteEnabled(nextVal);
+    if (updated) {
+      setPixelTunnelStatus(updated);
+    }
+  };
+
+  const handleOpenPixelTunnelSetup = () => {
+    if (!isNativeAndroid) return;
+    openNativePixelTunnelSetup();
+  };
+
   const handleStatusCheck = async () => {
     if (!isNativeAndroid) return;
     setStatusCheckRunning(true);
     try {
+      const latestTunnel = getNativePixelTunnelStatus();
+      if (latestTunnel) {
+        setPixelTunnelStatus(latestTunnel);
+      }
       triggerNativeMcpSyncNow();
       const endpoint = resolveMcpAdminEndpoint('/api/internal/mcp-health', nativeBaseUrlInput);
       const res = await fetch(endpoint.url, {
@@ -420,12 +466,15 @@ export const EinstellungenView: React.FC = () => {
     ? nativeSyncStatus?.pendingSyncCount ?? 0
     : appSyncStatus.pendingSyncCount;
   const effectiveRevision = isNativeAndroid
-    ? nativeSyncStatus?.revision ?? mcpInfo?.revision ?? appSyncStatus.revision
+    ? pixelTunnelStatus?.local_revision ??
+      nativeSyncStatus?.revision ??
+      mcpInfo?.revision ??
+      appSyncStatus.revision
     : appSyncStatus.revision;
   const effectiveMcpUrl = isNativeAndroid
-    ? mcpInfo?.endpoints.mcpHeaderUrl ||
-      nativeSyncStatus?.mcpEndpointUrl ||
-      'https://hafner-gruenraum.ai.studio/mcp'
+    ? `${normalizeInfinityCloudBaseUrl(
+        mcpInfo?.endpoints.baseUrl || nativeSyncStatus?.baseUrl
+      )}/mcp`
     : '';
   const effectiveMaskedToken = isNativeAndroid
     ? mcpInfo?.maskedToken ||
@@ -790,9 +839,10 @@ export const EinstellungenView: React.FC = () => {
                 </div>
               </div>
 
-              {/* Privates ChatGPT-MCP-Plugin über ausgehenden HTTPS-Tunnel (nur Android-App) */}
+              {/* Direkter privater OpenAI-Pixel-Tunnel (nur Android-App) + Cloud-Abgleich */}
               {isNativeAndroid && (
-              <div className="p-3 bg-white border border-indigo-200/80 rounded-xl space-y-2.5">
+              <>
+              <div className="p-3 bg-white border border-indigo-200/90 rounded-xl space-y-2.5">
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex items-start gap-2.5 min-w-0">
                     <div className="w-8 h-8 rounded-xl bg-indigo-50 flex items-center justify-center text-[#3138A0] shrink-0">
@@ -800,15 +850,129 @@ export const EinstellungenView: React.FC = () => {
                     </div>
                     <div className="min-w-0">
                       <span className="font-bold text-slate-900 block text-xs">
-                        Privates ChatGPT-MCP-Plugin (HTTPS-Tunnel)
+                        Direkter ChatGPT Pixel-Tunnel (OpenAI HTTPS)
                       </span>
                       <span className="text-[10px] text-[#3138A0] font-semibold block leading-snug">
-                        ChatGPT ↔ privater Tunnel ↔ Pixel-App ↔ lokale Datenbank
+                        {pixelTunnelStatus?.label || 'Noch nicht eingerichtet'}
+                      </span>
+                    </div>
+                  </div>
+                  <span
+                    className={`text-[10px] font-bold px-2 py-0.5 rounded-md shrink-0 ${
+                      pixelTunnelStatus?.transport_confirmed
+                        ? 'text-[#2C7738] bg-emerald-50'
+                        : pixelTunnelStatus?.enabled
+                          ? 'text-amber-700 bg-amber-50'
+                          : 'text-slate-600 bg-slate-100'
+                    }`}
+                  >
+                    {pixelTunnelStatus?.transport_confirmed
+                      ? 'Verbunden'
+                      : pixelTunnelStatus?.enabled
+                        ? 'Aktiv'
+                        : 'Aus'}
+                  </span>
+                </div>
+
+                <div className="p-2 bg-slate-50 border border-slate-200/80 rounded-lg text-[10px] text-slate-700 space-y-1">
+                  <div className="font-semibold text-slate-900">
+                    {pixelTunnelStatus?.detail ||
+                      'Eigener ChatGPT-Tunnel direkt zum Pixel 10 Pro (api.openai.com).'}
+                  </div>
+                  {pixelTunnelStatus?.tunnel_id_masked ? (
+                    <div className="font-mono text-slate-600">
+                      Tunnel-ID: {pixelTunnelStatus.tunnel_id_masked}
+                      {pixelTunnelStatus.organization
+                        ? ` · Org: ${pixelTunnelStatus.organization}`
+                        : ''}
+                    </div>
+                  ) : null}
+                  <div className="text-slate-500">
+                    Letzter Kontakt:{' '}
+                    <span className="font-semibold text-slate-700">
+                      {pixelTunnelStatus?.last_contact_at
+                        ? new Date(pixelTunnelStatus.last_contact_at).toLocaleString('de-AT')
+                        : 'Noch kein Kontakt'}
+                    </span>
+                    {' · '}Letzte Antwort:{' '}
+                    <span className="font-semibold text-slate-700">
+                      {pixelTunnelStatus?.last_response_at
+                        ? new Date(pixelTunnelStatus.last_response_at).toLocaleString('de-AT')
+                        : 'Keine'}
+                    </span>
+                  </div>
+                  <div className="text-slate-500">
+                    Lokaler Infinity-Bestand:{' '}
+                    <span className="font-semibold text-slate-700">
+                      Rev. #{pixelTunnelStatus?.local_revision ?? effectiveRevision}
+                      {pixelTunnelStatus?.dataset_id ? ` (${pixelTunnelStatus.dataset_id})` : ''}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={handleTogglePixelTunnelEnabled}
+                    className={`h-9 px-2.5 rounded-lg text-[11px] font-semibold flex items-center justify-between border transition-all ${
+                      pixelTunnelStatus?.enabled
+                        ? 'bg-emerald-50 border-emerald-300 text-[#166534]'
+                        : 'bg-white border-slate-300 text-slate-700'
+                    }`}
+                  >
+                    <span>Pixel-Tunnel</span>
+                    <span className="font-bold">
+                      {pixelTunnelStatus?.enabled ? 'EIN' : 'AUS'}
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleTogglePixelTunnelWrite}
+                    className={`h-9 px-2.5 rounded-lg text-[11px] font-semibold flex items-center justify-between border transition-all ${
+                      pixelTunnelStatus?.write_enabled
+                        ? 'bg-indigo-50 border-indigo-300 text-[#3138A0]'
+                        : 'bg-white border-slate-300 text-slate-700'
+                    }`}
+                  >
+                    <span>Schreibfreigabe</span>
+                    <span className="font-bold">
+                      {pixelTunnelStatus?.write_enabled ? 'EIN' : 'AUS'}
+                    </span>
+                  </button>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleOpenPixelTunnelSetup}
+                  className="w-full h-9 px-3 bg-[#3138A0] hover:bg-[#272d82] active:scale-98 text-white text-[11px] font-semibold rounded-lg flex items-center justify-center gap-1.5 transition-all"
+                >
+                  <ShieldCheck size={13} />
+                  <span>
+                    {pixelTunnelStatus?.configured
+                      ? 'Tunnel-Einrichtung & Diagnose öffnen'
+                      : 'Eigenen ChatGPT-Tunnel jetzt einrichten'}
+                  </span>
+                </button>
+              </div>
+
+              <div className="p-3 bg-white border border-indigo-200/80 rounded-xl space-y-2.5">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex items-start gap-2.5 min-w-0">
+                    <div className="w-8 h-8 rounded-xl bg-indigo-50 flex items-center justify-center text-[#3138A0] shrink-0">
+                      <RefreshCw size={16} />
+                    </div>
+                    <div className="min-w-0">
+                      <span className="font-bold text-slate-900 block text-xs">
+                        Infinity Web-App &amp; Cloud-Synchronisation
+                      </span>
+                      <span className="text-[10px] text-[#3138A0] font-semibold block leading-snug">
+                        infinity-hafner.ai.studio ↔ Pixel 10 Pro
                       </span>
                     </div>
                   </div>
                   <span className="text-[10px] font-bold text-[#2C7738] bg-emerald-50 px-2 py-0.5 rounded-md shrink-0">
-                    Tunnel warm
+                    Infinity Cloud
                   </span>
                 </div>
 
@@ -1036,6 +1200,7 @@ export const EinstellungenView: React.FC = () => {
                   )}
                 </div>
               </div>
+              </>
               )}
 
               {isNativeAndroid && statusChecked && (

@@ -3,12 +3,16 @@ package at.hafner.gruenraum.storage
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.IOException
 import java.security.MessageDigest
 import java.time.Instant
+import java.util.UUID
+import java.util.concurrent.CopyOnWriteArraySet
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
@@ -21,17 +25,92 @@ data class BackupResult(
     val error: String? = null
 )
 
-class NativeStoreManager(private val context: Context) {
+class ConflictingRequestException(message: String) : IllegalArgumentException(message)
+class StaleRevisionException(message: String) : IllegalStateException(message)
 
-    private val prefs = context.getSharedPreferences("hafner_native_prefs", Context.MODE_PRIVATE)
-    private val storeFile = File(context.filesDir, "hafner_app_store.json")
-    private val storeBackupFile = File(context.filesDir, "hafner_app_store.json.bak")
-    private val internalZipDir = File(context.filesDir, "backups").apply { mkdirs() }
+/**
+ * Gemeinsamer, prozessweit synchronisierter Lese-Prüf-Ändere-Speichere-Pfad
+ * für Infinity (Oberfläche, direkter OpenAI-Pixel-Tunnel und Cloud-Synchronisation).
+ *
+ * - Atomare Speicherung mit Rücklese-Prüfung (SHA-256).
+ * - Revisionszähler & Schutz gegen Überschreiben neuerer MCP-Änderungen durch veraltete WebView-/Cloud-Snapshots.
+ * - Dauerhafte Idempotenz-Belege (infinity_tunnel_receipts.json) für alle Schreibaufträge über den Pixel-Tunnel.
+ */
+class NativeStoreManager(context: Context) {
+
+    private val appContext = context.applicationContext
+    private val prefs = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    private val storeFile = File(appContext.filesDir, "hafner_app_store.json")
+    private val storeBackupFile = File(appContext.filesDir, "hafner_app_store.json.bak")
+    private val receiptsFile = File(appContext.filesDir, "infinity_tunnel_receipts.json")
+    private val internalZipDir = File(appContext.filesDir, "backups").apply { mkdirs() }
     private val internalZipFile = File(internalZipDir, "hausgarten-backup.zip")
 
     var onLocalStateChanged: (() -> Unit)? = null
 
+    fun getDatasetId(): String {
+        synchronized(STORE_LOCK) {
+            val existing = prefs.getString(KEY_DATASET_ID, null)
+            if (!existing.isNullOrBlank()) return existing
+            val created = "infinity-pixel-${UUID.randomUUID().toString().take(12)}"
+            prefs.edit().putString(KEY_DATASET_ID, created).commit()
+            return created
+        }
+    }
+
+    fun getLocalRevision(): Int {
+        synchronized(STORE_LOCK) {
+            val rev = prefs.getInt(KEY_LOCAL_REVISION, 0)
+            if (rev > 0) return rev
+            val hasData = loadRawStringLocked() != null
+            if (hasData) {
+                prefs.edit().putInt(KEY_LOCAL_REVISION, 1).commit()
+                return 1
+            }
+            return 0
+        }
+    }
+
+    fun getLocalUpdatedAt(): String {
+        synchronized(STORE_LOCK) {
+            return prefs.getString(KEY_LOCAL_UPDATED_AT, null) ?: Instant.now().toString()
+        }
+    }
+
+    fun getLocalLastActor(): String {
+        synchronized(STORE_LOCK) {
+            return prefs.getString(KEY_LOCAL_LAST_ACTOR, "ui") ?: "ui"
+        }
+    }
+
+    fun getLocalLastSummary(): String {
+        synchronized(STORE_LOCK) {
+            return prefs.getString(KEY_LOCAL_LAST_SUMMARY, "Bereit") ?: "Bereit"
+        }
+    }
+
     fun loadAppState(): String? {
+        synchronized(STORE_LOCK) {
+            val loaded = loadRawStringLocked()
+            lastWebViewLoadedRevision = getLocalRevision()
+            return loaded
+        }
+    }
+
+    fun loadOrInitStateObject(): JSONObject {
+        synchronized(STORE_LOCK) {
+            val raw = loadRawStringLocked()
+            if (!raw.isNullOrBlank()) {
+                try {
+                    return ensureAllCollections(JSONObject(raw))
+                } catch (_: Exception) {
+                }
+            }
+            return ensureAllCollections(JSONObject())
+        }
+    }
+
+    private fun loadRawStringLocked(): String? {
         return try {
             when {
                 storeFile.exists() && storeFile.length() > 2 -> storeFile.readText(Charsets.UTF_8)
@@ -43,24 +122,242 @@ class NativeStoreManager(private val context: Context) {
         }
     }
 
-    @Synchronized
+    /**
+     * Speichert Änderungen aus der WebView-Oberfläche.
+     * Falls zwischenzeitlich Änderungen über den direkten Pixel-Tunnel geschrieben wurden,
+     * wird ein veralteter WebView-Snapshot nicht blind über neuere Tunnel-Daten geschrieben,
+     * sondern datensatzweise anhand von updated_at und Tombstones zusammengeführt.
+     */
     fun saveAppState(json: String): Boolean {
-        val ok = writeAtomically(json)
+        var mergedNotifyPayload: Triple<String, Int, String>? = null
+        val ok = synchronized(STORE_LOCK) {
+            try {
+                val incomingObj = ensureAllCollections(JSONObject(json))
+                val currentRev = getLocalRevision()
+                val currentActor = getLocalLastActor()
+                val existingRaw = loadRawStringLocked()
+
+                val finalJsonStr: String
+                val wasMergedWithNewerTunnelState: Boolean
+
+                if (
+                    existingRaw != null &&
+                    currentActor == "pixel_tunnel" &&
+                    currentRev > lastWebViewLoadedRevision
+                ) {
+                    val existingObj = ensureAllCollections(JSONObject(existingRaw))
+                    val mergedObj = mergeSnapshotsLocked(
+                        primaryNewer = existingObj,
+                        secondaryOlder = incomingObj
+                    )
+                    finalJsonStr = mergedObj.toString()
+                    wasMergedWithNewerTunnelState = true
+                } else {
+                    finalJsonStr = incomingObj.toString()
+                    wasMergedWithNewerTunnelState = false
+                }
+
+                if (!writeAtomicallyAndVerifyLocked(finalJsonStr)) {
+                    return@synchronized false
+                }
+
+                val nextRev = currentRev + 1
+                val nowIso = Instant.now().toString()
+                prefs.edit()
+                    .putInt(KEY_LOCAL_REVISION, nextRev)
+                    .putString(KEY_LOCAL_UPDATED_AT, nowIso)
+                    .putString(KEY_LOCAL_LAST_ACTOR, if (wasMergedWithNewerTunnelState) "pixel_tunnel" else "ui")
+                    .putString(KEY_LOCAL_LAST_SUMMARY, "Lokale Speicherung (Oberfläche)")
+                    .commit()
+                lastWebViewLoadedRevision = nextRev
+
+                if (wasMergedWithNewerTunnelState) {
+                    mergedNotifyPayload = Triple(
+                        finalJsonStr,
+                        nextRev,
+                        "Mit neueren Pixel-Tunnel-Änderungen abgeglichen"
+                    )
+                }
+                true
+            } catch (_: Exception) {
+                false
+            }
+        }
+
         if (ok) {
             onLocalStateChanged?.invoke()
+            notifyStaticLocalSaveListeners()
+            mergedNotifyPayload?.let { (stateStr, rev, summary) ->
+                notifyTunnelMutationListeners(stateStr, rev, summary)
+            }
         }
         return ok
     }
 
-    @Synchronized
+    /**
+     * Speichert eingehenden Cloud-/Remote-Snapshot, ohne neuere lokale Tunnel- oder Offline-Änderungen zu verlieren.
+     */
     fun saveAppStateFromRemote(json: String): Boolean {
-        return writeAtomically(json)
+        return synchronized(STORE_LOCK) {
+            try {
+                val remoteObj = ensureAllCollections(JSONObject(json))
+                val existingRaw = loadRawStringLocked()
+                val currentActor = getLocalLastActor()
+                val finalObj = if (existingRaw != null && currentActor == "pixel_tunnel") {
+                    val localObj = ensureAllCollections(JSONObject(existingRaw))
+                    mergeSnapshotsLocked(primaryNewer = localObj, secondaryOlder = remoteObj)
+                } else {
+                    remoteObj
+                }
+                val ok = writeAtomicallyAndVerifyLocked(finalObj.toString())
+                if (ok) {
+                    val nextRev = maxOf(getLocalRevision() + 1, 1)
+                    prefs.edit()
+                        .putInt(KEY_LOCAL_REVISION, nextRev)
+                        .putString(KEY_LOCAL_UPDATED_AT, Instant.now().toString())
+                        .putString(KEY_LOCAL_LAST_ACTOR, "cloud_sync")
+                        .putString(KEY_LOCAL_LAST_SUMMARY, "Cloud-Abgleich übernommen")
+                        .commit()
+                    lastWebViewLoadedRevision = nextRev
+                }
+                ok
+            } catch (_: Exception) {
+                false
+            }
+        }
     }
 
-    private fun writeAtomically(json: String): Boolean {
+    /**
+     * Atomarer Lese-Prüf-Ändere-Speichere-Pfad für Schreibaufträge über den direkten OpenAI-Pixel-Tunnel.
+     * - Prüft zuerst dauerhaften Wiederholungsbeleg (request_id + fingerprint).
+     * - Prüft optional expectedRevision.
+     * - Führt die Änderung aus, speichert & verifiziert die JSON-Datenbank sowie den Wiederholungsbeleg atomar.
+     * - Benachrichtigt Oberfläche (falls offen) und Cloud-Synchronisation.
+     */
+    @Throws(Exception::class)
+    fun executeTunnelMutation(
+        requestId: String,
+        fingerprint: String,
+        expectedRevision: Int?,
+        summary: String,
+        mutator: (stateObj: JSONObject, nextRevision: Int) -> JSONObject
+    ): JSONObject {
+        val cleanReqId = requestId.trim()
+        var notifyState: Triple<String, Int, String>? = null
+
+        val resultObj = synchronized(STORE_LOCK) {
+            val receipts = loadReceiptsLocked()
+            if (cleanReqId.isNotEmpty() && receipts.has(cleanReqId)) {
+                val existingReceipt = receipts.getJSONObject(cleanReqId)
+                val storedFp = existingReceipt.optString("fingerprint", "")
+                if (storedFp != fingerprint) {
+                    throw ConflictingRequestException(
+                        "CONFLICTING_REQUEST_ID: Die request_id '$cleanReqId' wurde bereits mit anderen Eingabedaten verwendet."
+                    )
+                }
+                val storedResult = existingReceipt.optJSONObject("result")
+                if (storedResult != null) {
+                    return@synchronized JSONObject(storedResult.toString()).apply {
+                        put("replayedFromReceipt", true)
+                    }
+                }
+            }
+
+            val currentRev = getLocalRevision()
+            if (expectedRevision != null && expectedRevision >= 0 && expectedRevision != currentRev) {
+                throw StaleRevisionException(
+                    "REVISION_CONFLICT: Erwartete Revision $expectedRevision stimmt nicht mit aktuellem lokalen Datenstand (Revision $currentRev) überein."
+                )
+            }
+
+            val stateObj = loadOrInitStateObject()
+            val nextRev = currentRev + 1
+            val mutationResult = mutator(stateObj, nextRev)
+            val serializedState = ensureAllCollections(stateObj).toString()
+
+            if (!writeAtomicallyAndVerifyLocked(serializedState)) {
+                throw IOException("SAVE_FAILED: Lokale Speicherung auf dem Pixel 10 Pro fehlgeschlagen.")
+            }
+
+            val nowIso = Instant.now().toString()
+            mutationResult.put("revision", nextRev)
+            mutationResult.put("datasetId", getDatasetId())
+            mutationResult.put("updatedAt", nowIso)
+
+            if (cleanReqId.isNotEmpty()) {
+                val receiptEntry = JSONObject().apply {
+                    put("requestId", cleanReqId)
+                    put("fingerprint", fingerprint)
+                    put("revision", nextRev)
+                    put("createdAt", nowIso)
+                    put("summary", summary)
+                    put("result", JSONObject(mutationResult.toString()))
+                }
+                receipts.put(cleanReqId, receiptEntry)
+                saveReceiptsLocked(receipts)
+            }
+
+            prefs.edit()
+                .putInt(KEY_LOCAL_REVISION, nextRev)
+                .putString(KEY_LOCAL_UPDATED_AT, nowIso)
+                .putString(KEY_LOCAL_LAST_ACTOR, "pixel_tunnel")
+                .putString(KEY_LOCAL_LAST_SUMMARY, summary)
+                .commit()
+
+            notifyState = Triple(serializedState, nextRev, summary)
+            mutationResult
+        }
+
+        notifyState?.let { (stateStr, rev, sum) ->
+            onLocalStateChanged?.invoke()
+            notifyStaticLocalSaveListeners()
+            notifyTunnelMutationListeners(stateStr, rev, sum)
+        }
+
+        return resultObj
+    }
+
+    private fun loadReceiptsLocked(): JSONObject {
+        return try {
+            if (receiptsFile.exists() && receiptsFile.length() > 2) {
+                JSONObject(receiptsFile.readText(Charsets.UTF_8))
+            } else {
+                JSONObject()
+            }
+        } catch (_: Exception) {
+            JSONObject()
+        }
+    }
+
+    private fun saveReceiptsLocked(receipts: JSONObject) {
+        try {
+            // Begrenze dauerhafte Belege auf die letzten 500 Einträge nach Zeitstempel
+            val keys = receipts.keys().asSequence().toList()
+            if (keys.size > 500) {
+                val sorted = keys.sortedBy { k ->
+                    receipts.optJSONObject(k)?.optString("createdAt", "") ?: ""
+                }
+                val toRemove = sorted.take(keys.size - 500)
+                for (k in toRemove) {
+                    receipts.remove(k)
+                }
+            }
+            val tmp = File(appContext.filesDir, "infinity_tunnel_receipts.json.tmp")
+            val text = receipts.toString()
+            tmp.writeText(text, Charsets.UTF_8)
+            if (!tmp.renameTo(receiptsFile)) {
+                tmp.copyTo(receiptsFile, overwrite = true)
+                tmp.delete()
+            }
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun writeAtomicallyAndVerifyLocked(json: String): Boolean {
         return try {
             JSONObject(json) // Validate well-formed JSON before atomic swap
-            val tmpFile = File(context.filesDir, "hafner_app_store.json.tmp")
+            val expectedHash = sha256Hex(json.toByteArray(Charsets.UTF_8))
+            val tmpFile = File(appContext.filesDir, "hafner_app_store.json.tmp")
             tmpFile.writeText(json, Charsets.UTF_8)
             if (storeFile.exists()) {
                 storeFile.copyTo(storeBackupFile, overwrite = true)
@@ -69,17 +366,109 @@ class NativeStoreManager(private val context: Context) {
                 tmpFile.copyTo(storeFile, overwrite = true)
                 tmpFile.delete()
             }
-            true
+            // Mandatory read-back verification
+            val readBack = storeFile.readText(Charsets.UTF_8)
+            val actualHash = sha256Hex(readBack.toByteArray(Charsets.UTF_8))
+            expectedHash == actualHash
         } catch (_: Exception) {
             false
         }
+    }
+
+    private fun ensureAllCollections(obj: JSONObject): JSONObject {
+        for (col in COLLECTION_KEYS) {
+            if (obj.optJSONArray(col) == null) {
+                obj.put(col, JSONArray())
+            }
+        }
+        if (obj.optJSONObject("taxSettings") == null) {
+            obj.put(
+                "taxSettings",
+                JSONObject().apply {
+                    put("selected_year", 2026)
+                    put("preferred_method", "auto_best")
+                    put("svs_paid", 0)
+                    put("workplace_allowance", 0)
+                    put("transit_ticket_full", 0)
+                    put("manual_extra_income", 0)
+                }
+            )
+        }
+        if (obj.optJSONObject("deletedIds") == null) {
+            obj.put("deletedIds", JSONObject())
+        }
+        return obj
+    }
+
+    private fun mergeSnapshotsLocked(primaryNewer: JSONObject, secondaryOlder: JSONObject): JSONObject {
+        val out = JSONObject()
+        val tombstones = JSONObject()
+        for (src in listOf(secondaryOlder.optJSONObject("deletedIds"), primaryNewer.optJSONObject("deletedIds"))) {
+            if (src == null) continue
+            val it = src.keys()
+            while (it.hasNext()) {
+                val k = it.next()
+                val v = src.optString(k, "")
+                val existing = tombstones.optString(k, "")
+                if (v.isNotEmpty() && (existing.isEmpty() || v >= existing)) {
+                    tombstones.put(k, v)
+                }
+            }
+        }
+
+        for (col in COLLECTION_KEYS) {
+            val byId = LinkedHashMap<String, JSONObject>()
+            val olderArr = secondaryOlder.optJSONArray(col) ?: JSONArray()
+            for (i in 0 until olderArr.length()) {
+                val item = olderArr.optJSONObject(i) ?: continue
+                val id = item.optString("id", "")
+                if (id.isNotEmpty()) byId[id] = item
+            }
+            val newerArr = primaryNewer.optJSONArray(col) ?: JSONArray()
+            for (i in 0 until newerArr.length()) {
+                val item = newerArr.optJSONObject(i) ?: continue
+                val id = item.optString("id", "")
+                if (id.isEmpty()) continue
+                val prev = byId[id]
+                if (prev == null) {
+                    byId[id] = item
+                } else {
+                    val prevUpdated = prev.optString("updated_at", "")
+                    val newUpdated = item.optString("updated_at", "")
+                    if (prevUpdated.isEmpty() || newUpdated.isEmpty() || newUpdated >= prevUpdated) {
+                        byId[id] = item
+                    }
+                }
+            }
+
+            val mergedArr = JSONArray()
+            for ((id, item) in byId) {
+                val tombKey = "$col:$id"
+                val deletedAt = tombstones.optString(tombKey, "")
+                val itemUpdated = item.optString("updated_at", "")
+                if (deletedAt.isNotEmpty() && (itemUpdated.isEmpty() || deletedAt >= itemUpdated)) {
+                    continue
+                }
+                mergedArr.put(item)
+            }
+            out.put(col, mergedArr)
+        }
+
+        out.put(
+            "taxSettings",
+            primaryNewer.optJSONObject("taxSettings")
+                ?: secondaryOlder.optJSONObject("taxSettings")
+                ?: JSONObject()
+        )
+        out.put("deletedIds", tombstones)
+        return out
     }
 
     fun getPersistedBackupUri(): Uri? {
         val raw = prefs.getString(KEY_BACKUP_URI, null) ?: return null
         return try {
             val uri = Uri.parse(raw)
-            val persisted = context.contentResolver.persistedUriPermissions.any {
+            val persisted = appContext.contentResolver.persistedUriPermissions.any {
                 it.uri == uri && it.isReadPermission && it.isWritePermission
             }
             if (persisted) uri else null
@@ -91,7 +480,7 @@ class NativeStoreManager(private val context: Context) {
     fun savePersistedBackupUri(uri: Uri) {
         try {
             val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-            context.contentResolver.takePersistableUriPermission(uri, flags)
+            appContext.contentResolver.takePersistableUriPermission(uri, flags)
         } catch (_: Exception) {
             // Provider may already grant access for session
         }
@@ -116,7 +505,7 @@ class NativeStoreManager(private val context: Context) {
             val sha256 = sha256Hex(payloadBytes)
 
             val manifestJson = JSONObject().apply {
-                put("app", "Hafner Grünraum Handwerk")
+                put("app", "Infinity · Hafner Grünraum Handwerk")
                 put("createdAt", nowIso)
                 put("sha256", sha256)
                 put("payloadBytes", payloadBytes.size)
@@ -141,13 +530,13 @@ class NativeStoreManager(private val context: Context) {
             // Write to user-chosen persistent target file if configured
             val effectiveUri = targetUri ?: getPersistedBackupUri()
             if (effectiveUri != null) {
-                context.contentResolver.openOutputStream(effectiveUri, "wt")?.use { out ->
+                appContext.contentResolver.openOutputStream(effectiveUri, "wt")?.use { out ->
                     out.write(zipBytes)
                     out.flush()
                 } ?: throw IllegalStateException("Zieldatei konnte nicht zum Schreiben geöffnet werden.")
             }
 
-            // REQ-020..022: Mandatory read-back & checksum verification
+            // Mandatory read-back & checksum verification
             val readBackJson = if (effectiveUri != null) {
                 readVerifiedZipBackup(effectiveUri)
             } else {
@@ -182,12 +571,12 @@ class NativeStoreManager(private val context: Context) {
         return try {
             val rawBytes: ByteArray = when {
                 sourceUri != null -> {
-                    context.contentResolver.openInputStream(sourceUri)?.use { it.readBytes() }
+                    appContext.contentResolver.openInputStream(sourceUri)?.use { it.readBytes() }
                         ?: return null
                 }
                 getPersistedBackupUri() != null -> {
                     val uri = getPersistedBackupUri()!!
-                    context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                    appContext.contentResolver.openInputStream(uri)?.use { it.readBytes() }
                         ?: if (internalZipFile.exists()) internalZipFile.readBytes() else return null
                 }
                 internalZipFile.exists() -> internalZipFile.readBytes()
@@ -236,7 +625,81 @@ class NativeStoreManager(private val context: Context) {
     }
 
     companion object {
+        private val STORE_LOCK = Any()
+        private const val PREFS_NAME = "hafner_native_prefs"
         private const val KEY_BACKUP_URI = "persisted_backup_uri"
         private const val KEY_LAST_BACKUP_ISO = "last_backup_iso"
+        private const val KEY_DATASET_ID = "infinity_dataset_id"
+        private const val KEY_LOCAL_REVISION = "local_store_revision"
+        private const val KEY_LOCAL_UPDATED_AT = "local_store_updated_at"
+        private const val KEY_LOCAL_LAST_ACTOR = "local_store_last_actor"
+        private const val KEY_LOCAL_LAST_SUMMARY = "local_store_last_summary"
+
+        val COLLECTION_KEYS = listOf(
+            "customers",
+            "properties",
+            "appointments",
+            "workRecords",
+            "invoices",
+            "inquiries",
+            "offers",
+            "orders",
+            "equipments",
+            "materials",
+            "expenses"
+        )
+
+        @Volatile
+        private var lastWebViewLoadedRevision: Int = 0
+
+        private val tunnelMutationListeners =
+            CopyOnWriteArraySet<(stateJson: String, revision: Int, summary: String) -> Unit>()
+        private val staticLocalSaveListeners = CopyOnWriteArraySet<() -> Unit>()
+
+        fun notifyWebViewSyncedRevision(revision: Int) {
+            synchronized(STORE_LOCK) {
+                if (revision > lastWebViewLoadedRevision) {
+                    lastWebViewLoadedRevision = revision
+                }
+            }
+        }
+
+        fun registerTunnelMutationListener(
+            listener: (stateJson: String, revision: Int, summary: String) -> Unit
+        ) {
+            tunnelMutationListeners.add(listener)
+        }
+
+        fun unregisterTunnelMutationListener(
+            listener: (stateJson: String, revision: Int, summary: String) -> Unit
+        ) {
+            tunnelMutationListeners.remove(listener)
+        }
+
+        fun registerStaticLocalSaveListener(listener: () -> Unit) {
+            staticLocalSaveListeners.add(listener)
+        }
+
+        fun unregisterStaticLocalSaveListener(listener: () -> Unit) {
+            staticLocalSaveListeners.remove(listener)
+        }
+
+        private fun notifyTunnelMutationListeners(stateJson: String, revision: Int, summary: String) {
+            for (listener in tunnelMutationListeners) {
+                try {
+                    listener(stateJson, revision, summary)
+                } catch (_: Exception) {
+                }
+            }
+        }
+
+        private fun notifyStaticLocalSaveListeners() {
+            for (listener in staticLocalSaveListeners) {
+                try {
+                    listener()
+                } catch (_: Exception) {
+                }
+            }
+        }
     }
 }

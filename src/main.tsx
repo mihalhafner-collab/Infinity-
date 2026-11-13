@@ -3,7 +3,7 @@ import App from './App.tsx';
 import './index.css';
 import {isNativeAndroidApp} from './services/nativeBridge.ts';
 
-const WEB_APP_BUNDLE_VERSION = '2026-11-12-v5-infinity';
+const WEB_APP_BUNDLE_VERSION = '2026-11-13-v3-infinity';
 const WEB_APP_VERSION_KEY = 'hafner_web_bundle_version';
 
 if (typeof window !== 'undefined' && typeof navigator !== 'undefined' && !isNativeAndroidApp()) {

@@ -216,6 +216,7 @@ function getPublicFirebaseClientConfigJson(): string {
 function isTrustedInternalOrigin(origin: string): boolean {
   const trimmed = origin.trim();
   if (!trimmed) return false;
+  if (trimmed === 'https://infinity-hafner.ai.studio') return true;
   if (trimmed === 'https://hafner-gruenraum.ai.studio') return true;
   if (trimmed === 'https://appassets.androidplatform.net') return true;
   if (/^https:\/\/[a-z0-9-]+\.ai\.studio$/i.test(trimmed)) return true;
@@ -294,7 +295,7 @@ function requireMcpAuth(req: Request, res: Response, next: NextFunction): void {
     const { baseUrl } = resolvePublicHttpsBaseUrl(req);
     res.setHeader(
       'WWW-Authenticate',
-      `Bearer realm="hafner-gruenraum-mcp", resource_metadata="${baseUrl}/.well-known/oauth-protected-resource"`
+      `Bearer realm="infinity-hafner-mcp", resource_metadata="${baseUrl}/.well-known/oauth-protected-resource"`
     );
     res.status(401).json({
       jsonrpc: '2.0',
@@ -621,7 +622,7 @@ function handleSingleJsonRpc(payload: JsonRpcRequest): Record<string, unknown> |
             prompts: { listChanged: false }
           },
           serverInfo: {
-            name: 'hafner-gruenraum-mcp',
+            name: 'infinity-hafner-mcp',
             version: '1.3.0'
           },
           instructions:
@@ -1697,8 +1698,8 @@ async function startServer() {
     }
     const { baseUrl } = resolvePublicHttpsBaseUrl(req);
     res.json({
-      name: 'hafner-gruenraum-mcp',
-      version: '1.2.0',
+      name: 'infinity-hafner-mcp',
+      version: '1.3.0',
       endpoint: `${baseUrl}/mcp`,
       protocolVersions: SUPPORTED_MCP_VERSIONS,
       auth: ['OAuth 2.1 (PKCE + DCR)', 'Bearer Token'],

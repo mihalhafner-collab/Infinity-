@@ -30,6 +30,24 @@ export interface NativeMcpSyncStatus {
   activeOAuthGrants: number;
 }
 
+export interface NativePixelTunnelStatus {
+  running: boolean;
+  state: string;
+  label: string;
+  detail: string;
+  battery_exempt: boolean;
+  configured: boolean;
+  enabled: boolean;
+  write_enabled: boolean;
+  tunnel_id_masked: string;
+  organization: string;
+  last_contact_at: number;
+  last_response_at: number;
+  transport_confirmed: boolean;
+  local_revision: number;
+  dataset_id: string;
+}
+
 interface HafnerNativeInterface {
   isNativeAndroid: () => boolean;
   getDeviceProfile: () => string;
@@ -37,6 +55,10 @@ interface HafnerNativeInterface {
   saveStateJson: (json: string) => boolean;
   getBackupMetaJson: () => string;
   getMcpSyncStatusJson?: () => string;
+  getPixelTunnelStatusJson?: () => string;
+  openPixelTunnelSetup?: () => boolean;
+  setPixelTunnelEnabled?: (enabled: boolean) => string;
+  setPixelTunnelWriteEnabled?: (writeEnabled: boolean) => string;
   getRevealedMcpToken?: () => string;
   copyToClipboard?: (label: string, text: string) => boolean;
   configureMcpSync?: (baseUrl: string, token: string) => string;
@@ -77,6 +99,7 @@ declare global {
     __hafnerNativeBack?: () => boolean;
     __onHafnerNativeRemoteState?: (stateJson: string, revision: number, summary: string) => void;
     __onHafnerNativeMcpStatus?: (statusJson: string) => void;
+    __onHafnerNativePixelTunnelStatus?: (statusJson: string) => void;
   }
 }
 
@@ -87,13 +110,38 @@ type PendingCallback = {
 
 type RemoteStateListener = (stateJson: string, revision: number, summary: string) => void;
 type McpStatusListener = (status: NativeMcpSyncStatus) => void;
+type PixelTunnelStatusListener = (status: NativePixelTunnelStatus) => void;
 
 const pendingCallbacks = new Map<string, PendingCallback>();
 const remoteStateListeners = new Set<RemoteStateListener>();
 const mcpStatusListeners = new Set<McpStatusListener>();
+const pixelTunnelStatusListeners = new Set<PixelTunnelStatusListener>();
 
 const LEGACY_REMOTE_URL_KEY = 'hafner_remote_mcp_base_url';
 const LEGACY_REMOTE_TOKEN_KEY = 'hafner_remote_mcp_token';
+export const DEFAULT_INFINITY_CLOUD_URL = 'https://infinity-hafner.ai.studio';
+
+export function normalizeInfinityCloudBaseUrl(raw?: string | null): string {
+  const trimmed = (raw || '').trim();
+  if (!trimmed) return DEFAULT_INFINITY_CLOUD_URL;
+  const withoutMcp = trimmed.replace(/\/mcp.*$/i, '').replace(/\/+$/, '');
+  if (
+    withoutMcp.includes('ais-pre-usuarrctzvo6yzyghmhedg') ||
+    withoutMcp.toLowerCase().includes('hafner-gruenraum.ai.studio')
+  ) {
+    return DEFAULT_INFINITY_CLOUD_URL;
+  }
+  return withoutMcp || DEFAULT_INFINITY_CLOUD_URL;
+}
+
+function normalizeSyncStatusUrls(status: NativeMcpSyncStatus): NativeMcpSyncStatus {
+  const cleanBase = normalizeInfinityCloudBaseUrl(status.baseUrl);
+  return {
+    ...status,
+    baseUrl: cleanBase,
+    mcpEndpointUrl: `${cleanBase}/mcp`
+  };
+}
 
 if (typeof window !== 'undefined') {
   window.__onHafnerNativeCallback = (requestId: string, ok: boolean, payloadOrError: string) => {
@@ -119,8 +167,23 @@ if (typeof window !== 'undefined') {
 
   window.__onHafnerNativeMcpStatus = (statusJson: string) => {
     try {
-      const parsed = JSON.parse(statusJson) as NativeMcpSyncStatus;
+      const parsed = normalizeSyncStatusUrls(JSON.parse(statusJson) as NativeMcpSyncStatus);
       for (const listener of mcpStatusListeners) {
+        try {
+          listener(parsed);
+        } catch {
+          // Ignore individual listener error
+        }
+      }
+    } catch {
+      // Ignore malformed status payload
+    }
+  };
+
+  window.__onHafnerNativePixelTunnelStatus = (statusJson: string) => {
+    try {
+      const parsed = JSON.parse(statusJson) as NativePixelTunnelStatus;
+      for (const listener of pixelTunnelStatusListeners) {
         try {
           listener(parsed);
         } catch {
@@ -181,10 +244,63 @@ export function getNativeMcpSyncStatus(): NativeMcpSyncStatus | null {
   try {
     const raw = window.HafnerNative?.getMcpSyncStatusJson?.();
     if (!raw) return null;
-    return JSON.parse(raw) as NativeMcpSyncStatus;
+    return normalizeSyncStatusUrls(JSON.parse(raw) as NativeMcpSyncStatus);
   } catch {
     return null;
   }
+}
+
+export function getNativePixelTunnelStatus(): NativePixelTunnelStatus | null {
+  if (!isNativeAndroidApp()) return null;
+  try {
+    const raw = window.HafnerNative?.getPixelTunnelStatusJson?.();
+    if (!raw) return null;
+    return JSON.parse(raw) as NativePixelTunnelStatus;
+  } catch {
+    return null;
+  }
+}
+
+export function openNativePixelTunnelSetup(): boolean {
+  if (!isNativeAndroidApp()) return false;
+  try {
+    return Boolean(window.HafnerNative?.openPixelTunnelSetup?.());
+  } catch {
+    return false;
+  }
+}
+
+export function setNativePixelTunnelEnabled(enabled: boolean): NativePixelTunnelStatus | null {
+  if (!isNativeAndroidApp()) return null;
+  try {
+    const raw = window.HafnerNative?.setPixelTunnelEnabled?.(enabled);
+    if (!raw) return null;
+    return JSON.parse(raw) as NativePixelTunnelStatus;
+  } catch {
+    return null;
+  }
+}
+
+export function setNativePixelTunnelWriteEnabled(
+  writeEnabled: boolean
+): NativePixelTunnelStatus | null {
+  if (!isNativeAndroidApp()) return null;
+  try {
+    const raw = window.HafnerNative?.setPixelTunnelWriteEnabled?.(writeEnabled);
+    if (!raw) return null;
+    return JSON.parse(raw) as NativePixelTunnelStatus;
+  } catch {
+    return null;
+  }
+}
+
+export function subscribeNativePixelTunnelStatus(
+  listener: PixelTunnelStatusListener
+): () => void {
+  pixelTunnelStatusListeners.add(listener);
+  return () => {
+    pixelTunnelStatusListeners.delete(listener);
+  };
 }
 
 export function pairNativeMcpWithCode(
@@ -193,9 +309,10 @@ export function pairNativeMcpWithCode(
 ): NativeMcpSyncStatus | null {
   if (!isNativeAndroidApp()) return null;
   try {
-    const raw = window.HafnerNative?.pairMcpWithCode?.(baseUrl.trim(), code.trim());
+    const cleanUrl = normalizeInfinityCloudBaseUrl(baseUrl);
+    const raw = window.HafnerNative?.pairMcpWithCode?.(cleanUrl, code.trim());
     if (!raw) return null;
-    return JSON.parse(raw) as NativeMcpSyncStatus;
+    return normalizeSyncStatusUrls(JSON.parse(raw) as NativeMcpSyncStatus);
   } catch {
     return null;
   }
@@ -207,9 +324,10 @@ export function configureNativeMcpSync(
 ): NativeMcpSyncStatus | null {
   if (!isNativeAndroidApp()) return null;
   try {
-    const raw = window.HafnerNative?.configureMcpSync?.(baseUrl.trim(), token.trim());
+    const cleanUrl = normalizeInfinityCloudBaseUrl(baseUrl);
+    const raw = window.HafnerNative?.configureMcpSync?.(cleanUrl, token.trim());
     if (!raw) return null;
-    return JSON.parse(raw) as NativeMcpSyncStatus;
+    return normalizeSyncStatusUrls(JSON.parse(raw) as NativeMcpSyncStatus);
   } catch {
     return null;
   }
@@ -229,7 +347,7 @@ export function disconnectNativeMcpSync(): NativeMcpSyncStatus | null {
   try {
     const raw = window.HafnerNative?.disconnectMcpSync?.();
     if (!raw) return null;
-    return JSON.parse(raw) as NativeMcpSyncStatus;
+    return normalizeSyncStatusUrls(JSON.parse(raw) as NativeMcpSyncStatus);
   } catch {
     return null;
   }
@@ -515,13 +633,9 @@ export function resolveMcpAdminEndpoint(
   const cleanPath = path.startsWith('/') ? path : `/${path}`;
   if (isNativeAndroidApp()) {
     const status = getNativeMcpSyncStatus();
-    const rawBase =
-      overrideBaseUrl?.trim() ||
-      status?.baseUrl?.trim() ||
-      'https://hafner-gruenraum.ai.studio';
-    const normalizedBase = rawBase.includes('ais-pre-usuarrctzvo6yzyghmhedg')
-      ? 'https://hafner-gruenraum.ai.studio'
-      : rawBase.replace(/\/mcp.*$/i, '').replace(/\/+$/, '');
+    const normalizedBase = normalizeInfinityCloudBaseUrl(
+      overrideBaseUrl?.trim() || status?.baseUrl?.trim() || DEFAULT_INFINITY_CLOUD_URL
+    );
     const authToken =
       status?.deviceToken?.trim() ||
       status?.revealedToken?.trim() ||
