@@ -1,6 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useApp } from '../../context/AppContext.tsx';
-import { Header } from '../common/Header.tsx';
 import { BottomActionBar } from '../common/BottomActionBar.tsx';
 import { BottomNav } from '../common/BottomNav.tsx';
 import {
@@ -15,29 +14,32 @@ import {
   RefreshCw,
   MapPin,
   ChevronRight,
-  ChevronDown,
   Clock,
   AlertTriangle,
   Wrench,
   MessageSquare,
-  Smartphone,
-  Building2,
-  Phone,
-  Mail,
   FileText,
-  Search
+  CheckSquare,
+  Briefcase,
+  Package,
+  Bookmark,
+  LayoutGrid
 } from 'lucide-react';
 import {
   WeatherIconKind,
   useSmartphoneWeather
 } from '../../services/weatherService.ts';
-import {
-  getNativeMcpSyncStatus,
-  isNativeAndroidApp,
-  NativeMcpSyncStatus,
-  subscribeNativeMcpStatus
-} from '../../services/nativeBridge.ts';
-import { calculateGuvSummary } from '../../utils/guvCalculator.ts';
+import { ScreenId } from '../../types/index.ts';
+
+type QuickListKey =
+  | 'offene_stunden'
+  | 'faellig_neu'
+  | 'auftraege'
+  | 'arbeiten'
+  | 'angebote'
+  | 'geraete'
+  | 'material'
+  | 'lcr';
 
 function renderWeatherIcon(kind: WeatherIconKind, size = 18): React.ReactNode {
   switch (kind) {
@@ -60,55 +62,24 @@ function renderWeatherIcon(kind: WeatherIconKind, size = 18): React.ReactNode {
   }
 }
 
-function formatSyncTimeShort(iso: string | null | undefined): string | null {
-  if (!iso) return null;
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return null;
-  return d.toLocaleString('de-AT', {
-    day: '2-digit',
-    month: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit'
-  });
-}
-
 export const HeuteView: React.FC = () => {
   const {
     appointments,
     workRecords,
+    orders,
+    offers,
     equipments,
+    materials,
     inquiries,
     customers,
-    invoices,
-    expenses,
-    taxSettings,
-    appSyncStatus,
-    refreshFromServer,
     navigate,
     setSelectedCustomerId,
-    setSelectedInvoiceId
+    setIsThreeDotsMenuOpen
   } = useApp();
-
-  const isNative = isNativeAndroidApp();
-  const [nativeSyncStatus, setNativeSyncStatus] = useState<NativeMcpSyncStatus | null>(() =>
-    getNativeMcpSyncStatus()
-  );
-
-  useEffect(() => {
-    if (!isNative) return;
-    setNativeSyncStatus(getNativeMcpSyncStatus());
-    return subscribeNativeMcpStatus((status) => {
-      setNativeSyncStatus(status);
-    });
-  }, [isNative]);
 
   const { weather, refreshWeather } = useSmartphoneWeather();
   const [weatherDetailsOpen, setWeatherDetailsOpen] = useState(false);
-  // In der Web-App standardmäßig aufgeklappt (sofortige Betriebsdaten-Übersicht ohne Pixel), am Pixel zuklappbar
-  const [businessOverviewExpanded, setBusinessOverviewExpanded] = useState<boolean>(() => !isNative);
-  const [contactSearch, setContactSearch] = useState('');
-  const [openHoursExpanded, setOpenHoursExpanded] = useState(false);
-  const [tasksExpanded, setTasksExpanded] = useState(false);
+  const [selectedList, setSelectedList] = useState<QuickListKey>('offene_stunden');
 
   const nowDate = new Date();
   const todayIso = `${nowDate.getFullYear()}-${String(nowDate.getMonth() + 1).padStart(
@@ -121,55 +92,142 @@ export const HeuteView: React.FC = () => {
     month: 'short'
   });
 
-  // Filter today's appointments
-  const todayApps = appointments
-    .filter((a) => a.date === todayIso)
-    .sort((a, b) => (a.start_time || '99:99').localeCompare(b.start_time || '99:99'));
-
-  // Calculate open unbilled hours (excluding LCR!)
-  const openWork = workRecords.filter((w) => !w.settlement_id && !w.is_lcr);
-  const openHoursSum = openWork.reduce((sum, w) => sum + (w.hours || 0), 0);
-  const openAmountSum = openWork.reduce((sum, w) => sum + (w.accounting_amount || 0), 0);
-
-  // LCR summary
-  const openLcrWork = workRecords.filter((w) => !w.settlement_id && w.is_lcr);
-  const openLcrAmountSum = openLcrWork.reduce((sum, w) => sum + (w.accounting_amount || 0), 0);
-
-  // GuV & Open Invoices for Business Overview
-  const guv = useMemo(
-    () => calculateGuvSummary(invoices, expenses, taxSettings),
-    [invoices, expenses, taxSettings]
-  );
-
-  const openInvoices = useMemo(
+  // Heutige Termine
+  const todayApps = useMemo(
     () =>
-      invoices.filter(
-        (inv) =>
-          !inv.is_storno &&
-          inv.status !== 'cancelled' &&
-          (inv.status === 'unpaid' || inv.status === 'partially_paid')
-      ),
-    [invoices]
+      appointments
+        .filter((a) => a.date === todayIso)
+        .sort((a, b) => (a.start_time || '99:99').localeCompare(b.start_time || '99:99')),
+    [appointments, todayIso]
   );
 
-  const activeCustomers = useMemo(() => {
-    const base = customers.filter((c) => c.active !== false);
-    const q = contactSearch.trim().toLowerCase();
-    if (!q) return base;
-    return base.filter((c) => {
-      const addr = `${c.street || ''} ${c.zip || ''} ${c.city || ''}`.toLowerCase();
-      return (
-        c.name.toLowerCase().includes(q) ||
-        (c.phone || '').toLowerCase().includes(q) ||
-        (c.email || '').toLowerCase().includes(q) ||
-        addr.includes(q)
-      );
-    });
-  }, [customers, contactSearch]);
+  // Offene Arbeitsstunden (ohne L.C.R.)
+  const openWork = useMemo(
+    () => workRecords.filter((w) => !w.settlement_id && !w.is_lcr),
+    [workRecords]
+  );
+  const openHoursSum = useMemo(
+    () => openWork.reduce((sum, w) => sum + (w.hours || 0), 0),
+    [openWork]
+  );
+  const openAmountSum = useMemo(
+    () => openWork.reduce((sum, w) => sum + (w.accounting_amount || 0), 0),
+    [openWork]
+  );
 
-  // Due maintenance
-  const dueEquipments = equipments.filter((e) => e.status === 'faellig');
-  const newInquiries = inquiries.filter((i) => i.status === 'neu');
+  // Offene L.C.R.-Einträge
+  const openLcrWork = useMemo(
+    () => workRecords.filter((w) => !w.settlement_id && w.is_lcr),
+    [workRecords]
+  );
+
+  // Offene Aufträge
+  const openOrders = useMemo(
+    () => orders.filter((o) => o.status !== 'erledigt'),
+    [orders]
+  );
+
+  // Fällige Geräte & neue Anfragen
+  const dueEquipments = useMemo(
+    () => equipments.filter((e) => e.status === 'faellig'),
+    [equipments]
+  );
+  const newInquiries = useMemo(
+    () => inquiries.filter((i) => i.status === 'neu'),
+    [inquiries]
+  );
+
+  const sortedRecentWork = useMemo(
+    () =>
+      [...workRecords].sort((a, b) =>
+        (b.work_date || '').localeCompare(a.work_date || '')
+      ),
+    [workRecords]
+  );
+
+  const listOptions = useMemo<
+    Array<{
+      key: QuickListKey;
+      label: string;
+      badge: string;
+      targetScreen: ScreenId;
+      icon: React.ReactNode;
+    }>
+  >(
+    () => [
+      {
+        key: 'offene_stunden',
+        label: 'Offene Stunden',
+        badge: `${openHoursSum.toFixed(1)} Std. · ${openAmountSum.toFixed(0)} €`,
+        targetScreen: 'M04_ABRECHNUNG',
+        icon: <Clock size={14} className="text-[#B4470B] shrink-0" />
+      },
+      {
+        key: 'faellig_neu',
+        label: 'Fällig & Anfragen',
+        badge: `${dueEquipments.length + newInquiries.length}`,
+        targetScreen: dueEquipments.length > 0 ? 'M10_GERAETE' : 'M05_ANFRAGEN',
+        icon: <AlertTriangle size={14} className="text-[#9A1B8D] shrink-0" />
+      },
+      {
+        key: 'auftraege',
+        label: 'Aufträge',
+        badge: `${openOrders.length} offen`,
+        targetScreen: 'M07_AUFTRAEGE',
+        icon: <CheckSquare size={14} className="text-[#3138A0] shrink-0" />
+      },
+      {
+        key: 'arbeiten',
+        label: 'Arbeiten',
+        badge: `${workRecords.length}`,
+        targetScreen: 'M08_ARBEITEN',
+        icon: <Briefcase size={14} className="text-[#3138A0] shrink-0" />
+      },
+      {
+        key: 'angebote',
+        label: 'Angebote',
+        badge: `${offers.length}`,
+        targetScreen: 'M06_ANGEBOTE',
+        icon: <FileText size={14} className="text-[#3138A0] shrink-0" />
+      },
+      {
+        key: 'geraete',
+        label: 'Geräte',
+        badge: `${equipments.length}`,
+        targetScreen: 'M10_GERAETE',
+        icon: <Wrench size={14} className="text-[#2C7738] shrink-0" />
+      },
+      {
+        key: 'material',
+        label: 'Material',
+        badge: `${materials.length}`,
+        targetScreen: 'M11_MATERIAL',
+        icon: <Package size={14} className="text-[#2C7738] shrink-0" />
+      },
+      {
+        key: 'lcr',
+        label: 'L.C.R.',
+        badge: `${openLcrWork.length}`,
+        targetScreen: 'M09_LCR',
+        icon: <Bookmark size={14} className="text-[#3138A0] shrink-0" />
+      }
+    ],
+    [
+      openHoursSum,
+      openAmountSum,
+      dueEquipments.length,
+      newInquiries.length,
+      openOrders.length,
+      workRecords.length,
+      offers.length,
+      equipments.length,
+      materials.length,
+      openLcrWork.length
+    ]
+  );
+
+  const activeListMeta =
+    listOptions.find((o) => o.key === selectedList) || listOptions[0];
 
   const handleOpenTour = () => {
     navigate('M02_PLANUNG');
@@ -181,34 +239,17 @@ export const HeuteView: React.FC = () => {
     navigate('M03_KUNDEN');
   };
 
-  const handleOpenInvoice = (invId: string) => {
-    setSelectedInvoiceId(invId);
-    navigate('M04_ABRECHNUNG');
-  };
-
-  const activeRevision = isNative
-    ? nativeSyncStatus?.revision ?? appSyncStatus.revision
-    : appSyncStatus.revision;
-  const isSyncBusy = isNative
-    ? Boolean(nativeSyncStatus?.syncInFlight)
-    : appSyncStatus.syncInFlight;
-  const lastPixelSyncFormatted = formatSyncTimeShort(
-    isNative ? nativeSyncStatus?.lastSyncAt : appSyncStatus.lastAndroidSyncAt || appSyncStatus.lastSyncAt
-  );
-
   return (
     <div className="flex-1 min-h-0 flex flex-col h-full bg-[#F8F9FA] overflow-hidden relative">
-      <Header title="Heute" />
-
-      {/* Main Scroll Area */}
-      <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-4 overscroll-contain">
-        {/* Date & Weather Row (ILL-001) */}
+      {/* Main Scroll Area (Oberer 'Heute'-Balken entfernt -> freier Platz direkt genutzt) */}
+      <div className="flex-1 min-h-0 overflow-y-auto px-4 pt-3.5 pb-4 space-y-3.5 overscroll-contain">
+        {/* Datum & Live-Wetter Kopfzeile */}
         <div className="flex items-start justify-between gap-3">
           <div>
-            <h2 className="text-2xl font-bold text-slate-950 tracking-tight leading-tight">
+            <h1 className="text-2xl font-bold text-slate-950 tracking-tight leading-tight">
               {todayLabel}
-            </h2>
-            <div className="flex items-center gap-1.5 text-sm text-slate-600 mt-1 tabular-nums">
+            </h1>
+            <div className="flex items-center gap-1.5 text-xs font-medium text-slate-600 mt-0.5 tabular-nums">
               <span>
                 {todayApps.length} {todayApps.length === 1 ? 'Termin' : 'Termine'}
               </span>
@@ -222,7 +263,6 @@ export const HeuteView: React.FC = () => {
             </div>
           </div>
 
-          {/* Live Open-Meteo Smartphone Weather Widget */}
           <button
             type="button"
             onClick={() => {
@@ -233,7 +273,7 @@ export const HeuteView: React.FC = () => {
               }
             }}
             title="Live-Wetter am Smartphone-Standort (Open-Meteo)"
-            className="min-h-[42px] flex items-center gap-2 px-3 py-2 bg-white border border-slate-200/90 rounded-2xl shadow-2xs text-sm font-bold text-slate-900 tabular-nums shrink-0 active:bg-slate-50 transition-colors"
+            className="min-h-[40px] flex items-center gap-2 px-3 py-1.5 bg-white border border-slate-200/90 rounded-2xl shadow-2xs text-sm font-bold text-slate-900 tabular-nums shrink-0 active:bg-slate-50 transition-colors"
           >
             {weather.data ? (
               <>
@@ -242,12 +282,12 @@ export const HeuteView: React.FC = () => {
               </>
             ) : weather.status === 'loading' ? (
               <>
-                <RefreshCw size={16} className="text-slate-400 animate-spin shrink-0" />
+                <RefreshCw size={15} className="text-slate-400 animate-spin shrink-0" />
                 <span className="text-xs text-slate-500">Wetter…</span>
               </>
             ) : (
               <>
-                <MapPin size={16} className="text-[#3138A0] shrink-0" />
+                <MapPin size={15} className="text-[#3138A0] shrink-0" />
                 <span className="text-xs text-[#3138A0]">Wetter</span>
               </>
             )}
@@ -256,7 +296,7 @@ export const HeuteView: React.FC = () => {
 
         {/* Kompakte Live-Tagesvorhersage bei Tipp auf das Wetter-Badge */}
         {weatherDetailsOpen && weather.data && (
-          <div className="px-3.5 py-2.5 bg-white border border-slate-200/90 rounded-2xl shadow-2xs flex items-center justify-between gap-2 text-xs text-slate-700">
+          <div className="px-3.5 py-2 bg-white border border-slate-200/90 rounded-2xl shadow-2xs flex items-center justify-between gap-2 text-xs text-slate-700">
             <div className="flex items-center gap-2 min-w-0 flex-wrap">
               <span className="font-bold text-slate-900">{weather.data.conditionLabel}</span>
               {weather.data.tempMaxC !== null && weather.data.tempMinC !== null && (
@@ -294,529 +334,441 @@ export const HeuteView: React.FC = () => {
           </div>
         )}
 
-        {/* Parallelbetrieb & Primärquellen-Synchronisationsstatus */}
-        <div className="px-3.5 py-2.5 bg-white border border-slate-200/90 rounded-2xl shadow-2xs flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2.5 min-w-0">
-            <div className="w-7 h-7 rounded-lg bg-indigo-50 text-[#3138A0] flex items-center justify-center shrink-0">
-              <Smartphone size={15} />
-            </div>
-            <div className="min-w-0">
-              <div className="flex items-center gap-1.5 flex-wrap">
-                <span className="text-xs font-bold text-slate-900">
-                  {isNative
-                    ? 'Primärquelle: Pixel 10 Pro'
-                    : 'Parallel-Datenstand mit Pixel 10 Pro'}
-                </span>
-                <span className="text-[11px] font-semibold text-emerald-700 tabular-nums">
-                  · Rev. #{activeRevision}
-                </span>
-              </div>
-              <p className="text-[11px] text-slate-500 truncate">
-                {isNative && nativeSyncStatus && !nativeSyncStatus.configured ? (
-                  <span>Für Web-Parallelbetrieb in Einstellungen koppeln</span>
-                ) : lastPixelSyncFormatted ? (
-                  <span>Letzter Abgleich: {lastPixelSyncFormatted}</span>
-                ) : (
-                  <span>Echtzeit-Synchronisation aktiv</span>
-                )}
-              </p>
-            </div>
+        {/* 1. DEIN TAG / HEUTIGE TERMINE */}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between text-xs font-bold px-0.5">
+            <span className="text-slate-600 uppercase tracking-wider text-[10px]">Dein Tag</span>
+            <button
+              type="button"
+              onClick={handleOpenTour}
+              className="py-1 px-2 -mr-2 text-[#3138A0] font-bold hover:underline flex items-center gap-0.5 rounded-xl active:bg-indigo-50/70 text-xs"
+            >
+              <span>Tagestour</span>
+              <ChevronRight size={15} />
+            </button>
           </div>
 
-          {isNative && nativeSyncStatus && !nativeSyncStatus.configured ? (
-            <button
-              type="button"
-              onClick={() => navigate('M13_EINSTELLUNGEN')}
-              className="px-2.5 py-1.5 rounded-lg bg-indigo-50 text-[#3138A0] text-xs font-bold shrink-0"
-            >
-              Koppeln
-            </button>
+          {todayApps.length === 0 ? (
+            <div className="px-4 py-3 bg-white border border-slate-200 rounded-2xl flex items-center justify-between text-xs text-slate-500">
+              <span>Keine Termine für heute eingetragen.</span>
+              <button
+                type="button"
+                onClick={() => navigate('M02_PLANUNG')}
+                className="font-bold text-[#3138A0] hover:underline shrink-0"
+              >
+                Kalender →
+              </button>
+            </div>
           ) : (
-            <button
-              type="button"
-              onClick={() => void refreshFromServer()}
-              className="p-2 rounded-xl text-slate-600 hover:text-[#3138A0] active:bg-slate-100 shrink-0"
-              title="Datenstand jetzt abgleichen"
-            >
-              <RefreshCw size={15} className={isSyncBusy ? 'animate-spin text-[#3138A0]' : ''} />
-            </button>
+            <div className="space-y-2">
+              {todayApps.map((app, idx) => {
+                const cust = customers.find((c) => c.id === app.customer_id);
+                const isNext = idx === 0;
+
+                return (
+                  <div
+                    key={app.id}
+                    onClick={() => handleOpenCustomer(app.customer_id)}
+                    className="p-3.5 bg-white border border-slate-200 rounded-2xl shadow-2xs hover:border-[#3138A0] active:bg-slate-50 transition-colors cursor-pointer"
+                  >
+                    <div className="flex items-start justify-between gap-2.5">
+                      <div className="flex items-start gap-3 min-w-0">
+                        <div className="flex flex-col text-xs font-bold text-slate-800 font-mono tabular-nums shrink-0 pt-0.5">
+                          <span>{app.start_time || 'Tag'}</span>
+                          {app.end_time && (
+                            <span className="text-[11px] text-slate-400 font-normal">
+                              {app.end_time}
+                            </span>
+                          )}
+                        </div>
+                        <div className="min-w-0">
+                          <h3 className="text-sm font-bold text-slate-950 leading-snug">
+                            {app.title || 'Termin'}
+                          </h3>
+                          <p className="text-xs text-slate-600 mt-0.5 truncate">
+                            {cust ? cust.name : 'Ohne Kunde'}
+                            {app.duration_minutes ? ` · ${app.duration_minutes} Min.` : ''}
+                          </p>
+                          {app.address && (
+                            <p className="text-[11px] text-slate-500 mt-0.5 truncate">
+                              {app.address}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="shrink-0">
+                        {isNext ? (
+                          <span className="text-[11px] font-bold text-[#3138A0]">
+                            Als Nächstes
+                          </span>
+                        ) : (
+                          <span className="text-[11px] font-semibold text-slate-400">
+                            Geplant
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           )}
         </div>
 
-        {/* Wichtigste Betriebsdaten & Notfall-Übersicht (Web-App sofort offen, am Pixel aufklappbar) */}
-        <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-2xs">
-          <button
-            type="button"
-            onClick={() => setBusinessOverviewExpanded((prev) => !prev)}
-            className="w-full min-h-[54px] px-3.5 py-3 flex items-center justify-between hover:bg-slate-50 active:bg-slate-100/70 transition-colors text-left"
-          >
-            <div className="flex items-center gap-3 min-w-0">
-              <div className="w-9 h-9 rounded-xl bg-indigo-50 flex items-center justify-center text-[#3138A0] shrink-0">
-                <Building2 size={18} />
-              </div>
-              <div className="min-w-0">
-                <span className="text-sm font-bold text-slate-950 block leading-tight">
-                  Wichtigste Betriebsdaten & Kontakte
-                </span>
-                <span className="text-xs text-slate-600 tabular-nums truncate block">
-                  Einnahmen {guv.totalCashIncome.toFixed(0)} € · {openInvoices.length} offene Rg. ·{' '}
-                  {customers.filter((c) => c.active !== false).length} Kunden
-                </span>
-              </div>
-            </div>
-            <div className="shrink-0 ml-2">
-              {businessOverviewExpanded ? (
-                <ChevronDown size={18} className="text-slate-500" />
-              ) : (
-                <ChevronRight size={18} className="text-slate-500" />
-              )}
-            </div>
-          </button>
+        {/* 2. ÜBERSICHTLICHE LISTEN-AUSWAHL (NUTZT DEN FREIEN PLATZ SINNVOLL) */}
+        <div className="space-y-2.5 pt-0.5">
+          <div className="flex items-center justify-between px-0.5">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-600">
+              Listen-Anzeige wählen
+            </span>
+            <button
+              type="button"
+              onClick={() => navigate(activeListMeta.targetScreen)}
+              className="text-xs font-bold text-[#3138A0] hover:underline flex items-center gap-0.5"
+            >
+              <span>{activeListMeta.label} öffnen</span>
+              <ChevronRight size={14} />
+            </button>
+          </div>
 
-          {businessOverviewExpanded && (
-            <div className="p-3.5 bg-slate-50/60 border-t border-slate-100 space-y-3.5">
-              {/* 4 Kern-Kennzahlen */}
-              <div className="grid grid-cols-2 gap-2.5">
+          {/* Kompakte 2-reihige Schnellwahl für alle wichtigen Listen */}
+          <div className="grid grid-cols-2 gap-1.5">
+            {listOptions.map((opt) => {
+              const isSelected = selectedList === opt.key;
+              return (
                 <button
+                  key={opt.key}
                   type="button"
-                  onClick={() => navigate('M20_UMSAETZE_KORREKTUREN')}
-                  className="p-3 bg-white border border-slate-200/90 rounded-xl text-left hover:border-[#3138A0] transition-colors"
+                  onClick={() => setSelectedList(opt.key)}
+                  className={`px-2.5 py-2 rounded-xl border text-left flex items-center justify-between gap-1.5 transition-all ${
+                    isSelected
+                      ? 'bg-[#3138A0] border-[#3138A0] text-white shadow-2xs'
+                      : 'bg-white border-slate-200/90 text-slate-800 hover:bg-slate-50'
+                  }`}
                 >
-                  <span className="text-[11px] font-semibold text-slate-500 block">
-                    Einnahmen {guv.year} (bezahlt)
-                  </span>
-                  <span className="text-base font-bold text-emerald-700 tabular-nums mt-0.5 block">
-                    {guv.totalCashIncome.toFixed(2)} €
-                  </span>
-                  <span className="text-[11px] text-slate-500 tabular-nums">
-                    KU-Grenze: {guv.kuLimitUsedPercent.toFixed(0)}%
-                  </span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => navigate('M04_ABRECHNUNG')}
-                  className="p-3 bg-white border border-slate-200/90 rounded-xl text-left hover:border-[#3138A0] transition-colors"
-                >
-                  <span className="text-[11px] font-semibold text-slate-500 block">
-                    Offene Rechnungen
-                  </span>
-                  <span className="text-base font-bold text-[#B4470B] tabular-nums mt-0.5 block">
-                    {guv.openReceivablesTotal.toFixed(2)} €
-                  </span>
-                  <span className="text-[11px] text-slate-500 tabular-nums">
-                    {openInvoices.length} {openInvoices.length === 1 ? 'Rechnung' : 'Rechnungen'} offen
-                  </span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => navigate('M04_ABRECHNUNG')}
-                  className="p-3 bg-white border border-slate-200/90 rounded-xl text-left hover:border-[#3138A0] transition-colors"
-                >
-                  <span className="text-[11px] font-semibold text-slate-500 block">
-                    Offene Arbeitsstunden
-                  </span>
-                  <span className="text-base font-bold text-slate-900 tabular-nums mt-0.5 block">
-                    {openHoursSum.toFixed(1)} Std. ({openAmountSum.toFixed(0)} €)
-                  </span>
-                  <span className="text-[11px] text-slate-500 tabular-nums">
-                    {openLcrWork.length > 0
-                      ? `+ L.C.R.: ${openLcrAmountSum.toFixed(0)} €`
-                      : `${openWork.length} Einträge unabgerechnet`}
-                  </span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => navigate('M20_UMSAETZE_KORREKTUREN')}
-                  className="p-3 bg-white border border-slate-200/90 rounded-xl text-left hover:border-[#3138A0] transition-colors"
-                >
-                  <span className="text-[11px] font-semibold text-slate-500 block">
-                    Vorl. Gewinn ({guv.year})
-                  </span>
-                  <span className="text-base font-bold text-[#3138A0] tabular-nums mt-0.5 block">
-                    {guv.activeResult.preliminaryProfit.toFixed(2)} €
-                  </span>
-                  <span className="text-[11px] text-slate-500 truncate block">
-                    {guv.activeResult.shortTitle}
-                  </span>
-                </button>
-              </div>
-
-              {/* Offene Rechnungen Schnellzugriff */}
-              {openInvoices.length > 0 && (
-                <div className="bg-white border border-slate-200/90 rounded-xl p-3 space-y-2">
-                  <div className="flex items-center justify-between text-xs font-bold text-slate-800">
-                    <span className="flex items-center gap-1.5">
-                      <FileText size={14} className="text-[#B4470B]" />
-                      Offene Rechnungen ({openInvoices.length})
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => navigate('M04_ABRECHNUNG')}
-                      className="text-[#3138A0] hover:underline"
-                    >
-                      Alle öffnen →
-                    </button>
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <span className={isSelected ? '[&>*]:text-white!' : ''}>{opt.icon}</span>
+                    <span className="text-xs font-bold truncate">{opt.label}</span>
                   </div>
-                  <div className="divide-y divide-slate-100">
-                    {openInvoices.slice(0, 5).map((inv) => {
-                      const cust = customers.find((c) => c.id === inv.customer_id);
-                      const paidSum = (inv.payments || []).reduce(
-                        (s, p) => s + (p.amount || 0),
-                        0
-                      );
-                      const remaining = Math.max(0, (inv.total_amount || 0) - paidSum);
-                      return (
-                        <button
-                          key={inv.id}
-                          type="button"
-                          onClick={() => handleOpenInvoice(inv.id)}
-                          className="w-full py-2 flex items-center justify-between gap-2 text-left hover:bg-slate-50 rounded-lg px-1 transition-colors"
-                        >
+                  <span
+                    className={`text-[10px] font-bold tabular-nums px-1.5 py-0.5 rounded-md shrink-0 ${
+                      isSelected
+                        ? 'bg-white/20 text-white'
+                        : 'bg-slate-100 text-slate-600'
+                    }`}
+                  >
+                    {opt.badge}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Inhalt der gewählten Liste direkt übersichtlich dargestellt */}
+          <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-2xs">
+            <div className="px-3.5 py-2.5 bg-slate-50/80 border-b border-slate-100 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                {activeListMeta.icon}
+                <span className="text-xs font-bold text-slate-900">
+                  {activeListMeta.label}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => navigate(activeListMeta.targetScreen)}
+                className="text-[11px] font-bold text-[#3138A0] hover:underline"
+              >
+                Gesamte Ansicht →
+              </button>
+            </div>
+
+            <div className="divide-y divide-slate-100 max-h-[340px] overflow-y-auto">
+              {/* LISTE 1: OFFENE STUNDEN */}
+              {selectedList === 'offene_stunden' &&
+                (openWork.length === 0 ? (
+                  <p className="p-5 text-center text-xs text-slate-400">
+                    Keine offenen Arbeitsstunden vorhanden.
+                  </p>
+                ) : (
+                  openWork.slice(0, 12).map((w) => {
+                    const c = customers.find((cust) => cust.id === w.customer_id);
+                    return (
+                      <button
+                        key={w.id}
+                        type="button"
+                        onClick={() => navigate('M04_ABRECHNUNG')}
+                        className="w-full px-3.5 py-2.5 flex items-center justify-between gap-2 text-left hover:bg-slate-50 transition-colors"
+                      >
+                        <div className="min-w-0">
+                          <span className="text-xs font-bold text-slate-900 block truncate">
+                            {w.title}
+                          </span>
+                          <span className="text-[11px] text-slate-500 tabular-nums block truncate">
+                            {c?.name || 'Ohne Kunde'} · {w.work_date} · {w.hours} Std.
+                          </span>
+                        </div>
+                        <span className="text-xs font-bold text-[#B4470B] tabular-nums shrink-0">
+                          {(w.accounting_amount || 0).toFixed(2)} €
+                        </span>
+                      </button>
+                    );
+                  })
+                ))}
+
+              {/* LISTE 2: FÄLLIG & NEUE ANFRAGEN */}
+              {selectedList === 'faellig_neu' &&
+                (dueEquipments.length === 0 && newInquiries.length === 0 ? (
+                  <p className="p-5 text-center text-xs text-slate-400">
+                    Keine fälligen Wartungen oder neuen Anfragen.
+                  </p>
+                ) : (
+                  <>
+                    {dueEquipments.map((eq) => (
+                      <button
+                        key={eq.id}
+                        type="button"
+                        onClick={() => navigate('M10_GERAETE')}
+                        className="w-full px-3.5 py-2.5 flex items-center justify-between gap-2 text-left hover:bg-slate-50 transition-colors"
+                      >
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <Wrench size={15} className="text-[#9A1B8D] shrink-0" />
                           <div className="min-w-0">
                             <span className="text-xs font-bold text-slate-900 block truncate">
-                              {inv.invoice_number} · {cust?.name || inv.billing_customer_name || 'Kunde'}
+                              {eq.name}
                             </span>
-                            <span className="text-[11px] text-slate-500 tabular-nums">
-                              Datum: {inv.issue_date}
-                              {inv.due_date ? ` · Fällig: ${inv.due_date}` : ''}
+                            <span className="text-[11px] text-slate-500 block truncate">
+                              Wartung fällig: {eq.maintenance_plan}
                             </span>
                           </div>
-                          <span className="text-xs font-bold text-[#B4470B] tabular-nums shrink-0">
-                            {remaining.toFixed(2)} €
+                        </div>
+                        <span className="px-2 py-0.5 rounded bg-fuchsia-50 text-[#9A1B8D] text-[10px] font-bold shrink-0">
+                          Fällig
+                        </span>
+                      </button>
+                    ))}
+                    {newInquiries.map((inq) => {
+                      const c = customers.find((cust) => cust.id === inq.customer_id);
+                      return (
+                        <button
+                          key={inq.id}
+                          type="button"
+                          onClick={() => navigate('M05_ANFRAGEN')}
+                          className="w-full px-3.5 py-2.5 flex items-center justify-between gap-2 text-left hover:bg-slate-50 transition-colors"
+                        >
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <MessageSquare size={15} className="text-[#3138A0] shrink-0" />
+                            <div className="min-w-0">
+                              <span className="text-xs font-bold text-slate-900 block truncate">
+                                {inq.title}
+                              </span>
+                              <span className="text-[11px] text-slate-500 block truncate">
+                                {c?.name || 'Kunde'} · Wunsch: {inq.desired_date || 'offen'}
+                              </span>
+                            </div>
+                          </div>
+                          <span className="px-2 py-0.5 rounded bg-indigo-50 text-[#3138A0] text-[10px] font-bold shrink-0">
+                            Neu
                           </span>
                         </button>
                       );
                     })}
-                  </div>
-                </div>
-              )}
+                  </>
+                ))}
 
-              {/* Wichtige Kunden- & Notfallkontakte (Schnellzugriff ohne Pixel) */}
-              <div className="bg-white border border-slate-200/90 rounded-xl p-3 space-y-2.5">
-                <div className="flex items-center justify-between text-xs font-bold text-slate-800">
-                  <span>Kunden- & Kontaktdaten ({activeCustomers.length})</span>
-                  <button
-                    type="button"
-                    onClick={() => navigate('M03_KUNDEN')}
-                    className="text-[#3138A0] hover:underline"
-                  >
-                    Kundenkartei →
-                  </button>
-                </div>
-
-                {customers.length > 3 && (
-                  <div className="relative">
-                    <Search
-                      size={14}
-                      className="text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2"
-                    />
-                    <input
-                      type="text"
-                      value={contactSearch}
-                      onChange={(e) => setContactSearch(e.target.value)}
-                      placeholder="Kunde, Telefon oder Adresse suchen…"
-                      className="w-full pl-8 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg text-slate-900 focus:outline-none focus:border-[#3138A0]"
-                    />
-                  </div>
-                )}
-
-                {activeCustomers.length === 0 ? (
-                  <p className="text-xs text-slate-500 py-1 italic">
-                    Keine passenden Kundendaten gefunden.
+              {/* LISTE 3: AUFTRÄGE */}
+              {selectedList === 'auftraege' &&
+                (openOrders.length === 0 ? (
+                  <p className="p-5 text-center text-xs text-slate-400">
+                    Keine offenen Aufträge vorhanden.
                   </p>
                 ) : (
-                  <div className="divide-y divide-slate-100 max-h-56 overflow-y-auto">
-                    {activeCustomers.slice(0, 8).map((c) => {
-                      const formattedAddress = [c.street, [c.zip, c.city].filter(Boolean).join(' ')]
-                        .filter(Boolean)
-                        .join(', ');
-                      return (
-                        <div
-                          key={c.id}
-                          className="py-2 flex items-center justify-between gap-2 text-xs"
-                        >
-                          <button
-                            type="button"
-                            onClick={() => handleOpenCustomer(c.id)}
-                            className="min-w-0 text-left flex-1 hover:text-[#3138A0]"
-                          >
-                            <span className="font-bold text-slate-900 block truncate">{c.name}</span>
-                            <span className="text-[11px] text-slate-500 block truncate">
-                              {[c.phone, formattedAddress].filter(Boolean).join(' · ') ||
-                                'Keine Kontaktdaten'}
-                            </span>
-                          </button>
-                          <div className="flex items-center gap-1 shrink-0">
-                            {c.phone && (
-                              <a
-                                href={`tel:${c.phone.replace(/\s+/g, '')}`}
-                                className="p-1.5 rounded-lg bg-slate-100 text-slate-700 hover:bg-indigo-50 hover:text-[#3138A0]"
-                                title={`Anrufen: ${c.phone}`}
-                              >
-                                <Phone size={13} />
-                              </a>
-                            )}
-                            {c.email && (
-                              <a
-                                href={`mailto:${c.email}`}
-                                className="p-1.5 rounded-lg bg-slate-100 text-slate-700 hover:bg-indigo-50 hover:text-[#3138A0]"
-                                title={`E-Mail: ${c.email}`}
-                              >
-                                <Mail size={13} />
-                              </a>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Dein Tag / Tagestour Teaser */}
-        <div className="flex items-center justify-between text-sm font-semibold px-0.5">
-          <span className="text-slate-600 tracking-wide text-xs font-bold">Dein Tag</span>
-          <button
-            onClick={handleOpenTour}
-            className="min-h-[44px] -my-2 px-2 text-[#3138A0] font-bold hover:underline flex items-center gap-0.5 rounded-xl active:bg-indigo-50/70"
-          >
-            <span>Tagestour</span>
-            <ChevronRight size={16} />
-          </button>
-        </div>
-
-        {/* Termine heute Liste */}
-        <div className="space-y-3">
-          {todayApps.length === 0 ? (
-            <div className="p-5 bg-white border border-slate-200 rounded-2xl text-center text-sm text-slate-600">
-              Keine Termine für heute eingetragen.
-            </div>
-          ) : (
-            todayApps.map((app, idx) => {
-              const cust = customers.find((c) => c.id === app.customer_id);
-              const isNext = idx === 0;
-
-              return (
-                <div
-                  key={app.id}
-                  onClick={() => handleOpenCustomer(app.customer_id)}
-                  className="p-4 bg-white border border-slate-200 rounded-2xl shadow-2xs hover:border-[#3138A0] active:bg-slate-50 transition-colors cursor-pointer"
-                >
-                  <div className="flex items-start justify-between gap-2.5">
-                    <div className="flex items-start gap-3.5 min-w-0">
-                      <div className="flex flex-col text-sm font-bold text-slate-800 font-mono tabular-nums shrink-0 pt-0.5">
-                        <span>{app.start_time || 'Ohne Zeit'}</span>
-                        {app.end_time && (
-                          <span className="text-xs text-slate-500 font-normal">{app.end_time}</span>
-                        )}
-                      </div>
-                      <div className="min-w-0">
-                        <h3 className="text-base font-bold text-slate-950 leading-snug">
-                          {app.title || 'Termin'}
-                        </h3>
-                        <p className="text-sm text-slate-600 mt-0.5">
-                          {cust ? cust.name : 'Ohne Kunde'}
-                          {app.duration_minutes ? ` · ${app.duration_minutes} Min.` : ''}
-                        </p>
-                        {app.address && (
-                          <p className="text-xs text-slate-500 mt-0.5 truncate">
-                            {app.address}
-                          </p>
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="shrink-0">
-                      {isNext ? (
-                        <span className="text-xs font-bold text-[#3138A0]">
-                          Als Nächstes
-                        </span>
-                      ) : (
-                        <span className="text-xs font-semibold text-slate-500">
-                          Geplant
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              );
-            })
-          )}
-        </div>
-
-        {/* Section: Zu erledigen (Aufklappbare Gruppen gem. REQ-004) */}
-        <div className="pt-1">
-          <div className="flex items-center justify-between text-xs font-bold px-0.5 mb-2.5">
-            <span className="text-slate-600 tracking-wide">Zu erledigen</span>
-            <span className="text-slate-500 font-semibold tabular-nums">
-              {openWork.length + dueEquipments.length + newInquiries.length}{' '}
-              {openWork.length + dueEquipments.length + newInquiries.length === 1
-                ? 'Hinweis'
-                : 'Hinweise'}
-            </span>
-          </div>
-
-          <div className="space-y-2.5">
-            {/* Offene Stunden Gruppe */}
-            <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-2xs">
-              <button
-                onClick={() => setOpenHoursExpanded(!openHoursExpanded)}
-                className="w-full min-h-[58px] p-3.5 flex items-center justify-between hover:bg-slate-50 active:bg-slate-100/70 transition-colors text-left"
-              >
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-full bg-orange-50 flex items-center justify-center text-[#B4470B] shrink-0">
-                    <Clock size={19} />
-                  </div>
-                  <div>
-                    <span className="text-sm font-bold text-slate-950 block leading-tight">
-                      Offene Stunden
-                    </span>
-                    <span className="text-xs text-slate-600 tabular-nums">
-                      {openHoursSum} Std. · {openAmountSum.toFixed(0)} €
-                    </span>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <span className="text-sm font-bold text-[#B4470B] tabular-nums">
-                    {openAmountSum.toFixed(0)} €
-                  </span>
-                  {openHoursExpanded ? (
-                    <ChevronDown size={18} className="text-slate-500" />
-                  ) : (
-                    <ChevronRight size={18} className="text-slate-500" />
-                  )}
-                </div>
-              </button>
-
-              {openHoursExpanded && (
-                <div className="p-3.5 bg-slate-50/70 border-t border-slate-100 text-sm">
-                  {openWork.length === 0 ? (
-                    <p className="py-2 text-center text-slate-500 italic">
-                      Keine offenen Arbeitsstunden vorhanden.
-                    </p>
-                  ) : (
-                    <div className="divide-y divide-slate-200/70">
-                      {openWork.map((w) => {
-                        const c = customers.find((cust) => cust.id === w.customer_id);
-                        return (
-                          <div key={w.id} className="py-2.5 flex items-center justify-between gap-2">
-                            <div className="min-w-0">
-                              <span className="font-bold text-slate-900 block truncate">
-                                {w.title}
-                              </span>
-                              <span className="text-xs text-slate-600 tabular-nums">
-                                {c?.name} · {w.hours} Std.
-                              </span>
-                            </div>
-                            <span className="font-bold text-[#B4470B] tabular-nums shrink-0">
-                              {(w.accounting_amount || 0).toFixed(2)} €
-                            </span>
-                          </div>
-                        );
-                      })}
+                  openOrders.slice(0, 12).map((ord) => {
+                    const c = customers.find((cust) => cust.id === ord.customer_id);
+                    return (
                       <button
-                        onClick={() => navigate('M04_ABRECHNUNG')}
-                        className="w-full min-h-[44px] mt-2 pt-2 text-center text-sm font-bold text-[#3138A0] hover:underline"
+                        key={ord.id}
+                        type="button"
+                        onClick={() => navigate('M07_AUFTRAEGE')}
+                        className="w-full px-3.5 py-2.5 flex items-center justify-between gap-2 text-left hover:bg-slate-50 transition-colors"
                       >
-                        Zur Abrechnung wechseln →
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-
-            {/* Fällig & neu Gruppe */}
-            <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-2xs">
-              <button
-                onClick={() => setTasksExpanded(!tasksExpanded)}
-                className="w-full min-h-[58px] p-3.5 flex items-center justify-between hover:bg-slate-50 active:bg-slate-100/70 transition-colors text-left"
-              >
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-full bg-fuchsia-50 flex items-center justify-center text-[#9A1B8D] shrink-0">
-                    <AlertTriangle size={19} />
-                  </div>
-                  <div>
-                    <span className="text-sm font-bold text-slate-950 block leading-tight">
-                      Fällig & neu
-                    </span>
-                    <span className="text-xs text-slate-600 tabular-nums">
-                      {dueEquipments.length} Wartung · {newInquiries.length} neue Anfrage
-                    </span>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <span className="text-sm font-bold text-[#9A1B8D] tabular-nums">
-                    {dueEquipments.length + newInquiries.length}
-                  </span>
-                  {tasksExpanded ? (
-                    <ChevronDown size={18} className="text-slate-500" />
-                  ) : (
-                    <ChevronRight size={18} className="text-slate-500" />
-                  )}
-                </div>
-              </button>
-
-              {tasksExpanded && (
-                <div className="p-3.5 bg-slate-50/70 border-t border-slate-100 text-sm">
-                  {dueEquipments.length === 0 && newInquiries.length === 0 ? (
-                    <p className="py-2 text-center text-slate-500 italic">
-                      Keine fälligen Aufgaben oder Anfragen.
-                    </p>
-                  ) : (
-                    <div className="space-y-2.5">
-                      {dueEquipments.map((eq) => (
-                        <div
-                          key={eq.id}
-                          onClick={() => navigate('M10_GERAETE')}
-                          className="p-3 bg-white rounded-xl border border-slate-200 flex items-center justify-between gap-2 cursor-pointer hover:border-[#9A1B8D]"
-                        >
-                          <div className="flex items-center gap-2.5 min-w-0">
-                            <Wrench size={17} className="text-[#9A1B8D] shrink-0" />
-                            <div className="min-w-0">
-                              <span className="font-bold text-slate-900 block truncate">
-                                {eq.name}
-                              </span>
-                              <span className="text-xs text-slate-600">
-                                Wartung fällig: {eq.maintenance_plan}
-                              </span>
-                            </div>
-                          </div>
-                          <span className="text-xs font-bold text-[#9A1B8D] shrink-0">Fällig</span>
+                        <div className="min-w-0">
+                          <span className="text-xs font-bold text-slate-900 block truncate">
+                            {ord.title}
+                          </span>
+                          <span className="text-[11px] text-slate-500 block truncate">
+                            {c?.name || 'Ohne Kunde'}
+                            {ord.scheduled_date ? ` · Termin: ${ord.scheduled_date}` : ''}
+                          </span>
                         </div>
-                      ))}
+                        <span className="px-2 py-0.5 rounded bg-indigo-50 text-[#3138A0] text-[10px] font-bold shrink-0">
+                          {ord.status === 'in_arbeit' ? 'In Arbeit' : 'Geplant'}
+                        </span>
+                      </button>
+                    );
+                  })
+                ))}
 
-                      {newInquiries.map((inq) => {
-                        const c = customers.find((cust) => cust.id === inq.customer_id);
-                        return (
-                          <div
-                            key={inq.id}
-                            onClick={() => navigate('M05_ANFRAGEN')}
-                            className="p-3 bg-white rounded-xl border border-slate-200 flex items-center justify-between gap-2 cursor-pointer hover:border-[#3138A0]"
-                          >
-                            <div className="flex items-center gap-2.5 min-w-0">
-                              <MessageSquare size={17} className="text-[#3138A0] shrink-0" />
-                              <div className="min-w-0">
-                                <span className="font-bold text-slate-900 block truncate">
-                                  {inq.title}
-                                </span>
-                                <span className="text-xs text-slate-600">{c?.name}</span>
-                              </div>
-                            </div>
-                            <span className="text-xs font-bold text-[#9A1B8D] shrink-0">Neu</span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              )}
+              {/* LISTE 4: ARBEITEN */}
+              {selectedList === 'arbeiten' &&
+                (sortedRecentWork.length === 0 ? (
+                  <p className="p-5 text-center text-xs text-slate-400">
+                    Noch keine Arbeitsaufzeichnungen erfasst.
+                  </p>
+                ) : (
+                  sortedRecentWork.slice(0, 12).map((w) => {
+                    const c = customers.find((cust) => cust.id === w.customer_id);
+                    return (
+                      <button
+                        key={w.id}
+                        type="button"
+                        onClick={() => navigate('M08_ARBEITEN')}
+                        className="w-full px-3.5 py-2.5 flex items-center justify-between gap-2 text-left hover:bg-slate-50 transition-colors"
+                      >
+                        <div className="min-w-0">
+                          <span className="text-xs font-bold text-slate-900 block truncate">
+                            {w.title}
+                          </span>
+                          <span className="text-[11px] text-slate-500 tabular-nums block truncate">
+                            {w.work_date} · {c?.name || 'Kunde'} · {w.hours} Std.
+                          </span>
+                        </div>
+                        <span className="text-xs font-bold text-slate-800 tabular-nums shrink-0">
+                          {w.accounting_amount != null ? `${w.accounting_amount.toFixed(0)} €` : '—'}
+                        </span>
+                      </button>
+                    );
+                  })
+                ))}
+
+              {/* LISTE 5: ANGEBOTE */}
+              {selectedList === 'angebote' &&
+                (offers.length === 0 ? (
+                  <p className="p-5 text-center text-xs text-slate-400">
+                    Keine Angebote vorhanden.
+                  </p>
+                ) : (
+                  offers.slice(0, 12).map((off) => {
+                    const c = customers.find((cust) => cust.id === off.customer_id);
+                    return (
+                      <button
+                        key={off.id}
+                        type="button"
+                        onClick={() => navigate('M06_ANGEBOTE')}
+                        className="w-full px-3.5 py-2.5 flex items-center justify-between gap-2 text-left hover:bg-slate-50 transition-colors"
+                      >
+                        <div className="min-w-0">
+                          <span className="text-xs font-bold text-slate-900 block truncate">
+                            {off.title}
+                          </span>
+                          <span className="text-[11px] text-slate-500 block truncate">
+                            {c?.name || 'Kunde'} · Status: {off.status}
+                          </span>
+                        </div>
+                        <span className="text-xs font-bold text-[#3138A0] tabular-nums shrink-0">
+                          {(off.total_amount || 0).toFixed(0)} €
+                        </span>
+                      </button>
+                    );
+                  })
+                ))}
+
+              {/* LISTE 6: GERÄTE */}
+              {selectedList === 'geraete' &&
+                (equipments.length === 0 ? (
+                  <p className="p-5 text-center text-xs text-slate-400">
+                    Keine Geräte hinterlegt.
+                  </p>
+                ) : (
+                  equipments.slice(0, 12).map((eq) => (
+                    <button
+                      key={eq.id}
+                      type="button"
+                      onClick={() => navigate('M10_GERAETE')}
+                      className="w-full px-3.5 py-2.5 flex items-center justify-between gap-2 text-left hover:bg-slate-50 transition-colors"
+                    >
+                      <div className="min-w-0">
+                        <span className="text-xs font-bold text-slate-900 block truncate">
+                          {eq.name}
+                        </span>
+                        <span className="text-[11px] text-slate-500 block truncate">
+                          {eq.model} · Nächste Wartung: {eq.next_maintenance || '—'}
+                        </span>
+                      </div>
+                      <span
+                        className={`px-2 py-0.5 rounded text-[10px] font-bold shrink-0 ${
+                          eq.status === 'faellig'
+                            ? 'bg-fuchsia-50 text-[#9A1B8D]'
+                            : 'bg-emerald-50 text-[#2C7738]'
+                        }`}
+                      >
+                        {eq.status === 'faellig' ? 'Fällig' : 'Bereit'}
+                      </span>
+                    </button>
+                  ))
+                ))}
+
+              {/* LISTE 7: MATERIAL */}
+              {selectedList === 'material' &&
+                (materials.length === 0 ? (
+                  <p className="p-5 text-center text-xs text-slate-400">
+                    Keine Materialien hinterlegt.
+                  </p>
+                ) : (
+                  materials.slice(0, 12).map((mat) => (
+                    <button
+                      key={mat.id}
+                      type="button"
+                      onClick={() => navigate('M11_MATERIAL')}
+                      className="w-full px-3.5 py-2.5 flex items-center justify-between gap-2 text-left hover:bg-slate-50 transition-colors"
+                    >
+                      <div className="min-w-0">
+                        <span className="text-xs font-bold text-slate-900 block truncate">
+                          {mat.name}
+                        </span>
+                        <span className="text-[11px] text-slate-500 block truncate">
+                          Einheit: {mat.unit}
+                          {mat.category ? ` · ${mat.category}` : ''}
+                        </span>
+                      </div>
+                      <span className="text-xs font-bold text-slate-800 tabular-nums shrink-0">
+                        {mat.price_per_unit != null ? `${mat.price_per_unit.toFixed(2)} €` : '—'}
+                      </span>
+                    </button>
+                  ))
+                ))}
+
+              {/* LISTE 8: L.C.R. */}
+              {selectedList === 'lcr' &&
+                (openLcrWork.length === 0 ? (
+                  <p className="p-5 text-center text-xs text-slate-400">
+                    Keine offenen L.C.R.-Einträge vorhanden.
+                  </p>
+                ) : (
+                  openLcrWork.slice(0, 12).map((w) => {
+                    const c = customers.find((cust) => cust.id === w.customer_id);
+                    return (
+                      <button
+                        key={w.id}
+                        type="button"
+                        onClick={() => navigate('M09_LCR')}
+                        className="w-full px-3.5 py-2.5 flex items-center justify-between gap-2 text-left hover:bg-slate-50 transition-colors"
+                      >
+                        <div className="min-w-0">
+                          <span className="text-xs font-bold text-slate-900 block truncate">
+                            {w.title}
+                          </span>
+                          <span className="text-[11px] text-slate-500 tabular-nums block truncate">
+                            {c?.name || 'Kunde'} · {w.work_date} · {w.hours} Std.
+                          </span>
+                        </div>
+                        <span className="text-xs font-bold text-[#3138A0] tabular-nums shrink-0">
+                          {(w.accounting_amount || 0).toFixed(2)} €
+                        </span>
+                      </button>
+                    );
+                  })
+                ))}
             </div>
           </div>
         </div>
@@ -824,7 +776,16 @@ export const HeuteView: React.FC = () => {
 
       {/* Untere Leiste fixiert (Pixel 10 Pro Daumenzone) */}
       <div className="shrink-0 w-full mt-auto bg-white border-t border-slate-200/80 z-20 shadow-md">
-        <BottomActionBar />
+        <BottomActionBar>
+          <button
+            type="button"
+            onClick={() => setIsThreeDotsMenuOpen(true)}
+            className="h-10 px-4 bg-slate-100 hover:bg-slate-200/80 active:scale-98 text-slate-800 rounded-2xl text-xs font-bold flex items-center gap-2 transition-all"
+          >
+            <LayoutGrid size={15} className="text-[#3138A0]" />
+            <span>Alle Listen &amp; Menü</span>
+          </button>
+        </BottomActionBar>
         <BottomNav />
       </div>
     </div>
