@@ -14,10 +14,16 @@ import {
   Lock,
   Pencil,
   Receipt,
-  Trash2
+  Search,
+  Trash2,
+  X
 } from 'lucide-react';
 import { WorkRecord } from '../../types/index.ts';
 import { getEffectiveBillingCustomerId } from '../../utils/invoicePdf.ts';
+import {
+  formatIsoToDeSearchable,
+  matchesSearchQuery
+} from '../../utils/searchUtils.ts';
 
 export const ArbeitenView: React.FC = () => {
   const {
@@ -34,6 +40,7 @@ export const ArbeitenView: React.FC = () => {
   } = useApp();
 
   const [filterCustomer, setFilterCustomer] = useState<string>('all');
+  const [searchQuery, setSearchQuery] = useState<string>('');
   const [lockedNotice, setLockedNotice] = useState<string | null>(null);
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -47,9 +54,24 @@ export const ArbeitenView: React.FC = () => {
     () =>
       workRecords.filter((w) => {
         if (filterCustomer !== 'all' && w.customer_id !== filterCustomer) return false;
+        if (searchQuery.trim()) {
+          const cust = customers.find((c) => c.id === w.customer_id);
+          const prop = w.property_id
+            ? properties.find((p) => p.id === w.property_id)
+            : undefined;
+          const matText = (w.materials || []).map((m) => m.name).join(' ');
+          return matchesSearchQuery(searchQuery, [
+            w.title,
+            w.notes,
+            formatIsoToDeSearchable(w.work_date),
+            cust?.name,
+            prop?.name,
+            matText
+          ]);
+        }
         return true;
       }),
-    [workRecords, filterCustomer]
+    [workRecords, filterCustomer, searchQuery, customers, properties]
   );
 
   const selectedRecords = useMemo(
@@ -431,16 +453,37 @@ export const ArbeitenView: React.FC = () => {
 
       {/* Untere Bedienleiste fixiert (Pixel 10 Pro Daumenzone) */}
       <div className="shrink-0 w-full mt-auto bg-white border-t border-slate-200/80 z-20 shadow-md">
-        {/* Filter & Mehrfachauswahl im unteren Bedienbereich */}
+        {/* Filter & Schnellsuche im unteren Bedienbereich */}
         <div className="px-3.5 pt-2.5 pb-1.5 border-b border-slate-100 space-y-1.5">
-          <div className="flex items-center justify-between gap-2 text-xs">
+          <div className="flex items-center gap-2 text-xs">
+            <div className="flex-1 min-w-0 h-9 bg-slate-50 border border-slate-200 rounded-xl px-2.5 flex items-center gap-1.5 focus-within:bg-white focus-within:border-[#3138A0] transition-colors">
+              <Search size={14} className="text-slate-400 shrink-0" />
+              <input
+                type="search"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Tätigkeit, Kunde, Datum…"
+                className="flex-1 min-w-0 bg-transparent border-none outline-hidden text-xs font-medium text-slate-900 placeholder:text-slate-400"
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery('')}
+                  className="text-slate-400 hover:text-slate-700"
+                  aria-label="Filter zurücksetzen"
+                >
+                  <X size={13} />
+                </button>
+              )}
+            </div>
+
             <select
               value={filterCustomer}
               onChange={(e) => {
                 setFilterCustomer(e.target.value);
                 setSelectedIds([]);
               }}
-              className="flex-1 min-w-0 h-9 bg-slate-50 border border-slate-200 rounded-xl px-2.5 text-xs font-semibold text-slate-700 outline-hidden truncate"
+              className="w-[140px] shrink-0 h-9 bg-slate-50 border border-slate-200 rounded-xl px-2 text-xs font-semibold text-slate-700 outline-hidden truncate"
             >
               <option value="all">Alle Kunden ({workRecords.length})</option>
               {customers.map((c) => (
@@ -468,7 +511,7 @@ export const ArbeitenView: React.FC = () => {
                 }`}
               >
                 <CheckSquare size={14} />
-                <span>{selectionMode ? 'Fertig' : 'Auswählen'}</span>
+                <span>{selectionMode ? 'Fertig' : 'Wählen'}</span>
               </button>
             )}
           </div>

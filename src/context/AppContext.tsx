@@ -23,9 +23,11 @@ import {
   addDaysIso,
   buildLineItemsFromRecords,
   buildPaymentTermsClause,
+  computeNextCustomerNumber,
   computeNextInvoiceNumber,
   computeServicePeriod,
-  getTodayLocalIso
+  getTodayLocalIso,
+  resolveCustomerNumber
 } from '../utils/invoicePdf.ts';
 import {
   getNativeBackupMeta,
@@ -178,12 +180,18 @@ interface AppContextType {
     recordIds: string[],
     options?: {
       extraItems?: InvoiceLineItem[];
+      customLineItems?: InvoiceLineItem[];
       issueDate?: string;
       servicePeriod?: string;
       invoiceNumber?: string;
       dueDays?: number;
       customerNumber?: string;
       paymentTermsText?: string;
+      subjectText?: string;
+      introText?: string;
+      closingText?: string;
+      isPauschal?: boolean;
+      replaceInvoiceIds?: string[];
       paidInCash?: boolean;
     }
   ) => Invoice;
@@ -1386,8 +1394,11 @@ export const AppProvider: React.FC<{
 
   const addCustomer = (cust: Partial<Customer>): Customer => {
     const todayIso = getTodayLocalIso();
+    const resolvedCustNum =
+      cust.customer_number?.trim() || computeNextCustomerNumber(customers);
     const newCust: Customer = {
       id: cust.id || `c-${Date.now()}`,
+      customer_number: resolvedCustNum,
       name: cust.name?.trim() || 'Neuer Kunde',
       company: cust.company || '',
       phone: cust.phone || '',
@@ -1418,6 +1429,10 @@ export const AppProvider: React.FC<{
             ? cust.default_billing_customer_id
             : existing?.default_billing_customer_id ?? null)
         : null;
+    const nextCustomerNumber =
+      cust.customer_number !== undefined
+        ? cust.customer_number.trim() || existing?.customer_number
+        : existing?.customer_number;
 
     setCustomers(prev =>
       prev.map(c =>
@@ -1425,6 +1440,7 @@ export const AppProvider: React.FC<{
           ? {
               ...c,
               ...cust,
+              customer_number: nextCustomerNumber,
               billing_mode: nextMode,
               default_billing_customer_id: nextBillingCustId,
               updated_at: new Date().toISOString()
@@ -1444,10 +1460,20 @@ export const AppProvider: React.FC<{
       );
     }
 
-    if (cust.name?.trim()) {
-      const nextName = cust.name.trim();
+    if (cust.name?.trim() || cust.customer_number !== undefined) {
+      const nextName = cust.name?.trim();
       setInvoices(prev =>
-        prev.map(inv => (inv.customer_id === id ? { ...inv, billing_customer_name: nextName } : inv))
+        prev.map(inv => {
+          if (inv.customer_id !== id) return inv;
+          return {
+            ...inv,
+            billing_customer_name: nextName || inv.billing_customer_name,
+            customer_number:
+              nextCustomerNumber && (!inv.customer_number || inv.status !== 'paid')
+                ? nextCustomerNumber
+                : inv.customer_number
+          };
+        })
       );
     }
   };
@@ -1732,9 +1758,11 @@ export const AppProvider: React.FC<{
               ? Math.round(mats.reduce((s, m) => s + (m.total || 0), 0) * 100) / 100
               : null;
         const accounting_amount =
-          hours !== null && rate !== null
-            ? Math.round((hours * rate + (matCost || 0)) * 100) / 100
-            : null;
+          work.accounting_amount !== undefined
+            ? work.accounting_amount
+            : hours !== null && rate !== null
+              ? Math.round((hours * rate + (matCost || 0)) * 100) / 100
+              : w.accounting_amount;
         return {
           ...w,
           ...work,
@@ -1848,30 +1876,55 @@ export const AppProvider: React.FC<{
     recordIds: string[],
     options?: {
       extraItems?: InvoiceLineItem[];
+      customLineItems?: InvoiceLineItem[];
       issueDate?: string;
       servicePeriod?: string;
       invoiceNumber?: string;
       dueDays?: number;
       customerNumber?: string;
       paymentTermsText?: string;
+      subjectText?: string;
+      introText?: string;
+      closingText?: string;
+      isPauschal?: boolean;
+      replaceInvoiceIds?: string[];
       paidInCash?: boolean;
     }
   ): Invoice => {
-    const selectedRecords = workRecords.filter(w => recordIds.includes(w.id));
-    const cust = customers.find(c => c.id === customerId);
+    const replaceIds = (options?.replaceInvoiceIds || []).filter(Boolean);
+    const replacedInvoices = invoices.filter((inv) => replaceIds.includes(inv.id));
+
+    // Alle Arbeitsaufzeichnungen sammeln: direkt gewählte + jene aus zusammengefassten Rechnungen
+    const recordIdsFromReplacedInvoices = [
+      ...replacedInvoices.flatMap((inv) => inv.work_record_ids),
+      ...workRecords
+        .filter((w) => w.settlement_id && replaceIds.includes(w.settlement_id))
+        .map((w) => w.id)
+    ];
+    const allBoundRecordIds = Array.from(
+      new Set([...recordIds, ...recordIdsFromReplacedInvoices])
+    );
+
+    const selectedRecords = workRecords.filter((w) => allBoundRecordIds.includes(w.id));
+    const cust = customers.find((c) => c.id === customerId);
     const issueDate = options?.issueDate || getTodayLocalIso();
     const paidInCash = Boolean(options?.paidInCash);
     const dueDays = paidInCash ? 0 : (options?.dueDays ?? 14);
     const dueDate = addDaysIso(issueDate, dueDays);
 
-    const lineItems = buildLineItemsFromRecords(selectedRecords, options?.extraItems || [], {
-      billingCustomerId: customerId,
-      customers,
-      properties
-    });
+    const lineItems =
+      options?.customLineItems && options.customLineItems.length > 0
+        ? options.customLineItems
+        : buildLineItemsFromRecords(selectedRecords, options?.extraItems || [], {
+            billingCustomerId: customerId,
+            customers,
+            properties
+          });
     const total = Math.round(lineItems.reduce((sum, item) => sum + item.amount, 0) * 100) / 100;
 
-    const autoInvoiceNum = computeNextInvoiceNumber(invoices, issueDate).formatted;
+    const remainingInvoicesForNumber =
+      replaceIds.length > 0 ? invoices.filter((i) => !replaceIds.includes(i.id)) : invoices;
+    const autoInvoiceNum = computeNextInvoiceNumber(remainingInvoicesForNumber, issueDate).formatted;
     const invoiceNum = options?.invoiceNumber?.trim() || autoInvoiceNum;
 
     const servicePeriod =
@@ -1880,6 +1933,24 @@ export const AppProvider: React.FC<{
     const paymentTermsText =
       options?.paymentTermsText?.trim() || buildPaymentTermsClause(dueDays, paidInCash);
 
+    const resolvedCustomerNum =
+      options?.customerNumber?.trim() ||
+      cust?.customer_number?.trim() ||
+      resolveCustomerNumber(customerId, customers);
+
+    // Falls der Kunde noch keine Kundennummer gespeichert hatte oder sie geändert wurde, im Kundenkonto hinterlegen
+    if (cust && resolvedCustomerNum && cust.customer_number !== resolvedCustomerNum) {
+      setCustomers((prev) =>
+        prev.map((c) =>
+          c.id === customerId
+            ? { ...c, customer_number: resolvedCustomerNum, updated_at: new Date().toISOString() }
+            : c
+        )
+      );
+    }
+
+    // Eventuelle Zahlungen aus zusammengefassten Rechnungen übernehmen
+    const carriedPayments: PaymentItem[] = replacedInvoices.flatMap((inv) => inv.payments || []);
     const initialPayments: PaymentItem[] =
       paidInCash && total > 0
         ? [
@@ -1892,26 +1963,39 @@ export const AppProvider: React.FC<{
               note: 'Barzahlung bei Rechnungslegung'
             }
           ]
-        : [];
+        : carriedPayments;
+
+    const carriedPaidSum = Math.round(initialPayments.reduce((s, p) => s + p.amount, 0) * 100) / 100;
+    const initialStatus: Invoice['status'] =
+      (paidInCash && total > 0) || (carriedPaidSum >= total && total > 0)
+        ? 'paid'
+        : carriedPaidSum > 0
+          ? 'partially_paid'
+          : 'unpaid';
 
     const newInvoice: Invoice = {
       id: `inv-${Date.now()}`,
       invoice_number: invoiceNum,
       customer_id: customerId,
-      customer_number: options?.customerNumber?.trim() || undefined,
+      customer_number: resolvedCustomerNum,
       billing_customer_name: cust?.name || 'Kunde',
       recipient_street: cust?.street || '',
       recipient_zip: cust?.zip || '',
       recipient_city: cust?.city || '',
       service_period: servicePeriod,
+      subject_text: options?.subjectText?.trim() || undefined,
+      intro_text: options?.introText?.trim() || undefined,
+      closing_text: options?.closingText?.trim() || undefined,
+      is_pauschal: Boolean(options?.isPauschal),
+      merged_invoice_ids: replaceIds.length > 0 ? replaceIds : undefined,
       line_items: lineItems,
       issue_date: issueDate,
       due_date: dueDate,
       payment_terms_text: paymentTermsText,
       paid_in_cash: paidInCash,
       total_amount: total,
-      status: paidInCash && total > 0 ? 'paid' : 'unpaid',
-      work_record_ids: recordIds,
+      status: initialStatus,
+      work_record_ids: allBoundRecordIds,
       is_storno: false,
       storno_reference_id: null,
       storno_reason: null,
@@ -1921,9 +2005,30 @@ export const AppProvider: React.FC<{
       sent_via: null
     };
 
-    // Bind records to settlement_id
-    setWorkRecords(prev => prev.map(w => recordIds.includes(w.id) ? { ...w, settlement_id: newInvoice.id } : w));
-    setInvoices(prev => [newInvoice, ...prev]);
+    if (replaceIds.length > 0) {
+      recordDeletedTombstones(replaceIds.map((id) => ['invoices', id]));
+    }
+
+    // Betreffende Arbeitsaufzeichnungen als abgerechnet markieren und dem Rechnungsempfänger-Konto zuordnen
+    const boundSet = new Set(allBoundRecordIds);
+    setWorkRecords((prev) =>
+      prev.map((w) =>
+        boundSet.has(w.id)
+          ? {
+              ...w,
+              settlement_id: newInvoice.id,
+              is_lcr: false,
+              billing_customer_id:
+                w.customer_id !== customerId ? customerId : w.billing_customer_id,
+              updated_at: new Date().toISOString()
+            }
+          : w
+      )
+    );
+    setInvoices((prev) => [
+      newInvoice,
+      ...prev.filter((inv) => !replaceIds.includes(inv.id))
+    ]);
     return newInvoice;
   };
 

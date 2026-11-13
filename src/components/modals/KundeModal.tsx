@@ -1,6 +1,22 @@
 import React, { useState, useEffect } from 'react';
 import { useApp } from '../../context/AppContext.tsx';
-import { X, User, Phone, Mail, MapPin, FileCheck, Receipt, Trash2 } from 'lucide-react';
+import {
+  computeNextCustomerNumber,
+  resolveCustomerNumber
+} from '../../utils/invoicePdf.ts';
+import {
+  X,
+  User,
+  Phone,
+  Mail,
+  MapPin,
+  FileCheck,
+  Receipt,
+  Trash2,
+  Hash,
+  Minus,
+  Plus
+} from 'lucide-react';
 
 export const KundeModal: React.FC = () => {
   const {
@@ -20,6 +36,7 @@ export const KundeModal: React.FC = () => {
     ? customers.find((c) => c.id === selectedCustomerId)
     : null;
 
+  const [customerNumber, setCustomerNumber] = useState('');
   const [name, setName] = useState('');
   const [company, setCompany] = useState('');
   const [phone, setPhone] = useState('');
@@ -40,6 +57,10 @@ export const KundeModal: React.FC = () => {
   useEffect(() => {
     setConfirmDelete(false);
     if (isEditing && existingCustomer) {
+      setCustomerNumber(
+        existingCustomer.customer_number?.trim() ||
+          resolveCustomerNumber(existingCustomer.id, customers)
+      );
       setName(existingCustomer.name || '');
       setCompany(existingCustomer.company || '');
       setPhone(existingCustomer.phone || '');
@@ -55,6 +76,7 @@ export const KundeModal: React.FC = () => {
       setHasDivergentBilling(isDiv);
       setBillingCustomerId(existingCustomer.default_billing_customer_id || '');
     } else if (isCreating) {
+      setCustomerNumber(computeNextCustomerNumber(customers));
       setName('');
       setCompany('');
       setPhone('');
@@ -67,12 +89,25 @@ export const KundeModal: React.FC = () => {
       setHasDivergentBilling(false);
       setBillingCustomerId('');
     }
-  }, [activeModal, selectedCustomerId, isCreating, isEditing, existingCustomer]);
+  }, [activeModal, selectedCustomerId, isCreating, isEditing, existingCustomer, customers]);
 
   if (!isCreating && !isEditing) return null;
 
   const effectiveBillingId =
     hasDivergentBilling && billingCustomerId ? billingCustomerId : null;
+
+  const stepCustomerNum = (delta: number) => {
+    const trimmed = customerNumber.trim();
+    const match = trimmed.match(/^(.*?)(\d+)$/);
+    if (match) {
+      const prefix = match[1];
+      const nextVal = Math.max(1, parseInt(match[2], 10) + delta);
+      setCustomerNumber(`${prefix}${nextVal}`);
+    } else {
+      const fallback = parseInt(computeNextCustomerNumber(customers), 10) || 1001;
+      setCustomerNumber(String(Math.max(1, fallback + delta)));
+    }
+  };
 
   const handleSave = () => {
     if (!name.trim()) return;
@@ -80,6 +115,11 @@ export const KundeModal: React.FC = () => {
       return;
     }
     const payload = {
+      customer_number:
+        customerNumber.trim() ||
+        (existingCustomer
+          ? resolveCustomerNumber(existingCustomer.id, customers)
+          : computeNextCustomerNumber(customers)),
       name: name.trim(),
       company: company.trim() || 'Privatkunde',
       phone: phone.trim(),
@@ -115,7 +155,9 @@ export const KundeModal: React.FC = () => {
             <h2 className="text-base font-bold text-slate-900 leading-tight">
               {isEditing ? 'Stammdaten bearbeiten' : 'Neuen Kunden anlegen'}
             </h2>
-            <p className="text-[11px] text-slate-500">Stammdaten & Kontakt</p>
+            <p className="text-[11px] text-slate-500">
+              Stammdaten, Kundennummer & Kontakt
+            </p>
           </div>
           <button
             onClick={() => setActiveModal(null)}
@@ -127,19 +169,54 @@ export const KundeModal: React.FC = () => {
 
         {/* Form Body */}
         <div className="flex-1 overflow-y-auto py-3 space-y-3.5 text-xs text-slate-700">
-          <div>
-            <label className="font-semibold text-slate-700 block mb-1 flex items-center gap-1">
-              <User size={13} className="text-slate-500" />
-              <span>Name / Bezeichnung *</span>
-            </label>
-            <input
-              type="text"
-              required
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="z.B. Max Mustermann"
-              className="w-full h-11 px-3 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-[#3138A0] outline-hidden text-sm text-slate-900 font-medium"
-            />
+          <div className="grid grid-cols-12 gap-2">
+            <div className="col-span-8">
+              <label className="font-semibold text-slate-700 block mb-1 flex items-center gap-1">
+                <User size={13} className="text-slate-500" />
+                <span>Name / Bezeichnung *</span>
+              </label>
+              <input
+                type="text"
+                required
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="z.B. Max Mustermann"
+                className="w-full h-11 px-3 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-[#3138A0] outline-hidden text-sm text-slate-900 font-medium"
+              />
+            </div>
+
+            <div className="col-span-4">
+              <label className="font-semibold text-slate-700 block mb-1 flex items-center gap-1">
+                <Hash size={12} className="text-[#3138A0]" />
+                <span>Kunden-Nr.</span>
+              </label>
+              <div className="flex items-center h-11 bg-slate-50 border border-slate-200 rounded-xl overflow-hidden focus-within:bg-white focus-within:border-[#3138A0]">
+                <button
+                  type="button"
+                  onClick={() => stepCustomerNum(-1)}
+                  aria-label="Kundennummer verringern"
+                  className="w-7 h-full flex items-center justify-center text-slate-600 hover:bg-slate-200/70 active:bg-slate-200 shrink-0 border-r border-slate-200/80"
+                >
+                  <Minus size={13} />
+                </button>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={customerNumber}
+                  onChange={(e) => setCustomerNumber(e.target.value)}
+                  placeholder="1001"
+                  className="min-w-0 flex-1 h-full px-1 bg-transparent text-center font-bold text-xs text-slate-900 outline-hidden"
+                />
+                <button
+                  type="button"
+                  onClick={() => stepCustomerNum(1)}
+                  aria-label="Kundennummer erhöhen"
+                  className="w-7 h-full flex items-center justify-center text-[#3138A0] hover:bg-indigo-50 active:bg-indigo-100 shrink-0 border-l border-slate-200/80"
+                >
+                  <Plus size={13} />
+                </button>
+              </div>
+            </div>
           </div>
 
           <div className="grid grid-cols-2 gap-2">

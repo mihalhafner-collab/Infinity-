@@ -6,6 +6,7 @@ import { BottomNav } from '../common/BottomNav.tsx';
 import { UndoToast } from '../common/UndoToast.tsx';
 import { SwipeToDeleteRow } from '../common/SwipeToDeleteRow.tsx';
 import { InvoicePaperPreview } from '../common/InvoicePaperPreview.tsx';
+import { CollapsibleCard } from '../common/CollapsibleCard.tsx';
 import { GuvPanel } from './GuvPanel.tsx';
 import {
   formatDateDE,
@@ -17,8 +18,6 @@ import { downloadOrSaveBlob } from '../../services/nativeBridge.ts';
 import {
   Receipt,
   CheckCircle,
-  ChevronDown,
-  ChevronUp,
   CreditCard,
   Ban,
   Pencil,
@@ -78,13 +77,19 @@ export const AbrechnungView: React.FC = () => {
   const [refundModalOpen, setRefundModalOpen] = useState(false);
   const [refundAmount, setRefundAmount] = useState('240');
 
-  // Bearbeiten-Zustand für Belege / Abschlüsse (Buchungshistorie)
+  // Bearbeiten-Zustand für Belege / Abschlüsse (Buchungshistorie & Rechnungstext)
   const [editingInvoice, setEditingInvoice] = useState<Invoice | null>(null);
   const [editInvNumber, setEditInvNumber] = useState('');
   const [editCustomerId, setEditCustomerId] = useState('');
+  const [editCustomerNumber, setEditCustomerNumber] = useState('');
   const [editBillingName, setEditBillingName] = useState('');
   const [editIssueDate, setEditIssueDate] = useState('');
   const [editDueDate, setEditDueDate] = useState('');
+  const [editServicePeriod, setEditServicePeriod] = useState('');
+  const [editSubjectText, setEditSubjectText] = useState('');
+  const [editIntroText, setEditIntroText] = useState('');
+  const [editPaymentTermsText, setEditPaymentTermsText] = useState('');
+  const [editClosingText, setEditClosingText] = useState('');
   const [editTotalAmountStr, setEditTotalAmountStr] = useState('');
   const [editStatus, setEditStatus] = useState<Invoice['status']>('unpaid');
   const [editStornoReason, setEditStornoReason] = useState('');
@@ -151,12 +156,19 @@ export const AbrechnungView: React.FC = () => {
   const selectedInvoice = invoices.find((i) => i.id === selectedInvoiceId);
 
   const openEditInvoiceModal = (inv: Invoice) => {
+    const resolved = resolveInvoiceDisplayData(inv, customers, workRecords);
     setEditingInvoice(inv);
     setEditInvNumber(inv.invoice_number);
     setEditCustomerId(inv.customer_id);
+    setEditCustomerNumber(resolved.customerNumber);
     setEditBillingName(inv.billing_customer_name);
     setEditIssueDate(inv.issue_date);
     setEditDueDate(inv.due_date);
+    setEditServicePeriod(resolved.servicePeriod);
+    setEditSubjectText(inv.subject_text || '');
+    setEditIntroText(resolved.introText || '');
+    setEditPaymentTermsText(resolved.paymentTermsText || '');
+    setEditClosingText(resolved.closingText || '');
     setEditTotalAmountStr(String(inv.total_amount).replace('.', ','));
     setEditStatus(inv.status);
     setEditStornoReason(inv.storno_reason || '');
@@ -172,9 +184,15 @@ export const AbrechnungView: React.FC = () => {
     updateInvoice(editingInvoice.id, {
       invoice_number: editInvNumber.trim() || editingInvoice.invoice_number,
       customer_id: editCustomerId || editingInvoice.customer_id,
+      customer_number: editCustomerNumber.trim() || editingInvoice.customer_number,
       billing_customer_name: editBillingName.trim() || editingInvoice.billing_customer_name,
       issue_date: editIssueDate || editingInvoice.issue_date,
       due_date: editDueDate || editingInvoice.due_date,
+      service_period: editServicePeriod.trim() || editingInvoice.service_period,
+      subject_text: editSubjectText.trim() || undefined,
+      intro_text: editIntroText.trim() || undefined,
+      payment_terms_text: editPaymentTermsText.trim() || undefined,
+      closing_text: editClosingText.trim() || undefined,
       total_amount: normalizedAmount,
       status: editingInvoice.is_storno ? 'cancelled' : editStatus,
       storno_reason: editingInvoice.is_storno ? editStornoReason.trim() : editingInvoice.storno_reason
@@ -329,38 +347,19 @@ export const AbrechnungView: React.FC = () => {
           </div>
 
           {/* Original-Rechnungsbeleg im Design: Hafner Grünraum Handwerk */}
-          <div className="bg-white border border-slate-200 rounded-2xl shadow-2xs overflow-hidden">
-            <button
-              type="button"
-              onClick={() => setDocPreviewOpen((p) => !p)}
-              className="w-full p-3.5 flex items-center justify-between text-left hover:bg-slate-50 transition-colors"
-            >
-              <div className="flex items-center gap-2">
-                <FileText size={15} className="text-[#3138A0]" />
-                <div>
-                  <span className="text-xs font-bold text-slate-900 block leading-tight">
-                    Rechnungsdokument (A4 Originaldesign)
-                  </span>
-                  <span className="text-[10px] text-slate-500">
-                    Hafner Grünraum Handwerk · inkl. Original-Logo
-                  </span>
-                </div>
-              </div>
-              {docPreviewOpen ? (
-                <ChevronUp size={16} className="text-slate-400" />
-              ) : (
-                <ChevronDown size={16} className="text-slate-400" />
-              )}
-            </button>
-
-            {docPreviewOpen && (
-              <div className="px-3 pb-3 border-t border-slate-100 pt-3 bg-slate-50/60">
-                <InvoicePaperPreview
-                  data={resolveInvoiceDisplayData(selectedInvoice, customers, workRecords)}
-                />
-              </div>
-            )}
-          </div>
+          <CollapsibleCard
+            title="Rechnungsdokument (A4 Originaldesign)"
+            subtitle="Hafner Grünraum Handwerk · inkl. Original-Logo"
+            icon={<FileText size={16} />}
+            iconBgClassName="bg-indigo-50 text-[#3138A0] border-indigo-100"
+            open={docPreviewOpen}
+            onToggle={() => setDocPreviewOpen((p) => !p)}
+            bodyClassName="px-3 pb-3 pt-3 border-t border-slate-100 bg-slate-50/70"
+          >
+            <InvoicePaperPreview
+              data={resolveInvoiceDisplayData(selectedInvoice, customers, workRecords)}
+            />
+          </CollapsibleCard>
 
           {/* Zahlungsstatus & Betragsaufstellung */}
           {!selectedInvoice.is_storno &&
@@ -718,23 +717,32 @@ export const AbrechnungView: React.FC = () => {
               </div>
 
               {/* UNTERER BEREICH: Aktions- & Abrechnungsbereich direkt in Daumenreichweite */}
-              <div className="mt-auto pt-1">
+              <div className="mt-auto pt-1 space-y-2.5">
                 <div className="bg-white border border-slate-200 rounded-2xl shadow-2xs px-3.5 py-3 space-y-2.5">
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between gap-2">
                     <h3 className="text-sm font-bold text-slate-950">
                       Arbeiten ohne Rechnung
                     </h3>
-                    <span
-                      className={`text-xs font-bold px-2.5 py-0.5 rounded-lg ${
-                        groupedOpenWork.length > 0
-                          ? 'bg-orange-50 text-[#B4470B]'
-                          : 'bg-slate-100 text-slate-600'
-                      }`}
-                    >
-                      {groupedOpenWork.length === 0
-                        ? 'Keine'
-                        : `${groupedOpenWork.length} offen`}
-                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setActiveModal('PAUSCHALRECHNUNG_VORBEREITEN')}
+                        className="px-2.5 h-7 bg-amber-50 hover:bg-amber-100 text-[#B4470B] border border-amber-200 rounded-lg text-[11px] font-bold transition-colors"
+                      >
+                        + Pauschalrechnung
+                      </button>
+                      <span
+                        className={`text-xs font-bold px-2.5 py-0.5 rounded-lg ${
+                          groupedOpenWork.length > 0
+                            ? 'bg-orange-50 text-[#B4470B]'
+                            : 'bg-slate-100 text-slate-600'
+                        }`}
+                      >
+                        {groupedOpenWork.length === 0
+                          ? 'Keine'
+                          : `${groupedOpenWork.length} offen`}
+                      </span>
+                    </div>
                   </div>
 
                   {groupedOpenWork.length > 0 && (
@@ -745,9 +753,16 @@ export const AbrechnungView: React.FC = () => {
                           className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between"
                         >
                           <div className="min-w-0 pr-2">
-                            <span className="font-bold text-slate-950 block text-sm truncate">
-                              {g.customer.name}
-                            </span>
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-bold text-slate-950 block text-sm truncate">
+                                {g.customer.name}
+                              </span>
+                              {g.customer.customer_number && (
+                                <span className="text-[10px] font-bold font-mono text-[#3138A0] bg-indigo-50 px-1.5 py-0.5 rounded-md border border-indigo-100 shrink-0">
+                                  #{g.customer.customer_number}
+                                </span>
+                              )}
+                            </div>
                             <span className="text-xs text-slate-600 block truncate">
                               {g.records.length} {g.records.length === 1 ? 'Arbeit' : 'Arbeiten'} ·{' '}
                               {g.totalHours.toLocaleString('de-DE', { maximumFractionDigits: 2 })} Std.
@@ -757,8 +772,8 @@ export const AbrechnungView: React.FC = () => {
                             </span>
                           </div>
 
-                          <div className="flex items-center gap-2 shrink-0">
-                            <span className="font-bold text-sm text-[#B4470B] tabular-nums">
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <span className="font-bold text-sm text-[#B4470B] tabular-nums pr-0.5">
                               {g.totalAmount.toLocaleString('de-DE', {
                                 minimumFractionDigits: 0,
                                 maximumFractionDigits: 2
@@ -768,9 +783,19 @@ export const AbrechnungView: React.FC = () => {
                             <button
                               onClick={() => {
                                 setSelectedCustomerId(g.customer.id);
+                                setActiveModal('PAUSCHALRECHNUNG_VORBEREITEN');
+                              }}
+                              className="px-2.5 h-10 bg-amber-50 hover:bg-amber-100 text-[#B4470B] border border-amber-200 text-[11px] font-bold rounded-xl transition-colors flex items-center justify-center"
+                              title="Pauschalrechnung vorbereiten"
+                            >
+                              Pauschal
+                            </button>
+                            <button
+                              onClick={() => {
+                                setSelectedCustomerId(g.customer.id);
                                 setActiveModal('RECHNUNG_VORBEREITEN');
                               }}
-                              className="px-3.5 h-10 bg-[#3138A0] hover:bg-[#272d82] text-white text-xs font-bold rounded-xl shadow-2xs transition-colors flex items-center justify-center"
+                              className="px-3 h-10 bg-[#3138A0] hover:bg-[#272d82] text-white text-xs font-bold rounded-xl shadow-2xs transition-colors flex items-center justify-center"
                             >
                               Abrechnen
                             </button>
@@ -797,7 +822,7 @@ export const AbrechnungView: React.FC = () => {
                   {editingInvoice.is_storno ? 'Stornobeleg bearbeiten' : 'Buchung / Rechnung bearbeiten'}
                 </h3>
                 <p className="text-[11px] text-slate-500">
-                  Änderungen aktualisieren alle Ansichten & Salden sofort
+                  Änderungen aktualisieren Beleg, Rechnungstext & Salden sofort
                 </p>
               </div>
               <button
@@ -810,14 +835,25 @@ export const AbrechnungView: React.FC = () => {
             </div>
 
             <div className="flex-1 overflow-y-auto py-3 space-y-3 text-xs text-slate-700">
-              <div>
-                <label className="font-semibold block mb-1">Belegnummer</label>
-                <input
-                  type="text"
-                  value={editInvNumber}
-                  onChange={(e) => setEditInvNumber(e.target.value)}
-                  className="w-full h-11 px-3 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-[#3138A0] outline-hidden text-sm font-semibold text-slate-900"
-                />
+              <div className="grid grid-cols-2 gap-2.5">
+                <div>
+                  <label className="font-semibold block mb-1">Belegnummer</label>
+                  <input
+                    type="text"
+                    value={editInvNumber}
+                    onChange={(e) => setEditInvNumber(e.target.value)}
+                    className="w-full h-11 px-3 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-[#3138A0] outline-hidden text-sm font-semibold text-slate-900"
+                  />
+                </div>
+                <div>
+                  <label className="font-semibold block mb-1">Kunden-Nr.</label>
+                  <input
+                    type="text"
+                    value={editCustomerNumber}
+                    onChange={(e) => setEditCustomerNumber(e.target.value)}
+                    className="w-full h-11 px-3 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-[#3138A0] outline-hidden text-sm font-bold font-mono text-[#3138A0]"
+                  />
+                </div>
               </div>
 
               <div className="grid grid-cols-2 gap-2.5">
@@ -829,7 +865,12 @@ export const AbrechnungView: React.FC = () => {
                       const cid = e.target.value;
                       setEditCustomerId(cid);
                       const found = customers.find((c) => c.id === cid);
-                      if (found) setEditBillingName(found.name);
+                      if (found) {
+                        setEditBillingName(found.name);
+                        if (found.customer_number) {
+                          setEditCustomerNumber(found.customer_number);
+                        }
+                      }
                     }}
                     className="w-full h-11 px-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-[#3138A0] outline-hidden text-xs font-medium text-slate-900"
                   >
@@ -912,6 +953,64 @@ export const AbrechnungView: React.FC = () => {
                   </div>
                 )}
               </div>
+
+              {!editingInvoice.is_storno && (
+                <div className="pt-2 border-t border-slate-100 space-y-2.5">
+                  <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">
+                    Rechnungstext direkt bearbeiten
+                  </span>
+                  <div className="grid grid-cols-2 gap-2.5">
+                    <div>
+                      <label className="font-semibold block mb-1">Leistungszeitraum</label>
+                      <input
+                        type="text"
+                        value={editServicePeriod}
+                        onChange={(e) => setEditServicePeriod(e.target.value)}
+                        className="w-full h-10 px-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-[#3138A0] outline-hidden text-xs text-slate-900"
+                      />
+                    </div>
+                    <div>
+                      <label className="font-semibold block mb-1">Betreff (optional)</label>
+                      <input
+                        type="text"
+                        value={editSubjectText}
+                        onChange={(e) => setEditSubjectText(e.target.value)}
+                        placeholder="Standard Rechnungs-Nr."
+                        className="w-full h-10 px-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-[#3138A0] outline-hidden text-xs text-slate-900"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="font-semibold block mb-1">Anschreiben / Einleitungstext</label>
+                    <textarea
+                      rows={2}
+                      value={editIntroText}
+                      onChange={(e) => setEditIntroText(e.target.value)}
+                      className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-[#3138A0] outline-hidden text-xs text-slate-900 resize-none"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-2.5">
+                    <div>
+                      <label className="font-semibold block mb-1">Zahlungsbedingungen</label>
+                      <input
+                        type="text"
+                        value={editPaymentTermsText}
+                        onChange={(e) => setEditPaymentTermsText(e.target.value)}
+                        className="w-full h-10 px-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-[#3138A0] outline-hidden text-xs text-slate-900"
+                      />
+                    </div>
+                    <div>
+                      <label className="font-semibold block mb-1">Schlusstext</label>
+                      <input
+                        type="text"
+                        value={editClosingText}
+                        onChange={(e) => setEditClosingText(e.target.value)}
+                        className="w-full h-10 px-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-[#3138A0] outline-hidden text-xs text-slate-900"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="pt-3 border-t border-slate-100 flex items-center gap-2">

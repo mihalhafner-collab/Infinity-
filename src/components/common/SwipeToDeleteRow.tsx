@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { Trash2 } from 'lucide-react';
+import { Trash2, ArrowLeft } from 'lucide-react';
 
 interface SwipeToDeleteRowProps {
   children: React.ReactNode;
@@ -9,9 +9,18 @@ interface SwipeToDeleteRowProps {
 }
 
 /**
- * Pixel 10 Pro optimierte Wisch-Zeile:
- * Verschieben nach links legt den roten Löschbereich frei und löscht den Eintrag.
+ * Pixel 10 Pro optimierte Wisch-Zeile mit nach links versetztem Referenzpunkt (75 %),
+ * um versehentliche Löschungen (insbesondere der Kundenakte beim Scrollen oder Tippen)
+ * zuverlässig zu verhindern.
+ *
+ * WICHTIG:
+ * - Kein `snap-end` auf dem roten Hintergrund, damit ein kurzes Anstreifen niemals
+ *   automatisch in die Löschposition schnappt.
+ * - Erst wenn die Zeile über den linken Referenzpunkt (mind. 75 % der Zeilenbreite nach links)
+ *   gezogen und dort losgelassen wird, wird die Löschung ausgelöst.
  */
+const LEFT_DELETE_REFERENCE_RATIO = 0.75;
+
 export const SwipeToDeleteRow: React.FC<SwipeToDeleteRowProps> = ({
   children,
   onDelete,
@@ -25,6 +34,16 @@ export const SwipeToDeleteRow: React.FC<SwipeToDeleteRowProps> = ({
   const dragStartXRef = useRef(0);
   const dragStartScrollRef = useRef(0);
   const [isMouseDragging, setIsMouseDragging] = useState(false);
+  const [pastReferencePoint, setPastReferencePoint] = useState(false);
+
+  const updateReferenceState = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const width = el.clientWidth || 1;
+    const ratio = el.scrollLeft / width;
+    const reached = ratio >= LEFT_DELETE_REFERENCE_RATIO;
+    setPastReferencePoint((prev) => (prev !== reached ? reached : prev));
+  };
 
   const finalizeSwipePosition = () => {
     const el = scrollRef.current;
@@ -32,13 +51,15 @@ export const SwipeToDeleteRow: React.FC<SwipeToDeleteRowProps> = ({
     const width = el.clientWidth || 1;
     const ratio = el.scrollLeft / width;
 
-    if (ratio >= 0.4) {
+    // Nur löschen, wenn bis über den linken Referenzpunkt (75 %) gezogen wurde
+    if (ratio >= LEFT_DELETE_REFERENCE_RATIO) {
       triggeredRef.current = true;
       el.scrollTo({ left: width, behavior: 'smooth' });
       setTimeout(() => {
         onDelete();
-      }, 140);
+      }, 150);
     } else if (el.scrollLeft > 0) {
+      setPastReferencePoint(false);
       el.scrollTo({ left: 0, behavior: 'smooth' });
     }
   };
@@ -46,11 +67,14 @@ export const SwipeToDeleteRow: React.FC<SwipeToDeleteRowProps> = ({
   const handleScroll = () => {
     const el = scrollRef.current;
     if (!el || triggeredRef.current) return;
+    updateReferenceState();
+
+    // Kein automatisches Auslösen während des Scrollens unterhalb von 92 %
     if (isTouchingRef.current || isMouseDownRef.current) return;
     const width = el.clientWidth || 1;
-    if (el.scrollLeft / width >= 0.7) {
-      triggeredRef.current = true;
-      onDelete();
+    const ratio = el.scrollLeft / width;
+    if (ratio < LEFT_DELETE_REFERENCE_RATIO && el.scrollLeft > 0) {
+      el.scrollTo({ left: 0, behavior: 'smooth' });
     }
   };
 
@@ -65,9 +89,8 @@ export const SwipeToDeleteRow: React.FC<SwipeToDeleteRowProps> = ({
 
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (e.pointerType !== 'mouse') return;
-    // Ignoriere Klicks direkt auf interaktive Buttons oder Links innerhalb der Zeile
     const target = e.target as HTMLElement;
-    if (target.closest('button, a')) return;
+    if (target.closest('button, a, input, select, textarea')) return;
 
     const el = scrollRef.current;
     if (!el) return;
@@ -84,6 +107,7 @@ export const SwipeToDeleteRow: React.FC<SwipeToDeleteRowProps> = ({
     if (!el) return;
     const dx = e.clientX - dragStartXRef.current;
     el.scrollLeft = Math.max(0, dragStartScrollRef.current - dx);
+    updateReferenceState();
   };
 
   const handlePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -108,28 +132,43 @@ export const SwipeToDeleteRow: React.FC<SwipeToDeleteRowProps> = ({
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
       onPointerCancel={handlePointerUp}
-      className={`w-full overflow-x-auto no-scrollbar flex items-stretch select-none rounded-xl ${
-        isMouseDragging ? 'snap-none cursor-grabbing' : 'snap-x snap-mandatory'
+      className={`w-full overflow-x-auto no-scrollbar flex items-stretch select-none rounded-2xl touch-pan-y ${
+        isMouseDragging ? 'cursor-grabbing' : ''
       } ${className}`}
     >
-      {/* Vordergrund-Inhalt */}
-      <div className="w-full shrink-0 snap-start">{children}</div>
+      {/* Vordergrund-Inhalt (rastet immer links am Startpunkt ein) */}
+      <div className="w-full shrink-0">{children}</div>
 
-      {/* Roter Lösch-Hintergrund beim Nach-links-Verschieben */}
+      {/* Lösch-Hintergrund mit nach links gesetztem Referenzpunkt (ab 75 % Wischweg) */}
       <div
-        onClick={() => {
-          if (!triggeredRef.current) {
-            triggeredRef.current = true;
-            onDelete();
-          }
-        }}
-        className="w-full shrink-0 snap-end bg-[#B42318] text-white flex items-center justify-between px-4 cursor-pointer"
+        className={`w-full shrink-0 flex items-center justify-between px-4 transition-colors duration-150 ${
+          pastReferencePoint
+            ? 'bg-[#B42318] text-white'
+            : 'bg-slate-200/90 text-slate-700'
+        }`}
       >
-        <div className="flex items-center gap-2 font-bold text-xs">
-          <Trash2 size={16} />
-          <span>{deleteLabel}</span>
+        {/* Linker Sicherheitsbereich bis zum Referenzpunkt */}
+        <div className="flex items-center gap-1.5 text-[11px] font-semibold">
+          {pastReferencePoint ? (
+            <>
+              <Trash2 size={15} className="shrink-0" />
+              <span className="font-bold">{deleteLabel}</span>
+            </>
+          ) : (
+            <>
+              <ArrowLeft size={14} className="text-slate-500 shrink-0" />
+              <span>Weiter nach links ziehen…</span>
+            </>
+          )}
         </div>
-        <span className="text-[10px] font-semibold opacity-80">Loslassen zum Löschen</span>
+
+        {/* Visueller Referenzpunkt auf der linken Wischziel-Seite (75 %-Schwelle) */}
+        <div className="flex items-center gap-2 pl-3 border-l-2 border-dashed border-current/40 shrink-0">
+          <Trash2 size={15} className="shrink-0" />
+          <span className="text-[10px] font-bold">
+            {pastReferencePoint ? 'Loslassen zum Löschen' : 'Referenzpunkt links'}
+          </span>
+        </div>
       </div>
     </div>
   );

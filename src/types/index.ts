@@ -23,6 +23,7 @@ export type ScreenId =
 export interface Customer {
   id: string;
   record_hash?: string;
+  customer_number?: string;
   name: string;
   company?: string;
   phone: string;
@@ -141,6 +142,11 @@ export interface Invoice {
   recipient_zip?: string;
   recipient_city?: string;
   service_period?: string | null;
+  subject_text?: string;
+  intro_text?: string;
+  closing_text?: string;
+  is_pauschal?: boolean;
+  merged_invoice_ids?: string[];
   line_items?: InvoiceLineItem[];
   issue_date: string;
   due_date: string;
