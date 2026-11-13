@@ -19,9 +19,12 @@ import {
   ISSUER_TAX_NR
 } from '../../utils/invoicePdf.ts';
 import {
+  OWNER_EMAIL,
+  getOwnerSessionState,
   googleSignIn,
   logoutGmail,
-  subscribeGmailAuth
+  subscribeGmailAuth,
+  subscribeOwnerSession
 } from '../../services/gmailService.ts';
 import { useSmartphoneWeather } from '../../services/weatherService.ts';
 import { useApp } from '../../context/AppContext.tsx';
@@ -31,6 +34,7 @@ import {
   getNativeMcpSyncStatus,
   getRevealedNativeMcpToken,
   isNativeAndroidApp,
+  openExternalUrlNatively,
   pairNativeMcpWithCode,
   resolveMcpAdminEndpoint,
   subscribeNativeMcpStatus,
@@ -97,10 +101,11 @@ export const EinstellungenView: React.FC = () => {
   const [gmailHasToken, setGmailHasToken] = useState(false);
   const [gmailConnecting, setGmailConnecting] = useState(false);
   const [gmailAuthError, setGmailAuthError] = useState<string | null>(null);
+  const [ownerSession, setOwnerSession] = useState(() => getOwnerSessionState());
 
   const isNativeAndroid = isNativeAndroidApp();
 
-  // Gemeinsamer Cloud- & MCP-Server-Status (identisch in Web-App und Android-App)
+  // Gemeinsamer Cloud- & MCP-Server-Status (ausschließlich in der primären Android-App)
   const [mcpInfo, setMcpInfo] = useState<McpClientConfigInfo | null>(null);
   const [revealedAdminToken, setRevealedAdminToken] = useState<string | null>(() =>
     getRevealedNativeMcpToken()
@@ -108,6 +113,9 @@ export const EinstellungenView: React.FC = () => {
   const [showSecretToken, setShowSecretToken] = useState(false);
   const [resetInProgress, setResetInProgress] = useState(false);
   const [resetDoneBanner, setResetDoneBanner] = useState(false);
+  const [pairingCodeInput, setPairingCodeInput] = useState('');
+  const [pairingFeedback, setPairingFeedback] = useState<string | null>(null);
+  const [pairingError, setPairingError] = useState<string | null>(null);
 
   // Native Pixel 10 Pro Keystore & Sync Status
   const [nativeSyncStatus, setNativeSyncStatus] = useState<NativeMcpSyncStatus | null>(() =>
@@ -175,16 +183,6 @@ export const EinstellungenView: React.FC = () => {
     if (immediateNativeToken) {
       setRevealedAdminToken((prev) => prev || immediateNativeToken);
     }
-    // Falls noch kein Token im Keystore liegt, automatisch ohne Einmal-Code verbinden
-    if (latest && !latest.configured && latest.state !== 'reconnecting') {
-      const autoUpdated = pairNativeMcpWithCode(
-        latest.baseUrl || 'https://hafner-gruenraum.ai.studio',
-        'AUTO'
-      );
-      if (autoUpdated) {
-        setNativeSyncStatus(autoUpdated);
-      }
-    }
 
     try {
       const endpoint = resolveMcpAdminEndpoint(
@@ -211,10 +209,6 @@ export const EinstellungenView: React.FC = () => {
   };
 
   useEffect(() => {
-    if (!isNativeAndroid) {
-      return;
-    }
-
     const unsubGmail = subscribeGmailAuth(({ user, hasToken, error }) => {
       setGmailUser(user);
       setGmailHasToken(hasToken);
@@ -222,6 +216,16 @@ export const EinstellungenView: React.FC = () => {
         setGmailAuthError(error);
       }
     });
+    const unsubOwner = subscribeOwnerSession((state) => {
+      setOwnerSession(state);
+    });
+
+    if (!isNativeAndroid) {
+      return () => {
+        unsubGmail();
+        unsubOwner();
+      };
+    }
 
     const unsubNativeStatus = subscribeNativeMcpStatus((status) => {
       setNativeSyncStatus(status);
@@ -238,6 +242,7 @@ export const EinstellungenView: React.FC = () => {
 
     return () => {
       unsubGmail();
+      unsubOwner();
       unsubNativeStatus();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -275,6 +280,7 @@ export const EinstellungenView: React.FC = () => {
   };
 
   const handleToggleShowSecret = async () => {
+    if (!isNativeAndroid) return;
     if (showSecretToken) {
       setShowSecretToken(false);
       return;
@@ -291,6 +297,7 @@ export const EinstellungenView: React.FC = () => {
   };
 
   const handleCopyAdminToken = async () => {
+    if (!isNativeAndroid) return;
     const immediate = resolveCurrentFullTokenSync();
     if (immediate) {
       setRevealedAdminToken(immediate);
@@ -304,6 +311,7 @@ export const EinstellungenView: React.FC = () => {
   };
 
   const handleRotateMcpToken = async () => {
+    if (!isNativeAndroid) return;
     setRotatingToken(true);
     try {
       const endpoint = resolveMcpAdminEndpoint('/api/internal/mcp-config', nativeBaseUrlInput);
@@ -326,19 +334,11 @@ export const EinstellungenView: React.FC = () => {
     }
   };
 
-  const handleOneClickReconnectReset = async () => {
+  const handleSyncNow = async () => {
+    if (!isNativeAndroid) return;
     setResetInProgress(true);
     try {
-      if (isNativeAndroid) {
-        const targetUrl = nativeBaseUrlInput.trim() || 'https://hafner-gruenraum.ai.studio';
-        const updated = pairNativeMcpWithCode(targetUrl, 'AUTO');
-        if (updated) {
-          setNativeSyncStatus(updated);
-        }
-        triggerNativeMcpSyncNow();
-      } else {
-        await refreshFromServer();
-      }
+      triggerNativeMcpSyncNow();
       await loadMcpInfo();
       setResetDoneBanner(true);
       setTimeout(() => setResetDoneBanner(false), 3000);
@@ -347,18 +347,57 @@ export const EinstellungenView: React.FC = () => {
     }
   };
 
+  const handleGoogleConnectAndroid = () => {
+    if (!isNativeAndroid) return;
+    setPairingError(null);
+    setPairingFeedback(null);
+    const targetUrl = (nativeBaseUrlInput.trim() || 'https://hafner-gruenraum.ai.studio').replace(
+      /\/+$/,
+      ''
+    );
+    const opened = openExternalUrlNatively(`${targetUrl}/android-connect`);
+    if (!opened) {
+      setPairingError('Browser konnte nicht geöffnet werden.');
+    }
+  };
+
+  const handlePairWithSixDigitCode = async () => {
+    if (!isNativeAndroid) return;
+    const digits = pairingCodeInput.replace(/[^0-9]/g, '');
+    if (digits.length !== 6) {
+      setPairingError('Bitte gültigen 6-stelligen Kopplungscode eingeben.');
+      return;
+    }
+    setPairingError(null);
+    setPairingFeedback(null);
+    setResetInProgress(true);
+    try {
+      const targetUrl = (nativeBaseUrlInput.trim() || 'https://hafner-gruenraum.ai.studio').replace(
+        /\/+$/,
+        ''
+      );
+      const updated = pairNativeMcpWithCode(targetUrl, digits);
+      if (updated) {
+        setNativeSyncStatus(updated);
+      }
+      setPairingCodeInput('');
+      setPairingFeedback('Kopplungscode wird geprüft und synchronisiert…');
+      await loadMcpInfo();
+      setTimeout(() => setPairingFeedback(null), 4000);
+    } finally {
+      setResetInProgress(false);
+    }
+  };
+
   const handleStatusCheck = async () => {
+    if (!isNativeAndroid) return;
     setStatusCheckRunning(true);
     try {
-      if (isNativeAndroid) {
-        triggerNativeMcpSyncNow();
-      } else {
-        await refreshFromServer();
-      }
+      triggerNativeMcpSyncNow();
       const endpoint = resolveMcpAdminEndpoint('/api/internal/mcp-health', nativeBaseUrlInput);
       const res = await fetch(endpoint.url, {
         headers: endpoint.headers,
-        credentials: isNativeAndroid ? 'omit' : 'include'
+        credentials: 'omit'
       });
       await loadMcpInfo();
       if (res.ok || isNativeAndroid) {
@@ -382,19 +421,23 @@ export const EinstellungenView: React.FC = () => {
     : appSyncStatus.pendingSyncCount;
   const effectiveRevision = isNativeAndroid
     ? nativeSyncStatus?.revision ?? mcpInfo?.revision ?? appSyncStatus.revision
-    : mcpInfo?.revision ?? appSyncStatus.revision;
-  const effectiveMcpUrl =
-    mcpInfo?.endpoints.mcpHeaderUrl ||
-    nativeSyncStatus?.mcpEndpointUrl ||
-    'https://hafner-gruenraum.ai.studio/mcp';
-  const effectiveMaskedToken =
-    mcpInfo?.maskedToken ||
-    nativeSyncStatus?.maskedToken ||
-    'hgh_mcp_••••••••••••••••••••';
+    : appSyncStatus.revision;
+  const effectiveMcpUrl = isNativeAndroid
+    ? mcpInfo?.endpoints.mcpHeaderUrl ||
+      nativeSyncStatus?.mcpEndpointUrl ||
+      'https://hafner-gruenraum.ai.studio/mcp'
+    : '';
+  const effectiveMaskedToken = isNativeAndroid
+    ? mcpInfo?.maskedToken ||
+      nativeSyncStatus?.maskedToken ||
+      'hgh_mcp_••••••••••••••••••••'
+    : '';
   const effectiveLastSyncIso = isNativeAndroid
     ? nativeSyncStatus?.lastSyncAt || mcpInfo?.androidTelemetry.lastSyncAt || null
-    : mcpInfo?.androidTelemetry.lastSyncAt || appSyncStatus.lastSyncAt || null;
-  const effectiveTotalCalls = mcpInfo?.totalCalls ?? nativeSyncStatus?.totalMcpCalls ?? 0;
+    : appSyncStatus.lastSyncAt || null;
+  const effectiveTotalCalls = isNativeAndroid
+    ? mcpInfo?.totalCalls ?? nativeSyncStatus?.totalMcpCalls ?? 0
+    : 0;
 
   return (
     <div className="flex-1 min-h-0 flex flex-col h-full bg-[#F8F9FA] overflow-hidden relative">
@@ -543,19 +586,20 @@ export const EinstellungenView: React.FC = () => {
           )}
         </div>
 
-        {/* GRUPPE 3: Verbindungen & MCP – ausschließlich in der primären Android-App (Pixel 10 Pro) */}
-        {isNativeAndroid && (
-          <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-2xs">
-            <button
-              onClick={() => setVerbindungenOpen(!verbindungenOpen)}
-              className="w-full min-h-[48px] p-3.5 flex items-center justify-between hover:bg-slate-50 transition-colors text-left"
-            >
+        {/* GRUPPE 3: Verbindungen (MCP ausschließlich in der primären Android-App, Web zeigt nur E-Mail/Kalender/Wetter) */}
+        <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-2xs">
+          <button
+            onClick={() => setVerbindungenOpen(!verbindungenOpen)}
+            className="w-full min-h-[48px] p-3.5 flex items-center justify-between hover:bg-slate-50 transition-colors text-left"
+          >
             <div>
               <span className="text-xs font-bold text-slate-900 block leading-tight">
                 Verbindungen
               </span>
               <span className="text-[11px] text-slate-500">
-                Kalender, Wetter und privates ChatGPT-MCP-Plugin
+                {isNativeAndroid
+                  ? 'Kalender, Wetter und privates ChatGPT-MCP-Plugin'
+                  : 'Gmail-Versand, Kalender und Wetter'}
               </span>
             </div>
             {verbindungenOpen ? (
@@ -567,6 +611,30 @@ export const EinstellungenView: React.FC = () => {
 
           {verbindungenOpen && (
             <div className="p-3.5 bg-slate-50 border-t border-slate-100 space-y-2.5">
+              {!isNativeAndroid && (
+                <div className="p-3 bg-white border border-slate-200 rounded-xl flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <ShieldCheck size={17} className="text-[#2C7738] shrink-0" />
+                    <div className="min-w-0">
+                      <span className="font-bold text-slate-800 block text-xs">
+                        Google-Konto (Infinity Web)
+                      </span>
+                      <span className="text-[10px] text-slate-500 block truncate">
+                        Angemeldet als {ownerSession.email || OWNER_EMAIL}
+                      </span>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void logoutGmail()}
+                    className="text-[10px] font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 px-2.5 py-1.5 rounded-md flex items-center gap-1 shrink-0"
+                  >
+                    <LogOut size={11} />
+                    <span>Abmelden</span>
+                  </button>
+                </div>
+              )}
+
               {/* Gmail Automatisierter PDF-Rechnungsversand */}
               <div className="p-3 bg-white border border-slate-200 rounded-xl space-y-2">
                 <div className="flex items-center justify-between">
@@ -723,6 +791,7 @@ export const EinstellungenView: React.FC = () => {
               </div>
 
               {/* Privates ChatGPT-MCP-Plugin über ausgehenden HTTPS-Tunnel (nur Android-App) */}
+              {isNativeAndroid && (
               <div className="p-3 bg-white border border-indigo-200/80 rounded-xl space-y-2.5">
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex items-start gap-2.5 min-w-0">
@@ -887,34 +956,68 @@ export const EinstellungenView: React.FC = () => {
                     )}
                   </div>
 
-                  {/* 3. Automatische Verbindung ohne Einmal-Code + 1-Klick-Reset */}
-                  <div className="flex items-center justify-between gap-2 pt-0.5 flex-wrap">
-                    <div className="flex items-center gap-1.5">
+                  {/* 3. Sichere Google-Kontokopplung für Pixel 10 Pro + Abgleich */}
+                  <div className="space-y-2 pt-0.5">
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
                       <button
                         type="button"
-                        onClick={() => void handleOneClickReconnectReset()}
+                        onClick={handleGoogleConnectAndroid}
+                        className="h-9 px-3 bg-[#3138A0] hover:bg-[#272d82] active:scale-98 text-white text-[11px] font-semibold rounded-lg flex items-center gap-1.5 transition-all"
+                      >
+                        <ShieldCheck size={13} />
+                        <span>Mit Google verbinden (Pixel 10 Pro)</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => void handleSyncNow()}
                         disabled={resetInProgress}
-                        className="h-8 px-2.5 bg-indigo-50 hover:bg-indigo-100 text-[#3138A0] text-[11px] font-semibold rounded-lg flex items-center gap-1 transition-colors"
+                        className="h-9 px-2.5 bg-indigo-50 hover:bg-indigo-100 text-[#3138A0] text-[11px] font-semibold rounded-lg flex items-center gap-1 transition-colors"
                       >
                         <RefreshCw size={11} className={resetInProgress ? 'animate-spin' : ''} />
                         <span>
-                          {resetDoneBanner
-                            ? 'Verbindung frisch synchronisiert'
-                            : '1-Klick-Reset / Jetzt abgleichen'}
+                          {resetDoneBanner ? 'Abgleich gestartet' : 'Jetzt abgleichen'}
                         </span>
+                      </button>
+
+                      {mcpInfo?.tokenSource !== 'env' && (
+                        <button
+                          type="button"
+                          onClick={() => void handleRotateMcpToken()}
+                          disabled={rotatingToken}
+                          className="h-9 px-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-[10px] font-semibold rounded-lg flex items-center gap-1 transition-colors"
+                        >
+                          <RefreshCw size={11} className={rotatingToken ? 'animate-spin' : ''} />
+                          <span>Schlüssel erneuern</span>
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        maxLength={7}
+                        placeholder="Optional: 6-stelliger Code"
+                        value={pairingCodeInput}
+                        onChange={(e) => setPairingCodeInput(e.target.value)}
+                        className="flex-1 h-8 px-2.5 bg-white border border-slate-200 rounded-lg text-[11px] font-mono text-slate-900 outline-hidden focus:border-[#3138A0]"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => void handlePairWithSixDigitCode()}
+                        disabled={resetInProgress || !pairingCodeInput.trim()}
+                        className="h-8 px-2.5 bg-slate-900 hover:bg-slate-800 disabled:opacity-40 text-white text-[10px] font-semibold rounded-lg shrink-0"
+                      >
+                        Code verbinden
                       </button>
                     </div>
 
-                    {mcpInfo?.tokenSource !== 'env' && (
-                      <button
-                        type="button"
-                        onClick={() => void handleRotateMcpToken()}
-                        disabled={rotatingToken}
-                        className="h-8 px-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-[10px] font-semibold rounded-lg flex items-center gap-1 transition-colors"
-                      >
-                        <RefreshCw size={11} className={rotatingToken ? 'animate-spin' : ''} />
-                        <span>Schlüssel erneuern</span>
-                      </button>
+                    {pairingError && (
+                      <p className="text-[10px] font-semibold text-[#B42318]">{pairingError}</p>
+                    )}
+                    {pairingFeedback && (
+                      <p className="text-[10px] font-semibold text-[#2C7738]">{pairingFeedback}</p>
                     )}
                   </div>
 
@@ -933,8 +1036,9 @@ export const EinstellungenView: React.FC = () => {
                   )}
                 </div>
               </div>
+              )}
 
-              {statusChecked && (
+              {isNativeAndroid && statusChecked && (
                 <div className="p-2 bg-emerald-50 border border-emerald-200 rounded-xl text-[11px] text-[#2C7738] font-semibold flex items-center gap-1.5 animate-fade-in">
                   <CheckCircle size={14} />
                   <span>
@@ -943,17 +1047,18 @@ export const EinstellungenView: React.FC = () => {
                 </div>
               )}
 
-              <button
-                onClick={() => void handleStatusCheck()}
-                disabled={statusCheckRunning}
-                className="w-full h-11 bg-[#3138A0] hover:bg-[#272d82] active:scale-98 text-white font-semibold rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-2xs transition-all"
-              >
-                <span>{statusCheckRunning ? 'Prüfe Verbindung…' : 'Verbindungsstatus prüfen'}</span>
-              </button>
+              {isNativeAndroid && (
+                <button
+                  onClick={() => void handleStatusCheck()}
+                  disabled={statusCheckRunning}
+                  className="w-full h-11 bg-[#3138A0] hover:bg-[#272d82] active:scale-98 text-white font-semibold rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-2xs transition-all"
+                >
+                  <span>{statusCheckRunning ? 'Prüfe Verbindung…' : 'Verbindungsstatus prüfen'}</span>
+                </button>
+              )}
             </div>
           )}
-          </div>
-        )}
+        </div>
 
         {/* GRUPPE 4: Speicher und App */}
         <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-2xs">

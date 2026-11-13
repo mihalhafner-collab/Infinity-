@@ -1,10 +1,10 @@
 import crypto from 'node:crypto';
 import {
-  getDeterministicServerSeed,
   hydrateStoreFromCloudOrDisk,
   persistStoreToDiskAndCloud,
   readLocalJsonSync
 } from './cloudPersistence.ts';
+import { getAllowedOwnerEmail } from './firebaseTokenVerifier.ts';
 import { isValidAdminToken } from './mcpAdminEngine.ts';
 
 const OAUTH_STORE_KEY = 'mcp_oauth';
@@ -89,10 +89,13 @@ function timingSafeHexEqual(hexA: string, hexB: string): boolean {
   return crypto.timingSafeEqual(bufA, bufB);
 }
 
-function createStatelessSignedToken(prefix: 'hgh_px10' | 'hgh_at' | 'hgh_rt'): string {
+function createStatelessSignedToken(
+  prefix: 'hgh_px10' | 'hgh_at' | 'hgh_rt',
+  secret: string
+): string {
   const nonce = crypto.randomBytes(20).toString('hex');
   const sig = crypto
-    .createHmac('sha256', getDeterministicServerSeed())
+    .createHmac('sha256', secret)
     .update(`${prefix}:${nonce}`, 'utf8')
     .digest('hex')
     .slice(0, 20);
@@ -110,8 +113,9 @@ function verifyStatelessSignedToken(
   if (parts.length !== 2) return false;
   const [nonce, sig] = parts;
   if (nonce.length < 16 || sig.length !== 20) return false;
+  const store = loadOAuthStore();
   const expectedSig = crypto
-    .createHmac('sha256', getDeterministicServerSeed())
+    .createHmac('sha256', store.webSessionSecret)
     .update(`${expectedPrefix}:${nonce}`, 'utf8')
     .digest('hex')
     .slice(0, 20);
@@ -121,15 +125,11 @@ function verifyStatelessSignedToken(
 function normalizePersistedOAuthStore(
   raw: Partial<PersistedOAuthStore> | null | undefined
 ): PersistedOAuthStore {
-  const defaultSessionSecret = crypto
-    .createHmac('sha256', getDeterministicServerSeed())
-    .update('hafner-web-session-secret', 'utf8')
-    .digest('hex');
   return {
     webSessionSecret:
       typeof raw?.webSessionSecret === 'string' && raw.webSessionSecret.length >= 32
         ? raw.webSessionSecret
-        : defaultSessionSecret,
+        : crypto.randomBytes(32).toString('hex'),
     clients: Array.isArray(raw?.clients) ? raw.clients : [],
     tokens: Array.isArray(raw?.tokens) ? raw.tokens : [],
     pendingAuthCodes: Array.isArray(raw?.pendingAuthCodes) ? raw.pendingAuthCodes : [],
@@ -385,8 +385,8 @@ function issueOAuthTokenPair(clientId: string, scope: string) {
   const accessExpiresInSec = 30 * 24 * 3600; // 30 days
   const refreshExpiresInSec = 365 * 24 * 3600; // 365 days
 
-  const accessToken = createStatelessSignedToken('hgh_at');
-  const refreshToken = createStatelessSignedToken('hgh_rt');
+  const accessToken = createStatelessSignedToken('hgh_at', store.webSessionSecret);
+  const refreshToken = createStatelessSignedToken('hgh_rt', store.webSessionSecret);
 
   store.tokens.push(
     {
@@ -601,7 +601,7 @@ export function issueAndroidDeviceSyncToken(deviceLabel = 'Google Pixel 10 Pro')
 } {
   const store = loadOAuthStore();
   pruneExpiredEntries(store);
-  const rawToken = createStatelessSignedToken('hgh_px10');
+  const rawToken = createStatelessSignedToken('hgh_px10', store.webSessionSecret);
   const nowIso = new Date().toISOString();
 
   // Keep max 5 active device tokens so stale installs don't accumulate
@@ -781,9 +781,11 @@ export function recordAndroidSyncActivity(
   saveOAuthStore(store);
 }
 
-export function createSignedWebSessionCookie(): string {
+export function createSignedWebSessionToken(email = getAllowedOwnerEmail()): string {
   const store = loadOAuthStore();
-  const payload = `owner.${Date.now()}`;
+  const cleanEmail = email.trim().toLowerCase();
+  const emailB64 = Buffer.from(cleanEmail, 'utf8').toString('base64url');
+  const payload = `owner.${emailB64}.${Date.now()}`;
   const sig = crypto
     .createHmac('sha256', store.webSessionSecret)
     .update(payload, 'utf8')
@@ -791,24 +793,79 @@ export function createSignedWebSessionCookie(): string {
   return `${payload}.${sig}`;
 }
 
+export function verifySignedWebSessionToken(
+  rawVal: string | undefined | null
+): { valid: true; email: string } | null {
+  if (!rawVal || typeof rawVal !== 'string') return null;
+  const trimmed = rawVal.trim();
+  const segs = trimmed.split('.');
+  if (segs.length !== 4 || segs[0] !== 'owner') return null;
+  const [, emailB64, issuedAtStr, sig] = segs;
+  const issuedAt = Number(issuedAtStr);
+  if (!Number.isFinite(issuedAt) || Date.now() - issuedAt > 30 * 24 * 3600 * 1000) {
+    return null;
+  }
+  let email = '';
+  try {
+    email = Buffer.from(emailB64, 'base64url').toString('utf8').trim().toLowerCase();
+  } catch {
+    return null;
+  }
+  if (!email || email !== getAllowedOwnerEmail()) {
+    return null;
+  }
+  const store = loadOAuthStore();
+  const expectedSig = crypto
+    .createHmac('sha256', store.webSessionSecret)
+    .update(`owner.${emailB64}.${issuedAtStr}`, 'utf8')
+    .digest('hex');
+  if (!timingSafeHexEqual(sig, expectedSig)) {
+    return null;
+  }
+  return { valid: true, email };
+}
+
+export function createSignedWebSessionCookie(email = getAllowedOwnerEmail()): string {
+  return createSignedWebSessionToken(email);
+}
+
 export function verifySignedWebSessionCookie(cookieHeader: string | undefined): boolean {
   if (!cookieHeader) return false;
   const parts = cookieHeader.split(';').map((c) => c.trim());
   const entry = parts.find((p) => p.startsWith('hafner_owner_session='));
   if (!entry) return false;
-  const rawVal = decodeURIComponent(entry.slice('hafner_owner_session='.length));
-  const segs = rawVal.split('.');
-  if (segs.length !== 3 || segs[0] !== 'owner') return false;
-  const issuedAt = Number(segs[1]);
-  if (!Number.isFinite(issuedAt) || Date.now() - issuedAt > 30 * 24 * 3600 * 1000) {
+  try {
+    const rawVal = decodeURIComponent(entry.slice('hafner_owner_session='.length));
+    return Boolean(verifySignedWebSessionToken(rawVal));
+  } catch {
+    return false;
+  }
+}
+
+export function issueOAuthCsrfToken(contextKey: string): string {
+  const store = loadOAuthStore();
+  const ts = Date.now();
+  const sig = crypto
+    .createHmac('sha256', store.webSessionSecret)
+    .update(`csrf:${contextKey}:${ts}`, 'utf8')
+    .digest('hex');
+  return `${ts}.${sig}`;
+}
+
+export function verifyOAuthCsrfToken(token: string | undefined | null, contextKey: string): boolean {
+  if (!token || typeof token !== 'string') return false;
+  const segs = token.trim().split('.');
+  if (segs.length !== 2) return false;
+  const ts = Number(segs[0]);
+  if (!Number.isFinite(ts) || Date.now() - ts > 15 * 60 * 1000 || Date.now() - ts < -60_000) {
     return false;
   }
   const store = loadOAuthStore();
-  const expectedSig = crypto
+  const expected = crypto
     .createHmac('sha256', store.webSessionSecret)
-    .update(`${segs[0]}.${segs[1]}`, 'utf8')
+    .update(`csrf:${contextKey}:${ts}`, 'utf8')
     .digest('hex');
-  return timingSafeHexEqual(segs[2], expectedSig);
+  return timingSafeHexEqual(segs[1], expected);
 }
 
 export function getOAuthAndDeviceSummary() {
@@ -847,14 +904,19 @@ export function renderAuthorizePageHtml(params: {
   code_challenge: string;
   code_challenge_method: string;
   scope: string;
+  hasOwnerSession: boolean;
+  ownerEmail?: string;
+  csrfToken: string;
+  firebaseClientConfigJson: string;
   errorMessage?: string;
 }): string {
+  const safeFirebaseJson = params.firebaseClientConfigJson.replace(/</g, '\\u003c');
   return `<!DOCTYPE html>
 <html lang="de">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>MCP-Freigabe · Hafner Grünraum Handwerk</title>
+  <title>MCP-Freigabe · Infinity</title>
   <style>
     * { box-sizing: border-box; font-family: system-ui, -apple-system, sans-serif; }
     body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center; background: #F8F9FA; color: #0F172A; padding: 20px; }
@@ -862,33 +924,223 @@ export function renderAuthorizePageHtml(params: {
     .badge { display: inline-block; background: #EEF2FF; color: #3138A0; font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 8px; margin-bottom: 12px; }
     h1 { font-size: 20px; margin: 0 0 8px; line-height: 1.25; }
     p { font-size: 14px; color: #475569; margin: 0 0 16px; line-height: 1.5; }
-    .scopes { background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 12px; padding: 12px; font-size: 13px; color: #334155; margin-bottom: 18px; }
+    .scopes { background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 12px; padding: 12px; font-size: 13px; color: #334155; margin-bottom: 16px; }
     .scopes strong { display: block; color: #0F172A; margin-bottom: 4px; }
+    .okbox { background: #ECFDF5; border: 1px solid #A7F3D0; color: #065F46; border-radius: 10px; padding: 10px 12px; font-size: 13px; font-weight: 600; margin-bottom: 14px; }
     .err { background: #FEF2F2; border: 1px solid #FECACA; color: #B91C1C; border-radius: 10px; padding: 10px 12px; font-size: 13px; font-weight: 600; margin-bottom: 14px; }
-    button { width: 100%; height: 50px; background: #3138A0; color: #FFFFFF; border: 0; border-radius: 12px; font-size: 15px; font-weight: 700; cursor: pointer; }
-    button:hover { background: #272D82; }
+    .btn-primary { width: 100%; height: 50px; background: #3138A0; color: #FFFFFF; border: 0; border-radius: 12px; font-size: 15px; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 10px; }
+    .btn-primary:hover { background: #272D82; }
+    .btn-google { width: 100%; height: 50px; background: #FFFFFF; color: #1F1F1F; border: 1px solid #747775; border-radius: 999px; font-size: 15px; font-weight: 600; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 10px; }
+    .btn-google:hover { background: #F8FAFC; }
+    .btn-google:disabled, .btn-primary:disabled { opacity: 0.6; cursor: wait; }
+    .hint { font-size: 12px; color: #64748B; text-align: center; margin: 12px 0 0; }
   </style>
 </head>
 <body>
   <div class="card">
-    <span class="badge">Hafner Grünraum Handwerk · MCP</span>
+    <span class="badge">Infinity · ChatGPT MCP</span>
     <h1>Zugriff für ${escapeHtml(params.clientName)} freigeben</h1>
-    <p>Bestätigen Sie mit einem Tipp, damit Ihr privates ChatGPT-Plugin alle Datenbereiche synchron mit Ihrem Google Pixel 10 Pro und der Web-App lesen, anlegen, ändern und löschen darf.</p>
+    <p>Melden Sie sich einfach mit Ihrem Google-Konto an, damit ChatGPT sicher über Ihren privaten Tunnel lesen und schreiben darf.</p>
     <div class="scopes">
       <strong>Umfang der Freigabe (OAuth 2.1 + PKCE):</strong>
       Kunden, Objekte, Termine, Arbeitsaufzeichnungen, L.C.R., Rechnungen &amp; Zahlungen, Anfragen, Angebote, Aufträge, Geräte, Material, Ausgaben &amp; GuV.
     </div>
-    ${params.errorMessage ? `<div class="err">${escapeHtml(params.errorMessage)}</div>` : ''}
-    <form method="POST" action="/oauth/authorize">
+    ${params.hasOwnerSession ? `<div class="okbox">Angemeldet als ${escapeHtml(params.ownerEmail || 'mihalhafner@gmail.com')}</div>` : ''}
+    <div id="oauth-err" class="err" style="${params.errorMessage ? '' : 'display:none'}">${params.errorMessage ? escapeHtml(params.errorMessage) : ''}</div>
+    <form id="oauth-form" method="POST" action="/oauth/authorize">
       <input type="hidden" name="client_id" value="${escapeHtml(params.client_id)}" />
       <input type="hidden" name="redirect_uri" value="${escapeHtml(params.redirect_uri)}" />
       <input type="hidden" name="state" value="${escapeHtml(params.state)}" />
       <input type="hidden" name="code_challenge" value="${escapeHtml(params.code_challenge)}" />
       <input type="hidden" name="code_challenge_method" value="${escapeHtml(params.code_challenge_method)}" />
       <input type="hidden" name="scope" value="${escapeHtml(params.scope)}" />
-      <input type="hidden" name="one_click_approve" value="true" />
-      <button type="submit">Verbindung jetzt freigeben (1-Klick)</button>
+      <input type="hidden" name="csrf_token" value="${escapeHtml(params.csrfToken)}" />
+      <input type="hidden" id="firebase_id_token" name="firebase_id_token" value="" />
+      ${
+        params.hasOwnerSession
+          ? `<button type="submit" class="btn-primary">Verbindung jetzt freigeben</button>`
+          : `<button type="button" id="google-oauth-btn" class="btn-google">
+              <svg width="20" height="20" viewBox="0 0 48 48" aria-hidden="true">
+                <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
+                <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>
+                <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>
+                <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
+              </svg>
+              <span>Mit Google anmelden &amp; freigeben</span>
+            </button>`
+      }
     </form>
+    <p class="hint">Keine Passwort- oder Token-Eingabe erforderlich.</p>
+  </div>
+  ${
+    params.hasOwnerSession
+      ? ''
+      : `<script type="module">
+    import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.6.0/firebase-app.js';
+    import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult } from 'https://www.gstatic.com/firebasejs/11.6.0/firebase-auth.js';
+
+    const cfg = ${safeFirebaseJson};
+    const app = initializeApp(cfg);
+    const auth = getAuth(app);
+    const provider = new GoogleAuthProvider();
+    provider.setCustomParameters({ prompt: 'select_account' });
+
+    const btn = document.getElementById('google-oauth-btn');
+    const errEl = document.getElementById('oauth-err');
+    const tokenInput = document.getElementById('firebase_id_token');
+    const form = document.getElementById('oauth-form');
+
+    function showErr(msg) {
+      if (errEl) {
+        errEl.textContent = msg;
+        errEl.style.display = 'block';
+      }
+    }
+
+    async function completeWithUser(user) {
+      const idToken = await user.getIdToken(true);
+      tokenInput.value = idToken;
+      form.submit();
+    }
+
+    getRedirectResult(auth).then((res) => {
+      if (res && res.user) {
+        return completeWithUser(res.user);
+      }
+    }).catch((err) => {
+      showErr(err?.message || 'Google-Anmeldung fehlgeschlagen.');
+    });
+
+    if (btn) {
+      btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        if (errEl) errEl.style.display = 'none';
+        try {
+          const result = await signInWithPopup(auth, provider);
+          await completeWithUser(result.user);
+        } catch (err) {
+          const msg = String(err?.message || err || '');
+          if (msg.includes('popup-blocked')) {
+            await signInWithRedirect(auth, provider);
+            return;
+          }
+          btn.disabled = false;
+          showErr(msg.includes('popup-closed') ? 'Google-Anmeldung wurde abgebrochen.' : (msg || 'Google-Anmeldung fehlgeschlagen.'));
+        }
+      });
+    }
+  </script>`
+  }
+</body>
+</html>`;
+}
+
+export function renderAndroidPairPageHtml(params: {
+  hasOwnerSession: boolean;
+  ownerEmail?: string;
+  pairingCode?: string;
+  deepLink?: string;
+  baseUrl: string;
+  csrfToken: string;
+  firebaseClientConfigJson: string;
+  errorMessage?: string;
+}): string {
+  const safeFirebaseJson = params.firebaseClientConfigJson.replace(/</g, '\\u003c');
+  const safeDeepLink = params.deepLink ? escapeHtml(params.deepLink) : '';
+  return `<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Pixel 10 Pro verbinden · Infinity</title>
+  <style>
+    * { box-sizing: border-box; font-family: system-ui, -apple-system, sans-serif; }
+    body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center; background: #F8F9FA; color: #0F172A; padding: 20px; }
+    .card { width: 100%; max-width: 420px; background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 20px; padding: 24px; box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06); }
+    .badge { display: inline-block; background: #EEF2FF; color: #3138A0; font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 8px; margin-bottom: 12px; }
+    h1 { font-size: 20px; margin: 0 0 8px; line-height: 1.25; }
+    p { font-size: 14px; color: #475569; margin: 0 0 16px; line-height: 1.5; }
+    .codebox { background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 12px; padding: 14px; text-align: center; margin-bottom: 16px; }
+    .code { font-family: ui-monospace, monospace; font-size: 24px; font-weight: 800; letter-spacing: 2px; color: #3138A0; margin-top: 4px; }
+    .err { background: #FEF2F2; border: 1px solid #FECACA; color: #B91C1C; border-radius: 10px; padding: 10px 12px; font-size: 13px; font-weight: 600; margin-bottom: 14px; }
+    .btn-primary { width: 100%; height: 50px; background: #3138A0; color: #FFFFFF; border: 0; border-radius: 12px; font-size: 15px; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center; text-decoration: none; }
+    .btn-google { width: 100%; height: 50px; background: #FFFFFF; color: #1F1F1F; border: 1px solid #747775; border-radius: 999px; font-size: 15px; font-weight: 600; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 10px; }
+    .btn-google:disabled { opacity: 0.6; cursor: wait; }
+    .hint { font-size: 12px; color: #64748B; text-align: center; margin: 12px 0 0; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <span class="badge">Infinity · Google Pixel 10 Pro</span>
+    ${
+      params.pairingCode && safeDeepLink
+        ? `<h1>Infinity wird verbunden</h1>
+           <p>Ihr Google-Konto ist bestätigt. Die Infinity Android-App übernimmt den sicheren Geräteschlüssel automatisch.</p>
+           <div class="codebox">
+             <div style="font-size:12px;color:#64748B;font-weight:600;">Einmal-Kopplungscode (10 Min. gültig)</div>
+             <div class="code">${escapeHtml(params.pairingCode)}</div>
+           </div>
+           <a href="${safeDeepLink}" class="btn-primary">Zurück zu Infinity App</a>
+           <script>setTimeout(function(){ window.location.href = ${JSON.stringify(params.deepLink)}; }, 120);</script>`
+        : `<h1>Infinity mit Google verbinden</h1>
+           <p>Melden Sie sich mit Ihrem Google-Konto (${escapeHtml(params.ownerEmail || 'mihalhafner@gmail.com')}) an, um Ihr Pixel 10 Pro automatisch und sicher zu koppeln.</p>
+           <div id="pair-err" class="err" style="${params.errorMessage ? '' : 'display:none'}">${params.errorMessage ? escapeHtml(params.errorMessage) : ''}</div>
+           <form id="pair-form" method="POST" action="/android-connect">
+             <input type="hidden" name="csrf_token" value="${escapeHtml(params.csrfToken)}" />
+             <input type="hidden" id="pair_firebase_token" name="firebase_id_token" value="" />
+             <button type="button" id="google-pair-btn" class="btn-google">
+               <svg width="20" height="20" viewBox="0 0 48 48" aria-hidden="true">
+                 <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
+                 <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>
+                 <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>
+                 <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
+               </svg>
+               <span>Mit Google anmelden &amp; verbinden</span>
+             </button>
+           </form>
+           <p class="hint">Sichere Hardware-Keystore-Kopplung ohne Passwörter.</p>
+           <script type="module">
+             import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.6.0/firebase-app.js';
+             import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult } from 'https://www.gstatic.com/firebasejs/11.6.0/firebase-auth.js';
+             const cfg = ${safeFirebaseJson};
+             const app = initializeApp(cfg);
+             const auth = getAuth(app);
+             const provider = new GoogleAuthProvider();
+             provider.setCustomParameters({ prompt: 'select_account' });
+             const btn = document.getElementById('google-pair-btn');
+             const errEl = document.getElementById('pair-err');
+             const tokenInput = document.getElementById('pair_firebase_token');
+             const form = document.getElementById('pair-form');
+             function showErr(msg) {
+               if (errEl) { errEl.textContent = msg; errEl.style.display = 'block'; }
+             }
+             async function finish(user) {
+               tokenInput.value = await user.getIdToken(true);
+               form.submit();
+             }
+             getRedirectResult(auth).then((res) => {
+               if (res && res.user) return finish(res.user);
+             }).catch((err) => showErr(err?.message || 'Anmeldung fehlgeschlagen.'));
+             if (btn) {
+               btn.addEventListener('click', async () => {
+                 btn.disabled = true;
+                 if (errEl) errEl.style.display = 'none';
+                 try {
+                   const res = await signInWithPopup(auth, provider);
+                   await finish(res.user);
+                 } catch (err) {
+                   const msg = String(err?.message || err || '');
+                   if (msg.includes('popup-blocked')) {
+                     await signInWithRedirect(auth, provider);
+                     return;
+                   }
+                   btn.disabled = false;
+                   showErr(msg.includes('popup-closed') ? 'Anmeldung abgebrochen.' : (msg || 'Anmeldung fehlgeschlagen.'));
+                 }
+               });
+             }
+           </script>`
+    }
   </div>
 </body>
 </html>`;

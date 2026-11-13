@@ -1,6 +1,7 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
-import path from 'path';
+import path from 'node:path';
+import {fileURLToPath} from 'node:url';
 import {defineConfig, type Plugin} from 'vite';
 import {VitePWA} from 'vite-plugin-pwa';
 
@@ -47,8 +48,8 @@ export default defineConfig(() => {
         includeAssets: ['favicon.ico', 'favicon-64x64.png', 'apple-touch-icon.png'],
         manifest: {
           id: '/',
-          name: 'Hafner – Grünraum Handwerk',
-          short_name: 'Hafner',
+          name: 'Infinity',
+          short_name: 'Infinity',
           description: 'Mobiles Servicemanagement für Haus- und Gartenpflege, optimiert für Google Pixel 10 Pro.',
           theme_color: '#02061A',
           background_color: '#02061A',
@@ -94,7 +95,7 @@ export default defineConfig(() => {
             '**/Eisbaer-Konzept-*.pdf',
           ],
           maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
-          navigateFallbackDenylist: [/^\/api\//, /^\/mcp/, /^\/__\//],
+          navigateFallbackDenylist: [/^\/api\//, /^\/mcp/, /^\/oauth\//, /^\/android-connect/, /^\/__\//],
           runtimeCaching: [
             {
               urlPattern: /^https?:\/\/[^/]+\/__\/(auth|firebase)\/.*/i,
@@ -135,9 +136,23 @@ export default defineConfig(() => {
         },
       }),
     ],
+    build: {
+      rollupOptions: {
+        output: {
+          manualChunks(id) {
+            if (id.includes('node_modules/firebase')) return 'vendor-firebase';
+            if (id.includes('node_modules/jspdf')) return 'vendor-pdf';
+            if (id.includes('node_modules/motion')) return 'vendor-motion';
+            if (id.includes('node_modules/lucide-react')) return 'vendor-icons';
+            if (id.includes('node_modules/react')) return 'vendor-react';
+            return undefined;
+          },
+        },
+      },
+    },
     resolve: {
       alias: {
-        '@': path.resolve(import.meta.dirname, '.'),
+        '@': path.dirname(fileURLToPath(import.meta.url)),
       },
     },
     server: {

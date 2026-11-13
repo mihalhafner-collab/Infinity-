@@ -423,6 +423,16 @@ export function syncNativeCanGoBack(canGoBack: boolean): void {
   }
 }
 
+let webSessionToken: string | null = null;
+
+export function setWebSessionToken(token: string | null): void {
+  webSessionToken = token && token.trim() ? token.trim() : null;
+}
+
+export function getWebSessionToken(): string | null {
+  return webSessionToken;
+}
+
 export function resolveBackendEndpoint(path: string): {
   url: string | null;
   headers: Record<string, string>;
@@ -432,7 +442,11 @@ export function resolveBackendEndpoint(path: string): {
     // Im nativen Android-Betrieb übernimmt Kotlin NativeMcpSyncManager alle Daten-Synchronisationen
     return { url: null, headers: {} };
   }
-  return { url: cleanPath, headers: {} };
+  const headers: Record<string, string> = {};
+  if (webSessionToken) {
+    headers['Authorization'] = `Bearer ${webSessionToken}`;
+  }
+  return { url: cleanPath, headers };
 }
 
 export function getRevealedNativeMcpToken(): string | null {

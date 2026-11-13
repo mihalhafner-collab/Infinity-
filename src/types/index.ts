@@ -12,7 +12,6 @@ export type ScreenId =
   | 'M11_MATERIAL'
   | 'M12_SICHERUNG'
   | 'M13_EINSTELLUNGEN'
-  | 'M14_VERBINDUNGEN'
   | 'M15_SPEICHER_APP'
   | 'M16_FOTOS'
   | 'M17_OBJEKTE'
@@ -275,4 +274,4 @@ export interface TaxSettings {
   transit_ticket_full: number;
   manual_extra_income: number;
 }
-
+export type DeletedTombstoneMap = Record<string, string>;

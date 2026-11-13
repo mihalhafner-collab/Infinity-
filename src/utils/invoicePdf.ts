@@ -373,7 +373,7 @@ export function buildInvoiceFilename(
     .replace(/\//g, '-')
     .replace(/[^a-zA-Z0-9_-]/g, '_');
   const docType = isStorno ? 'Storno' : 'Rechnung';
-  const datePrefix = issueDateIso || '2026-11-11';
+  const datePrefix = issueDateIso || getTodayLocalIso();
   return `${datePrefix}_${docType}_${safeNum || 'Beleg'}.pdf`;
 }
 

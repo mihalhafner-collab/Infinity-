@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useApp } from '../../context/AppContext.tsx';
+import { addDaysIso, getTodayLocalIso } from '../../utils/invoicePdf.ts';
 import { X, Calendar, Wrench, CheckCircle } from 'lucide-react';
 
 export const WartungModal: React.FC = () => {
@@ -15,19 +16,20 @@ export const WartungModal: React.FC = () => {
 
   const [equipmentId, setEquipmentId] = useState<string>('');
   const [plan, setPlan] = useState('Messer reinigen & schärfen');
-  const [date, setDate] = useState('2026-11-10');
-  const [nextDate, setNextDate] = useState('2027-02-10');
+  const [date, setDate] = useState(() => getTodayLocalIso());
+  const [nextDate, setNextDate] = useState(() => addDaysIso(getTodayLocalIso(), 90));
   const [note, setNote] = useState('Sichtprüfung und Reinigung durchgeführt');
 
   useEffect(() => {
     if (activeModal === 'WARTUNG_DOKUMENTIEREN') {
       const initial =
         geraeteOnly.find((e) => e.id === selectedEquipmentId) || geraeteOnly[0] || null;
+      const todayIso = getTodayLocalIso();
       setEquipmentId(initial?.id || '');
       setPlan(initial?.maintenance_plan || 'Regelmäßige Prüfung & Reinigung');
-      setDate('2026-11-10');
+      setDate(todayIso);
       const months = initial?.interval_months || 6;
-      const d = new Date('2026-11-10T00:00:00');
+      const d = new Date(`${todayIso}T00:00:00`);
       d.setMonth(d.getMonth() + months);
       setNextDate(d.toISOString().slice(0, 10));
       setNote('Sichtprüfung und Wartung durchgeführt');

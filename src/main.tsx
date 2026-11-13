@@ -3,7 +3,7 @@ import App from './App.tsx';
 import './index.css';
 import {isNativeAndroidApp} from './services/nativeBridge.ts';
 
-const WEB_APP_BUNDLE_VERSION = '2026-11-12-v3-clean-web';
+const WEB_APP_BUNDLE_VERSION = '2026-11-12-v5-infinity';
 const WEB_APP_VERSION_KEY = 'hafner_web_bundle_version';
 
 if (typeof window !== 'undefined' && typeof navigator !== 'undefined' && !isNativeAndroidApp()) {
@@ -38,6 +38,15 @@ if (typeof window !== 'undefined' && typeof navigator !== 'undefined' && !isNati
           void registration.update();
         }
       }
+    });
+  }
+
+  if ('serviceWorker' in navigator && !import.meta.env.DEV) {
+    let swReloading = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (swReloading) return;
+      swReloading = true;
+      window.location.reload();
     });
   }
 }
