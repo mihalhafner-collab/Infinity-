@@ -1,10 +1,11 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useApp, usePixelBackLayer } from '../../context/AppContext.tsx';
 import { Header } from '../common/Header.tsx';
 import { BottomActionBar } from '../common/BottomActionBar.tsx';
 import { BottomNav } from '../common/BottomNav.tsx';
 import { UndoToast } from '../common/UndoToast.tsx';
 import { SwipeToDeleteRow } from '../common/SwipeToDeleteRow.tsx';
+import { CollapsibleCard } from '../common/CollapsibleCard.tsx';
 import {
   User,
   Phone,
@@ -32,15 +33,18 @@ import {
   Bookmark,
   Send,
   Clock,
-  Trash2
+  Trash2,
+  Layers
 } from 'lucide-react';
 import { compressImageFile } from '../../utils/imageCompress.ts';
 import {
   formatDateDE,
   getCustomerBillingRecipient,
   getEffectiveBillingCustomerId,
-  getTodayLocalIso
+  getTodayLocalIso,
+  resolveCustomerNumber
 } from '../../utils/invoicePdf.ts';
+import { matchesSearchQuery } from '../../utils/searchUtils.ts';
 
 function buildMapsUrl(addressQuery: string): string {
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(addressQuery)}`;
@@ -106,12 +110,21 @@ export const KundenView: React.FC = () => {
     setIsPlusMenuOpen
   } = useApp();
 
-  const [contactExpanded, setContactExpanded] = useState(true);
+  const [contactExpanded, setContactExpanded] = useState(false);
+  const [lcrExpanded, setLcrExpanded] = useState(false);
+  const [billingConfigExpanded, setBillingConfigExpanded] = useState(false);
+  const [sentInvoicesExpanded, setSentInvoicesExpanded] = useState(false);
+  const [allInvoicesExpanded, setAllInvoicesExpanded] = useState(true);
   const [confirmDeleteCustomer, setConfirmDeleteCustomer] = useState(false);
   const [previewPhoto, setPreviewPhoto] = useState<string | null>(null);
   const [showCombinedAmounts, setShowCombinedAmounts] = useState(false);
   const [workStatusFilter, setWorkStatusFilter] = useState<'all' | 'open' | 'billed'>('all');
   const [appointmentFilter, setAppointmentFilter] = useState<'all' | 'upcoming' | 'past'>('all');
+
+  // Kundenliste Schnellsuche & Filter
+  const [customerSearchQuery, setCustomerSearchQuery] = useState('');
+  const [customerListFilter, setCustomerListFilter] = useState<'all' | 'open_work' | 'sub'>('all');
+
   const contentScrollRef = useRef<HTMLDivElement>(null);
 
   usePixelBackLayer(confirmDeleteCustomer, () => setConfirmDeleteCustomer(false));
@@ -133,10 +146,79 @@ export const KundenView: React.FC = () => {
     }
   }, [customerWorkViewOpen, customerTermineViewOpen]);
 
+  // Offene Stunden & Betrag pro Kunde für übersichtliche Kundenliste berechnen
+  const openSummaryByCustomer = useMemo(() => {
+    const map = new Map<string, { hours: number; amount: number }>();
+    for (const w of workRecords) {
+      if (w.settlement_id || w.is_lcr) continue;
+      const prev = map.get(w.customer_id) || { hours: 0, amount: 0 };
+      prev.hours = Math.round((prev.hours + (w.hours || 0)) * 100) / 100;
+      prev.amount = Math.round((prev.amount + (w.accounting_amount || 0)) * 100) / 100;
+      map.set(w.customer_id, prev);
+    }
+    return map;
+  }, [workRecords]);
+
+  const sortedCustomers = useMemo(
+    () => [...customers].sort((a, b) => a.name.localeCompare(b.name, 'de')),
+    [customers]
+  );
+
+  const customersWithOpenWorkCount = useMemo(
+    () => sortedCustomers.filter((c) => (openSummaryByCustomer.get(c.id)?.hours || 0) > 0).length,
+    [sortedCustomers, openSummaryByCustomer]
+  );
+
+  const subCustomersCount = useMemo(
+    () =>
+      sortedCustomers.filter((c) => Boolean(getCustomerBillingRecipient(c, customers))).length,
+    [sortedCustomers, customers]
+  );
+
+  const filteredCustomerList = useMemo(() => {
+    return sortedCustomers.filter((c) => {
+      const openInfo = openSummaryByCustomer.get(c.id);
+      const divRecip = getCustomerBillingRecipient(c, customers);
+
+      if (customerListFilter === 'open_work' && (!openInfo || openInfo.hours <= 0)) {
+        return false;
+      }
+      if (customerListFilter === 'sub' && !divRecip) {
+        return false;
+      }
+
+      if (customerSearchQuery.trim()) {
+        const custProps = properties.filter((p) => p.customer_id === c.id);
+        const custNum = c.customer_number?.trim() || resolveCustomerNumber(c.id, customers);
+        return matchesSearchQuery(customerSearchQuery, [
+          c.name,
+          custNum,
+          c.street,
+          c.zip,
+          c.city,
+          c.phone,
+          c.email,
+          c.notes,
+          divRecip?.name,
+          ...custProps.flatMap((p) => [p.name, p.address, p.notes])
+        ]);
+      }
+
+      return true;
+    });
+  }, [
+    sortedCustomers,
+    openSummaryByCustomer,
+    customers,
+    customerListFilter,
+    customerSearchQuery,
+    properties
+  ]);
+
   // If a customer is selected, show Kundenakte
   const currentCustomer = customers.find((c) => c.id === selectedCustomerId);
 
-  // Customer List View
+  // Customer List View (Übersichtlich strukturiert für Pixel 10 Pro)
   if (!currentCustomer) {
     return (
       <div className="flex-1 min-h-0 flex flex-col h-full bg-[#F8F9FA] overflow-hidden relative">
@@ -144,14 +226,14 @@ export const KundenView: React.FC = () => {
           title="Kunden"
           subtitle={
             customers.length > 0
-              ? `${customers.length} Kunden · Links wischen löscht`
+              ? `${filteredCustomerList.length} von ${customers.length} Kunden · Weit nach links wischen löscht`
               : '0 Kunden'
           }
         />
 
         <UndoToast />
 
-        <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-2.5 overscroll-contain">
+        <div className="flex-1 min-h-0 overflow-y-auto px-3.5 py-3 space-y-2 overscroll-contain">
           {customers.length === 0 ? (
             <div className="p-8 bg-white border border-slate-200 rounded-2xl text-center space-y-2">
               <div className="w-12 h-12 rounded-full bg-indigo-50 text-[#3138A0] flex items-center justify-center mx-auto">
@@ -162,10 +244,26 @@ export const KundenView: React.FC = () => {
                 Legen Sie Ihren ersten Kunden über das + Menü unten an, um Objekte, Termine und Abrechnungen zu verwalten.
               </p>
             </div>
+          ) : filteredCustomerList.length === 0 ? (
+            <div className="p-7 bg-white border border-slate-200 rounded-2xl text-center space-y-2 shadow-2xs">
+              <Search size={22} className="text-slate-400 mx-auto" />
+              <p className="text-sm font-bold text-slate-900">Keine passenden Kunden gefunden</p>
+              <button
+                type="button"
+                onClick={() => {
+                  setCustomerSearchQuery('');
+                  setCustomerListFilter('all');
+                }}
+                className="text-xs font-bold text-[#3138A0] hover:underline"
+              >
+                Filter zurücksetzen
+              </button>
+            </div>
           ) : (
-            customers.map((c) => {
+            filteredCustomerList.map((c) => {
               const customerProps = properties.filter((p) => p.customer_id === c.id);
               const divRecip = getCustomerBillingRecipient(c, customers);
+              const openInfo = openSummaryByCustomer.get(c.id);
               const custAddr = [
                 c.street,
                 [c.zip, c.city].filter(Boolean).join(' ')
@@ -183,7 +281,7 @@ export const KundenView: React.FC = () => {
                 <SwipeToDeleteRow
                   key={c.id}
                   onDelete={() => deleteCustomer(c.id)}
-                  deleteLabel="Kunde löschen"
+                  deleteLabel="Kundenakte löschen"
                   className="rounded-2xl"
                 >
                   <div
@@ -191,68 +289,84 @@ export const KundenView: React.FC = () => {
                       setActiveTab('objekte');
                       setSelectedCustomerId(c.id);
                     }}
-                    className="p-4 bg-white border border-slate-200 rounded-2xl shadow-2xs hover:border-[#3138A0] active:bg-slate-50 transition-colors cursor-pointer flex items-center justify-between gap-2.5"
+                    className="p-3 bg-white border border-slate-200 rounded-2xl shadow-2xs hover:border-[#3138A0] active:bg-slate-50 transition-colors cursor-pointer flex items-center justify-between gap-2"
                   >
-                    <div className="flex items-center gap-3 min-w-0 flex-1">
-                      <div className="w-11 h-11 rounded-full bg-indigo-50 border border-indigo-100 flex items-center justify-center text-[#3138A0] font-bold text-sm shrink-0">
+                    {/* Linker Informationsbereich: Avatar + Name + Status-Badges + Adresse */}
+                    <div className="flex items-start gap-2.5 min-w-0 flex-1">
+                      <div className="w-10 h-10 rounded-xl bg-indigo-50 border border-indigo-100 flex items-center justify-center text-[#3138A0] font-bold text-xs shrink-0 mt-0.5">
                         {c.name.slice(0, 2).toUpperCase()}
                       </div>
+
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-1.5 flex-wrap">
-                          <h3 className="text-base font-bold text-slate-950 leading-snug truncate">
+                          <h3 className="text-sm font-bold text-slate-950 leading-snug truncate">
                             {c.name}
                           </h3>
+                          <span className="px-1.5 py-0.2 rounded-md bg-slate-100 text-slate-600 text-[10px] font-mono font-bold shrink-0">
+                            #{c.customer_number?.trim() || resolveCustomerNumber(c.id, customers)}
+                          </span>
+                          {openInfo && openInfo.hours > 0 && (
+                            <span className="px-1.5 py-0.5 rounded-md bg-orange-50 border border-orange-200/70 text-[#B4470B] text-[10px] font-bold tabular-nums shrink-0">
+                              {openInfo.hours} Std.
+                              {openInfo.amount > 0 ? ` · ${openInfo.amount.toFixed(0)} €` : ''}
+                            </span>
+                          )}
                           {divRecip && (
-                            <span className="text-xs font-semibold text-[#3138A0] truncate max-w-[140px]">
-                              · Sub → {divRecip.name}
+                            <span className="px-1.5 py-0.5 rounded-md bg-indigo-50 border border-indigo-100 text-[#3138A0] text-[10px] font-bold truncate max-w-[130px] shrink-0">
+                              Sub → {divRecip.name}
                             </span>
                           )}
                         </div>
-                        <p className="text-xs text-slate-600 mt-0.5 truncate">
-                          {customerProps.length}{' '}
-                          {customerProps.length === 1 ? 'Objekt' : 'Objekte'}
-                          {exactAddress ? ` · ${exactAddress}` : ''}
-                        </p>
+
+                        <div className="flex items-center gap-1.5 text-xs text-slate-600 mt-1 min-w-0">
+                          <span className="px-1.5 py-0.2 bg-slate-100 text-slate-700 font-semibold text-[10px] rounded shrink-0 flex items-center gap-0.5">
+                            <Home size={10} className="text-[#3138A0]" />
+                            <span>{customerProps.length}</span>
+                          </span>
+                          <span className="truncate text-[11px] text-slate-500">
+                            {exactAddress || c.phone || 'Keine Adresse hinterlegt'}
+                          </span>
+                        </div>
                       </div>
                     </div>
 
-                    {/* Direkte Kundenaktionen: Google Maps Navigation, Anruf, WhatsApp (44dp+ Daumenziele) */}
-                    <div className="flex items-center gap-1.5 shrink-0">
+                    {/* Rechte Direktaktionen klar abgetrennt (Route, Anruf, WhatsApp) */}
+                    <div
+                      onClick={(e) => e.stopPropagation()}
+                      className="flex items-center gap-1 pl-2 border-l border-slate-100 shrink-0"
+                    >
                       <a
                         href={buildMapsNavigationUrl(navTarget)}
                         target="_blank"
                         rel="noopener noreferrer"
-                        onClick={(e) => e.stopPropagation()}
-                        className="w-11 h-11 rounded-xl bg-indigo-50 hover:bg-indigo-100 active:scale-95 text-[#3138A0] flex items-center justify-center transition-all"
+                        className="w-9 h-9 rounded-xl bg-indigo-50 hover:bg-indigo-100 active:scale-95 text-[#3138A0] flex items-center justify-center transition-all"
                         title={`Google Maps Navigation zu ${c.name}`}
                         aria-label={`Navigation zu ${c.name}`}
                       >
-                        <Navigation size={19} />
+                        <Navigation size={16} />
                       </a>
 
                       {cleanPhone ? (
                         <a
                           href={`tel:${cleanPhone}`}
-                          onClick={(e) => e.stopPropagation()}
-                          className="w-11 h-11 rounded-xl bg-slate-100 hover:bg-slate-200 active:scale-95 text-slate-800 flex items-center justify-center transition-all"
+                          className="w-9 h-9 rounded-xl bg-slate-100 hover:bg-slate-200 active:scale-95 text-slate-800 flex items-center justify-center transition-all"
                           title={`${c.name} anrufen`}
                           aria-label={`${c.name} anrufen`}
                         >
-                          <Phone size={19} />
+                          <Phone size={16} />
                         </a>
                       ) : (
                         <button
                           type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
+                          onClick={() => {
                             setSelectedCustomerId(c.id);
                             setActiveModal('KUNDE_BEARBEITEN');
                           }}
-                          className="w-11 h-11 rounded-xl bg-slate-100 hover:bg-slate-200 active:scale-95 text-slate-400 flex items-center justify-center transition-all"
+                          className="w-9 h-9 rounded-xl bg-slate-100 hover:bg-slate-200 active:scale-95 text-slate-400 flex items-center justify-center transition-all"
                           title="Telefonnummer ergänzen"
                           aria-label="Telefonnummer ergänzen"
                         >
-                          <Phone size={19} />
+                          <Phone size={16} />
                         </button>
                       )}
 
@@ -261,26 +375,24 @@ export const KundenView: React.FC = () => {
                           href={buildWhatsAppUrl(c.phone)}
                           target="_blank"
                           rel="noopener noreferrer"
-                          onClick={(e) => e.stopPropagation()}
-                          className="w-11 h-11 rounded-xl bg-emerald-50 hover:bg-emerald-100 active:scale-95 text-[#128C7E] flex items-center justify-center transition-all"
+                          className="w-9 h-9 rounded-xl bg-emerald-50 hover:bg-emerald-100 active:scale-95 text-[#128C7E] flex items-center justify-center transition-all"
                           title={`WhatsApp Nachricht an ${c.name}`}
                           aria-label={`WhatsApp an ${c.name}`}
                         >
-                          <MessageCircle size={19} />
+                          <MessageCircle size={16} />
                         </a>
                       ) : (
                         <button
                           type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
+                          onClick={() => {
                             setSelectedCustomerId(c.id);
                             setActiveModal('KUNDE_BEARBEITEN');
                           }}
-                          className="w-11 h-11 rounded-xl bg-slate-100 hover:bg-slate-200 active:scale-95 text-slate-400 flex items-center justify-center transition-all"
+                          className="w-9 h-9 rounded-xl bg-slate-100 hover:bg-slate-200 active:scale-95 text-slate-400 flex items-center justify-center transition-all"
                           title="Telefonnummer für WhatsApp ergänzen"
                           aria-label="Telefonnummer für WhatsApp ergänzen"
                         >
-                          <MessageCircle size={19} />
+                          <MessageCircle size={16} />
                         </button>
                       )}
                     </div>
@@ -291,15 +403,67 @@ export const KundenView: React.FC = () => {
           )}
         </div>
 
-        {/* Untere Leiste fixiert (Pixel 10 Pro Daumenzone) */}
+        {/* Untere Leiste fixiert (Pixel 10 Pro Daumenzone: Schnellfilter + Inline-Suche + Kunde anlegen) */}
         <div className="shrink-0 w-full mt-auto bg-white border-t border-slate-200/80 z-20 shadow-md">
+          {customers.length > 0 && (
+            <div className="px-3.5 pt-2.5 pb-1.5 border-b border-slate-100 space-y-2">
+              {/* Filter-Pills + Inline-Kundensuche */}
+              <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+                {(
+                  [
+                    { id: 'all', label: `Alle (${customers.length})` },
+                    {
+                      id: 'open_work',
+                      label: `Offene Std. (${customersWithOpenWorkCount})`
+                    },
+                    { id: 'sub', label: `Sub-Abrechnung (${subCustomersCount})` }
+                  ] as const
+                ).map((flt) => (
+                  <button
+                    key={flt.id}
+                    type="button"
+                    onClick={() => setCustomerListFilter(flt.id)}
+                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold whitespace-nowrap transition-colors ${
+                      customerListFilter === flt.id
+                        ? 'bg-[#3138A0] text-white shadow-2xs'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200/70'
+                    }`}
+                  >
+                    {flt.label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="h-9 bg-slate-100 border border-slate-200/90 rounded-xl px-2.5 flex items-center gap-2 focus-within:bg-white focus-within:border-[#3138A0] transition-colors">
+                <Search size={15} className="text-slate-400 shrink-0" />
+                <input
+                  type="search"
+                  value={customerSearchQuery}
+                  onChange={(e) => setCustomerSearchQuery(e.target.value)}
+                  placeholder="Kunde, Ort, Adresse oder Telefon filtern…"
+                  className="flex-1 min-w-0 bg-transparent border-none outline-hidden text-xs font-medium text-slate-900 placeholder:text-slate-400"
+                />
+                {customerSearchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => setCustomerSearchQuery('')}
+                    className="text-slate-400 hover:text-slate-700"
+                    aria-label="Suchtext löschen"
+                  >
+                    <X size={14} />
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
           <BottomActionBar>
             <button
               type="button"
               onClick={() => setActiveModal('KUNDE_ANLEGEN')}
-              className="h-11 px-4 bg-[#3138A0] hover:bg-[#272d82] active:scale-97 text-white text-sm font-bold rounded-2xl flex items-center justify-center gap-1.5 shadow-xs transition-all whitespace-nowrap"
+              className="h-10 px-4 bg-[#3138A0] hover:bg-[#272d82] active:scale-97 text-white text-xs font-bold rounded-2xl flex items-center justify-center gap-1.5 shadow-xs transition-all whitespace-nowrap"
             >
-              <Plus size={18} strokeWidth={2.5} />
+              <Plus size={16} strokeWidth={2.5} />
               <span>Kunde anlegen</span>
             </button>
           </BottomActionBar>
@@ -515,6 +679,98 @@ export const KundenView: React.FC = () => {
         ref={contentScrollRef}
         className="flex-1 min-h-0 overflow-y-auto p-3.5 space-y-3 overscroll-contain"
       >
+        {/* Kompakte, übersichtliche Kunden-Kurzinfo am Kopf der Kundenakte */}
+        <div className="p-3 bg-white border border-slate-200 rounded-2xl shadow-2xs space-y-2">
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="px-1.5 py-0.5 rounded-md bg-slate-100 text-slate-700 text-[10px] font-mono font-bold">
+                  Kd.-Nr. {currentCustomer.customer_number?.trim() || resolveCustomerNumber(currentCustomer.id, customers)}
+                </span>
+                <span className="text-xs font-bold text-slate-900 truncate">
+                  {customerFullAddress || 'Keine Rechnungsanschrift hinterlegt'}
+                </span>
+                {divergentRecipient && (
+                  <span className="px-1.5 py-0.5 rounded-md bg-indigo-50 text-[#3138A0] text-[10px] font-bold">
+                    Sub → {divergentRecipient.name}
+                  </span>
+                )}
+              </div>
+              <div className="text-[11px] text-slate-500 mt-0.5 flex items-center gap-2 flex-wrap">
+                <span>Tel.: {currentCustomer.phone || '–'}</span>
+                {currentCustomer.email && <span>· {currentCustomer.email}</span>}
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setActiveModal('KUNDE_BEARBEITEN')}
+              className="h-8 px-2.5 rounded-xl bg-slate-100 hover:bg-indigo-50 text-[#3138A0] text-[11px] font-semibold flex items-center gap-1 shrink-0 transition-colors"
+              title="Stammdaten bearbeiten"
+            >
+              <Pencil size={12} />
+              <span>Stammdaten</span>
+            </button>
+          </div>
+
+          <div className="grid grid-cols-3 gap-1.5 pt-1.5 border-t border-slate-100 text-center">
+            <button
+              type="button"
+              onClick={() => {
+                setCustomerWorkViewOpen(false);
+                setCustomerTermineViewOpen(false);
+                setActiveTab('objekte');
+              }}
+              className={`py-1.5 px-2 rounded-xl border text-center transition-colors ${
+                activeTab === 'objekte'
+                  ? 'bg-indigo-50/70 border-indigo-200 text-[#3138A0]'
+                  : 'bg-slate-50 border-slate-200/70 text-slate-700'
+              }`}
+            >
+              <span className="text-[10px] text-slate-500 block">Objekte</span>
+              <span className="text-xs font-bold font-mono">{customerProps.length}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTab('vorgaenge');
+                setCustomerTermineViewOpen(false);
+                setCustomerWorkViewOpen(true);
+              }}
+              className={`py-1.5 px-2 rounded-xl border text-center transition-colors ${
+                activeTab === 'vorgaenge' && customerWorkViewOpen
+                  ? 'bg-indigo-50/70 border-indigo-200 text-[#3138A0]'
+                  : 'bg-slate-50 border-slate-200/70 text-slate-700'
+              }`}
+            >
+              <span className="text-[10px] text-slate-500 block">Offene Std.</span>
+              <span className="text-xs font-bold font-mono text-[#B4470B]">
+                {openHoursSum} Std.
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setCustomerWorkViewOpen(false);
+                setCustomerTermineViewOpen(false);
+                setActiveTab('geld');
+              }}
+              className={`py-1.5 px-2 rounded-xl border text-center transition-colors ${
+                activeTab === 'geld'
+                  ? 'bg-indigo-50/70 border-indigo-200 text-[#3138A0]'
+                  : 'bg-slate-50 border-slate-200/70 text-slate-700'
+              }`}
+            >
+              <span className="text-[10px] text-slate-500 block">Offen (€)</span>
+              <span className="text-xs font-bold font-mono text-[#B4470B]">
+                {openAmountSum.toFixed(0)} €
+              </span>
+            </button>
+          </div>
+        </div>
+
         {/* TAB 1: OBJEKTE (WF-007, WF-028) */}
         {activeTab === 'objekte' && (
           <div className="space-y-3">
@@ -778,170 +1034,150 @@ export const KundenView: React.FC = () => {
               })
             )}
 
-            {/* Kontakt & Stammdaten Aufklappbar (ILL-003, WF-007) */}
-            <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-2xs mt-3">
-              <div className="w-full min-h-[48px] px-3 py-2.5 flex items-center justify-between gap-2">
-                <button
-                  type="button"
-                  onClick={() => setContactExpanded(!contactExpanded)}
-                  className="flex-1 flex items-center justify-between text-left min-w-0"
-                >
-                  <div>
-                    <span className="text-xs font-bold text-slate-900 block leading-tight">
-                      Kontakt & Stammdaten
+            {/* Kontakt & Stammdaten Aufklappbar im einheitlichen Design */}
+            <CollapsibleCard
+              title="Kontakt, Stammdaten & Sub-Abrechnung"
+              subtitle="Telefon, E-Mail, Rechnungsanschrift & Kontoverwaltung"
+              icon={<User size={16} />}
+              iconBgClassName="bg-indigo-50 text-[#3138A0] border-indigo-100"
+              open={contactExpanded}
+              onToggle={() => setContactExpanded(!contactExpanded)}
+            >
+              <div className="text-xs space-y-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-slate-500">Kundennummer:</span>
+                  <span className="font-bold font-mono text-slate-900">
+                    {currentCustomer.customer_number?.trim() ||
+                      resolveCustomerNumber(currentCustomer.id, customers)}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-slate-500">Telefon:</span>
+                  {currentCustomer.phone ? (
+                    <a
+                      href={`tel:${currentCustomer.phone.replace(/\s+/g, '')}`}
+                      className="font-bold text-[#3138A0] hover:underline"
+                    >
+                      {currentCustomer.phone}
+                    </a>
+                  ) : (
+                    <span className="text-slate-400">–</span>
+                  )}
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-slate-500">E-Mail:</span>
+                  {currentCustomer.email ? (
+                    <a
+                      href={`mailto:${currentCustomer.email}`}
+                      className="font-semibold text-slate-800 hover:underline truncate"
+                    >
+                      {currentCustomer.email}
+                    </a>
+                  ) : (
+                    <span className="text-slate-400">–</span>
+                  )}
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-slate-500 shrink-0">Ort / Anschrift:</span>
+                  <span className="font-medium text-slate-800 text-right">
+                    {customerFullAddress || '–'}
+                  </span>
+                </div>
+                {currentCustomer.notes && (
+                  <div className="pt-1.5 border-t border-slate-200">
+                    <span className="text-[10px] text-slate-400 uppercase font-semibold">
+                      Kundennotiz:
                     </span>
-                    <span className="text-[11px] text-slate-500">
-                      Telefon, E-Mail, Rechnungsanschrift
-                    </span>
+                    <p className="text-[11px] text-slate-700 mt-0.5">{currentCustomer.notes}</p>
                   </div>
-                  <ChevronRight
-                    size={16}
-                    className={`text-slate-400 transition-transform mr-1 ${
-                      contactExpanded ? 'rotate-90' : ''
-                    }`}
-                  />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setActiveModal('KUNDE_BEARBEITEN')}
-                  className="h-9 px-2.5 rounded-xl bg-slate-100 hover:bg-indigo-50 text-[#3138A0] text-[11px] font-semibold flex items-center gap-1 shrink-0 transition-colors"
-                  title="Stammdaten bearbeiten"
-                >
-                  <Pencil size={12} />
-                  <span>Ändern</span>
-                </button>
-              </div>
+                )}
 
-              {contactExpanded && (
-                <div className="p-3 bg-slate-50/70 border-t border-slate-100 text-xs space-y-2.5">
+                {/* Aktivierbare Option: Abweichender Rechnungsempfänger (Sub-Auftrag) */}
+                <div className="pt-2.5 border-t border-slate-200/90 space-y-2">
                   <div className="flex items-center justify-between gap-2">
-                    <span className="text-slate-500">Telefon:</span>
-                    {currentCustomer.phone ? (
-                      <a
-                        href={`tel:${currentCustomer.phone.replace(/\s+/g, '')}`}
-                        className="font-bold text-[#3138A0] hover:underline"
-                      >
-                        {currentCustomer.phone}
-                      </a>
-                    ) : (
-                      <span className="text-slate-400">–</span>
-                    )}
-                  </div>
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-slate-500">E-Mail:</span>
-                    {currentCustomer.email ? (
-                      <a
-                        href={`mailto:${currentCustomer.email}`}
-                        className="font-semibold text-slate-800 hover:underline truncate"
-                      >
-                        {currentCustomer.email}
-                      </a>
-                    ) : (
-                      <span className="text-slate-400">–</span>
-                    )}
-                  </div>
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-slate-500 shrink-0">Ort / Anschrift:</span>
-                    <span className="font-medium text-slate-800 text-right">
-                      {customerFullAddress || '–'}
-                    </span>
-                  </div>
-                  {currentCustomer.notes && (
-                    <div className="pt-1.5 border-t border-slate-200">
-                      <span className="text-[10px] text-slate-400 uppercase font-semibold">
-                        Kundennotiz:
-                      </span>
-                      <p className="text-[11px] text-slate-700 mt-0.5">{currentCustomer.notes}</p>
+                    <div className="flex items-center gap-2 min-w-0">
+                      <Receipt size={14} className="text-[#3138A0] shrink-0" />
+                      <div className="min-w-0">
+                        <span className="font-bold text-slate-800 block text-xs leading-tight">
+                          Anderer Rechnungsempfänger (Sub)
+                        </span>
+                        <span className="text-[10px] text-slate-500 block">
+                          Arbeiten bleiben am Objekt · Abrechnung über gewählten Kunden
+                        </span>
+                      </div>
                     </div>
+                    <input
+                      type="checkbox"
+                      checked={isDivergentActive}
+                      disabled={!isDivergentActive && otherCustomers.length === 0}
+                      onChange={(e) => handleToggleDivergentBilling(e.target.checked)}
+                      className="w-5 h-5 accent-[#3138A0] rounded-sm cursor-pointer disabled:opacity-40 shrink-0"
+                    />
+                  </div>
+
+                  {otherCustomers.length === 0 && !isDivergentActive && (
+                    <p className="text-[10px] text-slate-400 italic">
+                      Für Sub-Abrechnung zuerst den Auftraggeber als Kunden anlegen.
+                    </p>
                   )}
 
-                  {/* Aktivierbare Option: Abweichender Rechnungsempfänger (Sub-Auftrag) */}
-                  <div className="pt-2.5 border-t border-slate-200/90 space-y-2">
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <Receipt size={14} className="text-[#3138A0] shrink-0" />
-                        <div className="min-w-0">
-                          <span className="font-bold text-slate-800 block text-xs leading-tight">
-                            Anderer Rechnungsempfänger (Sub)
-                          </span>
-                          <span className="text-[10px] text-slate-500 block">
-                            Arbeiten bleiben am Objekt · Abrechnung über gewählten Kunden
-                          </span>
-                        </div>
-                      </div>
-                      <input
-                        type="checkbox"
-                        checked={isDivergentActive}
-                        disabled={!isDivergentActive && otherCustomers.length === 0}
-                        onChange={(e) => handleToggleDivergentBilling(e.target.checked)}
-                        className="w-5 h-5 accent-[#3138A0] rounded-sm cursor-pointer disabled:opacity-40 shrink-0"
-                      />
-                    </div>
-
-                    {otherCustomers.length === 0 && !isDivergentActive && (
-                      <p className="text-[10px] text-slate-400 italic">
-                        Für Sub-Abrechnung zuerst den Auftraggeber als Kunden anlegen.
-                      </p>
-                    )}
-
-                    {isDivergentActive && (
-                      <div className="p-2 bg-indigo-50/70 border border-indigo-200/80 rounded-xl space-y-1.5">
-                        <label className="text-[10px] font-bold uppercase tracking-wide text-[#3138A0] block">
-                          Abrechnung über Kunde:
-                        </label>
-                        <select
-                          value={divergentRecipient?.id || ''}
-                          onChange={(e) => handleChangeBillingCustomer(e.target.value)}
-                          className="w-full h-10 px-2.5 bg-white border border-indigo-200 rounded-xl focus:border-[#3138A0] outline-hidden text-xs font-semibold text-slate-900"
-                        >
-                          {otherCustomers.map((oc) => (
-                            <option key={oc.id} value={oc.id}>
-                              {oc.name} {oc.city ? `(${oc.city})` : ''}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Kundenakte löschen */}
-                  <div className="pt-2.5 border-t border-slate-200/90">
-                    {!confirmDeleteCustomer ? (
-                      <button
-                        type="button"
-                        onClick={() => setConfirmDeleteCustomer(true)}
-                        className="w-full h-9 rounded-xl border border-red-200 bg-red-50/60 hover:bg-red-50 text-[#B42318] font-semibold text-xs flex items-center justify-center gap-1.5 transition-colors"
+                  {isDivergentActive && (
+                    <div className="p-2 bg-indigo-50/70 border border-indigo-200/80 rounded-xl space-y-1.5">
+                      <label className="text-[10px] font-bold uppercase tracking-wide text-[#3138A0] block">
+                        Abrechnung über Kunde:
+                      </label>
+                      <select
+                        value={divergentRecipient?.id || ''}
+                        onChange={(e) => handleChangeBillingCustomer(e.target.value)}
+                        className="w-full h-10 px-2.5 bg-white border border-indigo-200 rounded-xl focus:border-[#3138A0] outline-hidden text-xs font-semibold text-slate-900"
                       >
-                        <Trash2 size={13} />
-                        <span>Kunde löschen</span>
-                      </button>
-                    ) : (
-                      <div className="p-2.5 bg-red-50 border border-red-200 rounded-xl flex items-center justify-between gap-2">
-                        <span className="text-xs font-semibold text-[#B42318]">
-                          Kunde „{currentCustomer.name}“ löschen?
-                        </span>
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          <button
-                            type="button"
-                            onClick={() => setConfirmDeleteCustomer(false)}
-                            className="px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-semibold text-slate-600"
-                          >
-                            Nein
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => deleteCustomer(currentCustomer.id)}
-                            className="px-2.5 py-1.5 bg-[#B42318] text-white rounded-lg text-xs font-semibold"
-                          >
-                            Ja, löschen
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
+                        {otherCustomers.map((oc) => (
+                          <option key={oc.id} value={oc.id}>
+                            {oc.name} {oc.city ? `(${oc.city})` : ''}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
+
+                {/* Kundenakte löschen */}
+                <div className="pt-2.5 border-t border-slate-200/90">
+                  {!confirmDeleteCustomer ? (
+                    <button
+                      type="button"
+                      onClick={() => setConfirmDeleteCustomer(true)}
+                      className="w-full h-9 rounded-xl border border-red-200 bg-red-50/60 hover:bg-red-50 text-[#B42318] font-semibold text-xs flex items-center justify-center gap-1.5 transition-colors"
+                    >
+                      <Trash2 size={13} />
+                      <span>Kunde löschen</span>
+                    </button>
+                  ) : (
+                    <div className="p-2.5 bg-red-50 border border-red-200 rounded-xl flex items-center justify-between gap-2">
+                      <span className="text-xs font-semibold text-[#B42318]">
+                        Kunde „{currentCustomer.name}“ löschen?
+                      </span>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => setConfirmDeleteCustomer(false)}
+                          className="px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-semibold text-slate-600"
+                        >
+                          Nein
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => deleteCustomer(currentCustomer.id)}
+                          className="px-2.5 py-1.5 bg-[#B42318] text-white rounded-lg text-xs font-semibold"
+                        >
+                          Ja, löschen
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </CollapsibleCard>
           </div>
         )}
 
@@ -1428,10 +1664,10 @@ export const KundenView: React.FC = () => {
             </div>
           ))}
 
-        {/* TAB 3: GELD (WF-009) */}
+        {/* TAB 3: GELD (WF-009) - Alle ausklappbaren Optionen im einheitlichen Design */}
         {activeTab === 'geld' && (
           <div className="space-y-3">
-            {/* Offene Arbeiten Card */}
+            {/* Offene Arbeiten Hauptkarte */}
             <div className="p-3.5 bg-white border border-slate-200 rounded-2xl shadow-2xs space-y-2">
               <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
                 Offene Arbeiten
@@ -1443,12 +1679,13 @@ export const KundenView: React.FC = () => {
                   </span>
                   <span className="text-xs text-slate-500">Nicht abgerechnet</span>
                 </div>
-                <span className="text-xl font-bold text-[#B4470B]">
+                <span className="text-xl font-bold text-[#B4470B] tabular-nums">
                   {openAmountSum.toFixed(2)} €
                 </span>
               </div>
               {openWork.length > 0 && (
                 <button
+                  type="button"
                   onClick={() => setActiveModal('RECHNUNG_VORBEREITEN')}
                   className="w-full mt-1 py-2.5 bg-[#3138A0] hover:bg-[#272d82] text-white text-xs font-semibold rounded-xl transition-all shadow-xs"
                 >
@@ -1459,32 +1696,28 @@ export const KundenView: React.FC = () => {
               )}
             </div>
 
-            {/* Erstellte L.C.R. einfach darstellen */}
-            <div className="p-3.5 bg-white border border-slate-200 rounded-2xl shadow-2xs space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-[11px] font-bold text-[#3138A0] uppercase tracking-wider flex items-center gap-1">
-                  <Bookmark size={12} />
-                  <span>Erstellte L.C.R.</span>
-                </span>
-                <span className="text-xs text-slate-500">
-                  {lcrWork.length} {lcrWork.length === 1 ? 'Eintrag' : 'Einträge'}
-                </span>
-              </div>
-
-              <div className="flex items-center justify-between">
-                <div>
-                  <span className="text-lg font-bold text-slate-900 block">
-                    {lcrHoursSum} Std.
-                  </span>
-                  <span className="text-xs text-slate-500">Für Kunden erfasst</span>
-                </div>
-                <span className="text-xl font-bold text-[#3138A0]">
+            {/* Ausklappbar 1: Erstellte L.C.R. */}
+            <CollapsibleCard
+              title="Erstellte L.C.R."
+              subtitle={`${lcrHoursSum} Std. · ${lcrWork.length} ${
+                lcrWork.length === 1 ? 'Eintrag' : 'Einträge'
+              }`}
+              icon={<Bookmark size={16} />}
+              iconBgClassName="bg-indigo-50 text-[#3138A0] border-indigo-100"
+              headerRight={
+                <span className="text-sm font-bold text-[#3138A0] tabular-nums">
                   {lcrAmountSum.toFixed(2)} €
                 </span>
-              </div>
-
-              {lcrWork.length > 0 && (
-                <div className="space-y-1.5 pt-1 border-t border-slate-100">
+              }
+              open={lcrExpanded}
+              onToggle={() => setLcrExpanded((p) => !p)}
+            >
+              {lcrWork.length === 0 ? (
+                <p className="text-xs text-slate-500">
+                  Keine L.C.R.-Einträge für diesen Kunden vorhanden.
+                </p>
+              ) : (
+                <div className="space-y-1.5">
                   {lcrWork.map((rec) => (
                     <div
                       key={rec.id}
@@ -1492,7 +1725,7 @@ export const KundenView: React.FC = () => {
                         setSelectedWorkRecordId(rec.id);
                         setActiveModal('ARBEIT_BEARBEITEN');
                       }}
-                      className="p-2 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between text-xs cursor-pointer hover:border-[#3138A0] transition-colors"
+                      className="p-2.5 bg-white border border-slate-200 rounded-xl flex items-center justify-between text-xs cursor-pointer hover:border-[#3138A0] transition-colors"
                     >
                       <div className="min-w-0 pr-2">
                         <span className="font-bold text-slate-900 block truncate">
@@ -1502,7 +1735,7 @@ export const KundenView: React.FC = () => {
                           {rec.work_date} · {rec.hours} Std.
                         </span>
                       </div>
-                      <span className="font-bold text-[#3138A0] shrink-0">
+                      <span className="font-bold text-[#3138A0] shrink-0 tabular-nums">
                         {rec.accounting_amount !== null
                           ? `${rec.accounting_amount.toFixed(2)} €`
                           : 'Satz offen'}
@@ -1511,130 +1744,135 @@ export const KundenView: React.FC = () => {
                   ))}
                 </div>
               )}
-            </div>
+            </CollapsibleCard>
 
-            {/* Option: Beide Beträge addiert darstellen */}
-            <div className="p-3.5 bg-white border border-slate-200 rounded-2xl shadow-2xs space-y-2.5">
-              <label className="flex items-center justify-between gap-2 cursor-pointer select-none">
-                <span className="text-xs font-bold text-slate-800">
-                  Beide Beträge addiert anzeigen
+            {/* Ausklappbar 2: Beide Beträge addiert anzeigen */}
+            <CollapsibleCard
+              title="Beide Beträge addiert anzeigen"
+              subtitle={`Offene Arbeiten + L.C.R. (${Math.round((openHoursSum + lcrHoursSum) * 100) / 100} Std.)`}
+              icon={<Layers size={16} />}
+              iconBgClassName="bg-indigo-50 text-[#3138A0] border-indigo-100"
+              headerRight={
+                <span className="text-sm font-bold text-[#3138A0] tabular-nums">
+                  {(openAmountSum + lcrAmountSum).toFixed(2)} €
                 </span>
-                <input
-                  type="checkbox"
-                  checked={showCombinedAmounts}
-                  onChange={(e) => setShowCombinedAmounts(e.target.checked)}
-                  className="w-5 h-5 accent-[#3138A0] rounded-sm cursor-pointer shrink-0"
-                />
-              </label>
-
-              {showCombinedAmounts && (
-                <div className="pt-2 border-t border-slate-100 space-y-2 text-xs">
-                  <div className="p-2.5 bg-indigo-50/60 border border-indigo-100 rounded-xl flex items-center justify-between">
-                    <div>
-                      <span className="font-bold text-slate-900 block">
-                        Offene Arbeiten + L.C.R.
-                      </span>
-                      <span className="text-[10px] text-slate-500">
-                        {Math.round((openHoursSum + lcrHoursSum) * 100) / 100} Std. ({openAmountSum.toFixed(2)} € + {lcrAmountSum.toFixed(2)} €)
-                      </span>
-                    </div>
-                    <span className="text-base font-bold text-[#3138A0]">
-                      {(openAmountSum + lcrAmountSum).toFixed(2)} €
+              }
+              open={showCombinedAmounts}
+              onToggle={() => setShowCombinedAmounts((p) => !p)}
+            >
+              <div className="space-y-2 text-xs">
+                <div className="p-2.5 bg-white border border-indigo-100 rounded-xl flex items-center justify-between">
+                  <div>
+                    <span className="font-bold text-slate-900 block">
+                      Offene Arbeiten + L.C.R.
+                    </span>
+                    <span className="text-[10px] text-slate-500">
+                      {Math.round((openHoursSum + lcrHoursSum) * 100) / 100} Std. ({openAmountSum.toFixed(2)} € + {lcrAmountSum.toFixed(2)} €)
                     </span>
                   </div>
+                  <span className="text-base font-bold text-[#3138A0] tabular-nums">
+                    {(openAmountSum + lcrAmountSum).toFixed(2)} €
+                  </span>
+                </div>
 
-                  {invoicedAmountSum > 0 && (
-                    <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between">
-                      <div>
-                        <span className="font-bold text-slate-900 block">
-                          Rechnungen + L.C.R.
-                        </span>
-                        <span className="text-[10px] text-slate-500">
-                          {invoicedAmountSum.toFixed(2)} € + {lcrAmountSum.toFixed(2)} €
-                          {openAmountSum > 0 ? ` (+ ${openAmountSum.toFixed(2)} € offen)` : ''}
-                        </span>
-                      </div>
-                      <span className="text-base font-bold text-slate-900">
-                        {(invoicedAmountSum + openAmountSum + lcrAmountSum).toFixed(2)} €
+                {invoicedAmountSum > 0 && (
+                  <div className="p-2.5 bg-white border border-slate-200 rounded-xl flex items-center justify-between">
+                    <div>
+                      <span className="font-bold text-slate-900 block">
+                        Rechnungen + L.C.R.
+                      </span>
+                      <span className="text-[10px] text-slate-500">
+                        {invoicedAmountSum.toFixed(2)} € + {lcrAmountSum.toFixed(2)} €
+                        {openAmountSum > 0 ? ` (+ ${openAmountSum.toFixed(2)} € offen)` : ''}
                       </span>
                     </div>
-                  )}
-                </div>
-              )}
-            </div>
+                    <span className="text-base font-bold text-slate-900 tabular-nums">
+                      {(invoicedAmountSum + openAmountSum + lcrAmountSum).toFixed(2)} €
+                    </span>
+                  </div>
+                )}
+              </div>
+            </CollapsibleCard>
 
-            {/* Rechnungszuordnung Card */}
-            <div className="p-3.5 bg-white border border-slate-200 rounded-2xl shadow-2xs space-y-2.5">
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
-                  Rechnungszuordnung
-                </span>
-                <label className="flex items-center gap-1.5 text-[11px] font-semibold text-[#3138A0] cursor-pointer">
+            {/* Ausklappbar 3: Rechnungszuordnung & Empfänger */}
+            <CollapsibleCard
+              title="Rechnungszuordnung"
+              subtitle={
+                isDivergentActive && divergentRecipient
+                  ? `Sub-Abrechnung über ${divergentRecipient.name}`
+                  : `Standard (${currentCustomer.name})`
+              }
+              icon={<Receipt size={16} />}
+              iconBgClassName="bg-slate-100 text-slate-700 border-slate-200"
+              open={billingConfigExpanded}
+              onToggle={() => setBillingConfigExpanded((p) => !p)}
+            >
+              <div className="space-y-2.5 text-xs">
+                <label className="flex items-center justify-between gap-2 cursor-pointer">
+                  <span className="font-semibold text-slate-800">
+                    Anderer Rechnungsempfänger (Sub)
+                  </span>
                   <input
                     type="checkbox"
                     checked={isDivergentActive}
                     disabled={!isDivergentActive && otherCustomers.length === 0}
                     onChange={(e) => handleToggleDivergentBilling(e.target.checked)}
-                    className="w-4 h-4 accent-[#3138A0] rounded-sm cursor-pointer disabled:opacity-40"
+                    className="w-5 h-5 accent-[#3138A0] rounded-sm cursor-pointer disabled:opacity-40"
                   />
-                  <span>Anderer Empfänger (Sub)</span>
                 </label>
-              </div>
 
-              {isDivergentActive ? (
-                <div className="space-y-1.5">
-                  <label className="text-[11px] text-slate-600 block">
-                    Abrechnung erfolgt über Kunde:
-                  </label>
-                  <select
-                    value={divergentRecipient?.id || ''}
-                    onChange={(e) => handleChangeBillingCustomer(e.target.value)}
-                    className="w-full h-10 px-2.5 bg-indigo-50/60 border border-indigo-200 rounded-xl focus:bg-white focus:border-[#3138A0] outline-hidden text-xs font-bold text-[#3138A0]"
+                {isDivergentActive ? (
+                  <div className="space-y-1.5">
+                    <label className="text-[11px] text-slate-600 block">
+                      Abrechnung erfolgt über Kunde:
+                    </label>
+                    <select
+                      value={divergentRecipient?.id || ''}
+                      onChange={(e) => handleChangeBillingCustomer(e.target.value)}
+                      className="w-full h-10 px-2.5 bg-white border border-indigo-200 rounded-xl focus:border-[#3138A0] outline-hidden text-xs font-bold text-[#3138A0]"
+                    >
+                      {otherCustomers.map((oc) => (
+                        <option key={oc.id} value={oc.id}>
+                          {oc.name} {oc.city ? `(${oc.city})` : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-600">Empfänger:</span>
+                    <span className="font-semibold text-slate-900">{currentCustomer.name}</span>
+                  </div>
+                )}
+
+                <div className="flex items-center justify-between pt-2 border-t border-slate-200/80">
+                  <span className="text-slate-600">E-Rechnung:</span>
+                  <span
+                    className={`font-semibold ${
+                      (divergentRecipient ?? currentCustomer).electronic_invoice_consent
+                        ? 'text-[#2C7738]'
+                        : 'text-amber-600'
+                    }`}
                   >
-                    {otherCustomers.map((oc) => (
-                      <option key={oc.id} value={oc.id}>
-                        {oc.name} {oc.city ? `(${oc.city})` : ''}
-                      </option>
-                    ))}
-                  </select>
+                    {(divergentRecipient ?? currentCustomer).electronic_invoice_consent
+                      ? 'Zustimmung erteilt'
+                      : 'Zustimmung nicht erfasst'}
+                  </span>
                 </div>
-              ) : (
-                <div className="flex items-center justify-between text-xs">
-                  <span className="text-slate-600">Empfänger:</span>
-                  <span className="font-semibold text-slate-900">{currentCustomer.name}</span>
-                </div>
-              )}
-
-              <div className="flex items-center justify-between text-xs pt-1 border-t border-slate-100">
-                <span className="text-slate-600">E-Rechnung:</span>
-                <span
-                  className={`font-semibold ${
-                    (divergentRecipient ?? currentCustomer).electronic_invoice_consent
-                      ? 'text-[#2C7738]'
-                      : 'text-amber-600'
-                  }`}
-                >
-                  {(divergentRecipient ?? currentCustomer).electronic_invoice_consent
-                    ? 'Zustimmung erteilt'
-                    : 'Zustimmung nicht erfasst'}
-                </span>
               </div>
-            </div>
+            </CollapsibleCard>
 
-            {/* Bereits versendete Rechnungen für diesen Kunden */}
-            <div className="p-3.5 bg-white border border-slate-200 rounded-2xl shadow-2xs space-y-2.5">
-              <div className="flex items-center justify-between">
-                <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
-                  <Send size={12} className="text-[#3138A0]" />
-                  <span>Versendete Rechnungen</span>
-                </span>
-                <span className="text-xs text-slate-500">
-                  {sentCustomerInvoices.length} versendet
-                </span>
-              </div>
-
+            {/* Ausklappbar 4: Versendete Rechnungen */}
+            <CollapsibleCard
+              title="Versendete Rechnungen"
+              subtitle={`${sentCustomerInvoices.length} versendet`}
+              icon={<Send size={15} />}
+              iconBgClassName="bg-emerald-50 text-[#2C7738] border-emerald-100"
+              open={sentInvoicesExpanded}
+              onToggle={() => setSentInvoicesExpanded((p) => !p)}
+            >
               {sentCustomerInvoices.length === 0 ? (
-                <p className="text-xs text-slate-400 italic">
+                <p className="text-xs text-slate-500">
                   Noch keine Rechnungen für diesen Kunden versendet.
                 </p>
               ) : (
@@ -1646,7 +1884,7 @@ export const KundenView: React.FC = () => {
                         setSelectedInvoiceId(inv.id);
                         navigate('M04_ABRECHNUNG');
                       }}
-                      className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between text-xs cursor-pointer hover:border-[#3138A0] transition-colors"
+                      className="p-2.5 bg-white border border-slate-200 rounded-xl flex items-center justify-between text-xs cursor-pointer hover:border-[#3138A0] transition-colors"
                     >
                       <div className="min-w-0 pr-2">
                         <span className="font-bold text-slate-900 block truncate">
@@ -1660,7 +1898,7 @@ export const KundenView: React.FC = () => {
 
                       <div className="text-right flex items-center gap-2 shrink-0">
                         <div>
-                          <span className="font-bold text-slate-900 block">
+                          <span className="font-bold text-slate-900 block tabular-nums">
                             {inv.total_amount.toFixed(2)} €
                           </span>
                           <span
@@ -1687,26 +1925,19 @@ export const KundenView: React.FC = () => {
                   ))}
                 </div>
               )}
-            </div>
+            </CollapsibleCard>
 
-            {/* Rechnungen & Abschlüsse Liste */}
-            <div className="p-3.5 bg-white border border-slate-200 rounded-2xl shadow-2xs space-y-2.5">
-              <div className="flex items-center justify-between">
-                <div>
-                  <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
-                    Abschlüsse & Zahlungen
-                  </span>
-                  {customerInvoices.length > 0 && (
-                    <span className="text-[10px] text-slate-400">
-                      Tippen zum Bearbeiten · Nach links wischen löscht
-                    </span>
-                  )}
-                </div>
-                <span className="text-xs text-slate-500">{customerInvoices.length} Belege</span>
-              </div>
-
+            {/* Ausklappbar 5: Abschlüsse & Zahlungen */}
+            <CollapsibleCard
+              title="Abschlüsse & Zahlungen"
+              subtitle={`${customerInvoices.length} Belege · Tippen zum Öffnen`}
+              icon={<Receipt size={16} />}
+              iconBgClassName="bg-orange-50 text-[#B4470B] border-orange-100"
+              open={allInvoicesExpanded}
+              onToggle={() => setAllInvoicesExpanded((p) => !p)}
+            >
               {customerInvoices.length === 0 ? (
-                <p className="text-xs text-slate-400 italic">Noch keine Rechnungen ausgestellt.</p>
+                <p className="text-xs text-slate-500">Noch keine Rechnungen ausgestellt.</p>
               ) : (
                 <div className="space-y-2">
                   {customerInvoices.map((inv) => (
@@ -1720,7 +1951,7 @@ export const KundenView: React.FC = () => {
                           setSelectedInvoiceId(inv.id);
                           navigate('M04_ABRECHNUNG');
                         }}
-                        className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between text-xs cursor-pointer hover:border-[#3138A0] transition-colors"
+                        className="p-2.5 bg-white border border-slate-200 rounded-xl flex items-center justify-between text-xs cursor-pointer hover:border-[#3138A0] transition-colors"
                       >
                         <div className="min-w-0 pr-2">
                           <span className="font-bold text-slate-900 block truncate">
@@ -1736,7 +1967,7 @@ export const KundenView: React.FC = () => {
                         <div className="text-right flex items-center gap-2">
                           <div>
                             <span
-                              className={`font-bold block ${
+                              className={`font-bold block tabular-nums ${
                                 inv.is_storno ? 'text-[#B42318]' : 'text-slate-900'
                               }`}
                             >
@@ -1766,7 +1997,7 @@ export const KundenView: React.FC = () => {
                               e.stopPropagation();
                               setSendingInvoiceId(inv.id);
                             }}
-                            className="w-8 h-8 rounded-xl bg-white border border-slate-200 hover:bg-indigo-50 flex items-center justify-center text-[#3138A0] transition-colors shrink-0"
+                            className="w-8 h-8 rounded-xl bg-slate-50 border border-slate-200 hover:bg-indigo-50 flex items-center justify-center text-[#3138A0] transition-colors shrink-0"
                             title="Rechnung versenden"
                             aria-label="Rechnung versenden"
                           >
@@ -1779,7 +2010,7 @@ export const KundenView: React.FC = () => {
                   ))}
                 </div>
               )}
-            </div>
+            </CollapsibleCard>
           </div>
         )}
       </div>

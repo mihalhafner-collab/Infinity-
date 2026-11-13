@@ -89,25 +89,35 @@ export const InvoicePaperPreview: React.FC<InvoicePaperPreviewProps> = ({
       {/* Betreffzeile */}
       <div className="mt-5">
         <h3 className="text-xs font-bold text-neutral-950">
-          {data.isStorno
-            ? `Stornorechnung Nr. ${displayInvNo}`
-            : `Rechnungs Nr. ${displayInvNo}`}
+          {data.subjectText?.trim() ||
+            (data.isStorno
+              ? `Stornorechnung Nr. ${displayInvNo}`
+              : data.isPauschal
+                ? `Pauschalrechnung Nr. ${displayInvNo}`
+                : `Rechnungs Nr. ${displayInvNo}`)}
         </h3>
       </div>
 
       {/* Einleitungstext */}
       <div className="mt-2.5 space-y-1.5 text-[9.5px] text-neutral-900">
-        <p>Sehr geehrte Damen und Herren,</p>
         {data.isStorno ? (
-          <p>
-            hiermit stornieren wir die betreffende Abrechnung ({data.stornoReason || 'Korrektur'}):
-          </p>
+          <>
+            <p>Sehr geehrte Damen und Herren,</p>
+            <p>
+              hiermit stornieren wir die betreffende Abrechnung ({data.stornoReason || 'Korrektur'}):
+            </p>
+          </>
+        ) : data.introText?.trim() ? (
+          <p className="whitespace-pre-line">{data.introText.trim()}</p>
         ) : (
-          <p>
-            vielen Dank für Ihren Auftrag und das damit verbundene Vertrauen!
-            <br />
-            Hiermit stelle ich Ihnen die folgenden Leistungen in Rechnung:
-          </p>
+          <>
+            <p>Sehr geehrte Damen und Herren,</p>
+            <p>
+              vielen Dank für Ihren Auftrag und das damit verbundene Vertrauen!
+              <br />
+              Hiermit stelle ich Ihnen die folgenden Leistungen in Rechnung:
+            </p>
+          </>
         )}
       </div>
 
@@ -128,7 +138,9 @@ export const InvoicePaperPreview: React.FC<InvoicePaperPreviewProps> = ({
               className="grid grid-cols-12 py-1.5 px-1.5 text-[9px] text-neutral-900 items-start"
             >
               <div className="col-span-1">{idx + 1}.</div>
-              <div className="col-span-4 font-bold pr-1 break-words">{item.description}</div>
+              <div className="col-span-4 font-bold pr-1 break-words whitespace-pre-line">
+                {item.description}
+              </div>
               <div className="col-span-2 text-right">{item.quantity_label}</div>
               <div className="col-span-2 text-right">{item.unit_price_label}</div>
               <div className="col-span-3 text-right">{formatEuro(item.amount)}</div>
@@ -161,19 +173,23 @@ export const InvoicePaperPreview: React.FC<InvoicePaperPreviewProps> = ({
       <div className="mt-3.5 space-y-2 text-[9px] text-neutral-900">
         {!data.isStorno &&
           (data.isPaidInCash ? (
-            <p>
+            <p className="whitespace-pre-line">
               {data.paymentTermsText ||
                 'Zahlungsbedingungen: Rechnungsbetrag dankend bar erhalten.'}
             </p>
           ) : (
             <>
-              <p>{data.paymentTermsText || PAYMENT_TERMS_CLAUSE}</p>
-              <p>
-                Bitte überweisen Sie den Rechnungsbetrag unter Angabe der Rechnungsnummer auf das
-                unten angegebene Konto.
-                <br />
-                Der Rechnungsbetrag ist bis zum {data.dueDateFormatted} fällig.
-              </p>
+              <p className="whitespace-pre-line">{data.paymentTermsText || PAYMENT_TERMS_CLAUSE}</p>
+              {data.closingText?.trim() ? (
+                <p className="whitespace-pre-line">{data.closingText.trim()}</p>
+              ) : (
+                <p>
+                  Bitte überweisen Sie den Rechnungsbetrag unter Angabe der Rechnungsnummer auf das
+                  unten angegebene Konto.
+                  <br />
+                  Der Rechnungsbetrag ist bis zum {data.dueDateFormatted} fällig.
+                </p>
+              )}
             </>
           ))}
         <p className="pt-1">

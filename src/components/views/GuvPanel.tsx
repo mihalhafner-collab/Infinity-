@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useApp, usePixelBackLayer } from '../../context/AppContext.tsx';
 import { SwipeToDeleteRow } from '../common/SwipeToDeleteRow.tsx';
+import { CollapsibleCard } from '../common/CollapsibleCard.tsx';
 import {
   BusinessExpense,
   ExpenseCategory,
@@ -22,14 +23,13 @@ import {
   Plus,
   Download,
   Scale,
-  ChevronDown,
-  ChevronUp,
   CheckCircle2,
   AlertTriangle,
   Pencil,
   Wrench,
   X,
-  Info
+  Info,
+  Sliders
 } from 'lucide-react';
 
 function parseEuroInput(val: string): number {
@@ -344,59 +344,40 @@ export const GuvPanel: React.FC = () => {
         </div>
 
         {/* 3. Geprüfte rechtliche Vorgaben (Österreich BMF / WKO Stand 2026) */}
-        <div className="bg-white border border-slate-200 rounded-2xl shadow-2xs overflow-hidden">
-          <button
-            type="button"
-            onClick={() => setLegalOpen((p) => !p)}
-            className="w-full p-3 flex items-center justify-between text-left hover:bg-slate-50 transition-colors"
-          >
-            <div className="flex items-center gap-2">
-              <Scale size={16} className="text-[#3138A0] shrink-0" />
-              <div>
-                <span className="text-xs font-bold text-slate-900 block leading-tight">
-                  Rechtliche Vorgaben & Pauschalierung (AT 2026)
-                </span>
-                <span className="text-[10px] text-slate-500">
-                  § 17 EStG, § 13 GWG, § 7 Halbjahres-AfA, § 10 Grundfreibetrag
-                </span>
-              </div>
-            </div>
-            {legalOpen ? (
-              <ChevronUp size={16} className="text-slate-400 shrink-0" />
-            ) : (
-              <ChevronDown size={16} className="text-slate-400 shrink-0" />
-            )}
-          </button>
-
-          {legalOpen && (
-            <div className="p-3.5 pt-2 border-t border-slate-100 bg-slate-50/60 space-y-2.5 text-[11px] text-slate-600 leading-relaxed">
-              <div>
-                <strong className="text-slate-900 block">
-                  1. Einnahmen-Ausgaben-Rechnung statt doppelter Bilanz-GuV:
-                </strong>
-                Einzelunternehmer unter 700.000 € Jahresumsatz unterliegen keiner Buchführungspflicht nach UGB. Maßgeblich ist das <strong>Zufluss-Abfluss-Prinzip (§ 19 EStG)</strong>: Versteuert werden im Kalenderjahr tatsächlich eingegangene Kundenzahlungen.
-              </div>
-              <div>
-                <strong className="text-slate-900 block">
-                  2. Kleinunternehmerpauschalierung (§ 17 Abs. 3a EStG):
-                </strong>
-                Bis <strong>55.000 € Bruttoumsatz</strong> (Toleranz +10 % bis 60.500 €) können Betriebsausgaben ohne Einzelbelege pauschal mit <strong>45 %</strong> (Handwerk/Regelbetrieb, max. 24.750 €) bzw. <strong>20 %</strong> (Dienstleistungsbetriebe lt. DLB-V, max. 11.000 €) angesetzt werden. <strong>Zusätzlich abziehbar:</strong> SVS-Pflichtbeiträge, Arbeitsplatzpauschale (300 €/1.200 € – letztmalig 2026!), 50 % Öffi-Ticket sowie der 15 % Grundfreibetrag.
-              </div>
-              <div>
-                <strong className="text-slate-900 block">
-                  3. GWG (§ 13 EStG) & Abschreibung / AfA (§ 7 EStG):
-                </strong>
-                Bei USt-Kleinunternehmern zählt der <strong>Bruttokaufpreis</strong>: Selbstständig nutzbare Geräte bis <strong>1.000 €</strong> sind sofort zu 100 % als GWG absetzbar. Geräte über 1.000 € werden über die Nutzungsdauer verteilt (Inbetriebnahme 1. Halbjahr = 100 % Jahres-AfA; ab 1. Juli = <strong>50 % Halbjahres-AfA</strong>). Bei Wahl einer Pauschalierung sind GWG & reguläre AfA bereits im Pauschalsatz abgegolten.
-              </div>
-              <div>
-                <strong className="text-slate-900 block">
-                  4. Grundfreibetrag (§ 10 EStG) & Steuertarif 2026 (§ 33 EStG):
-                </strong>
-                Vom ermittelten Gewinn werden automatisch <strong>15 % Grundfreibetrag</strong> (bis 33.000 € Gewinn = max. 4.950 €) abgezogen – auch bei Pauschalierung! Bis <strong>13.539 €</strong> steuerpflichtigem Jahreseinkommen fällt 2026 <strong>0 % Einkommensteuer</strong> an.
-              </div>
-            </div>
-          )}
-        </div>
+        <CollapsibleCard
+          title="Rechtliche Vorgaben & Pauschalierung (AT 2026)"
+          subtitle="§ 17 EStG, § 13 GWG, § 7 Halbjahres-AfA, § 10 Grundfreibetrag"
+          icon={<Scale size={16} />}
+          iconBgClassName="bg-indigo-50 text-[#3138A0] border-indigo-100"
+          open={legalOpen}
+          onToggle={() => setLegalOpen((p) => !p)}
+          bodyClassName="p-3.5 pt-2.5 border-t border-slate-100 bg-slate-50/70 space-y-2.5 text-[11px] text-slate-600 leading-relaxed"
+        >
+          <div>
+            <strong className="text-slate-900 block">
+              1. Einnahmen-Ausgaben-Rechnung statt doppelter Bilanz-GuV:
+            </strong>
+            Einzelunternehmer unter 700.000 € Jahresumsatz unterliegen keiner Buchführungspflicht nach UGB. Maßgeblich ist das <strong>Zufluss-Abfluss-Prinzip (§ 19 EStG)</strong>: Versteuert werden im Kalenderjahr tatsächlich eingegangene Kundenzahlungen.
+          </div>
+          <div>
+            <strong className="text-slate-900 block">
+              2. Kleinunternehmerpauschalierung (§ 17 Abs. 3a EStG):
+            </strong>
+            Bis <strong>55.000 € Bruttoumsatz</strong> (Toleranz +10 % bis 60.500 €) können Betriebsausgaben ohne Einzelbelege pauschal mit <strong>45 %</strong> (Handwerk/Regelbetrieb, max. 24.750 €) bzw. <strong>20 %</strong> (Dienstleistungsbetriebe lt. DLB-V, max. 11.000 €) angesetzt werden. <strong>Zusätzlich abziehbar:</strong> SVS-Pflichtbeiträge, Arbeitsplatzpauschale (300 €/1.200 € – letztmalig 2026!), 50 % Öffi-Ticket sowie der 15 % Grundfreibetrag.
+          </div>
+          <div>
+            <strong className="text-slate-900 block">
+              3. GWG (§ 13 EStG) & Abschreibung / AfA (§ 7 EStG):
+            </strong>
+            Bei USt-Kleinunternehmern zählt der <strong>Bruttokaufpreis</strong>: Selbstständig nutzbare Geräte bis <strong>1.000 €</strong> sind sofort zu 100 % als GWG absetzbar. Geräte über 1.000 € werden über die Nutzungsdauer verteilt (Inbetriebnahme 1. Halbjahr = 100 % Jahres-AfA; ab 1. Juli = <strong>50 % Halbjahres-AfA</strong>). Bei Wahl einer Pauschalierung sind GWG & reguläre AfA bereits im Pauschalsatz abgegolten.
+          </div>
+          <div>
+            <strong className="text-slate-900 block">
+              4. Grundfreibetrag (§ 10 EStG) & Steuertarif 2026 (§ 33 EStG):
+            </strong>
+            Vom ermittelten Gewinn werden automatisch <strong>15 % Grundfreibetrag</strong> (bis 33.000 € Gewinn = max. 4.950 €) abgezogen – auch bei Pauschalierung! Bis <strong>13.539 €</strong> steuerpflichtigem Jahreseinkommen fällt 2026 <strong>0 % Einkommensteuer</strong> an.
+          </div>
+        </CollapsibleCard>
       </div>
 
       {/* UNTERER BEREICH: Alle Eingabe-, Auswahl- & Exportoptionen in Daumenreichweite */}
@@ -502,143 +483,127 @@ export const GuvPanel: React.FC = () => {
         </div>
 
         {/* 5. Zusatzabzüge (SVS, Arbeitsplatzpauschale, Öffi, Korrektureinnahmen) */}
-        <div className="bg-white border border-slate-200 rounded-2xl shadow-2xs overflow-hidden">
-          <button
-            type="button"
-            onClick={() => setDeductionsOpen((p) => !p)}
-            className="w-full p-3.5 flex items-center justify-between text-left hover:bg-slate-50 transition-colors"
-          >
-            <div>
-              <span className="text-xs font-bold text-slate-900 block leading-tight">
-                Zusatzabzüge (auch bei Pauschalierung abziehbar!)
-              </span>
-              <span className="text-[11px] text-slate-500">
-                SVS-Beiträge, Arbeitsplatzpauschale & sonstige Einnahmen
-              </span>
-            </div>
-            {deductionsOpen ? (
-              <ChevronUp size={16} className="text-slate-400 shrink-0" />
-            ) : (
-              <ChevronDown size={16} className="text-slate-400 shrink-0" />
-            )}
-          </button>
-
-          {deductionsOpen && (
-            <div className="p-3.5 pt-2 border-t border-slate-100 space-y-3 bg-slate-50/40">
-              {/* SVS Pflichtbeiträge */}
-              <div>
-                <div className="flex items-center justify-between mb-1">
-                  <label className="font-semibold text-slate-700 text-[11px]">
-                    Bezahlte SVS-Pflichtbeiträge {year} (€)
-                  </label>
-                  {summary.totalCashIncome > 0 && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const approxSvs = Math.round(summary.totalCashIncome * 0.55 * 0.268);
-                        setSvsInput(String(approxSvs));
-                        updateTaxSettings({ svs_paid: approxSvs });
-                      }}
-                      className="text-[10px] font-bold text-[#3138A0] hover:underline"
-                    >
-                      Richtwert (~{Math.round(summary.totalCashIncome * 0.55 * 0.268)} €) einsetzen
-                    </button>
-                  )}
-                </div>
-                <input
-                  type="text"
-                  inputMode="decimal"
-                  value={svsInput}
-                  onChange={(e) => {
-                    setSvsInput(e.target.value);
-                    updateTaxSettings({ svs_paid: parseEuroInput(e.target.value) });
+        <CollapsibleCard
+          title="Zusatzabzüge (auch bei Pauschalierung abziehbar!)"
+          subtitle="SVS-Beiträge, Arbeitsplatzpauschale & sonstige Einnahmen"
+          icon={<Sliders size={16} />}
+          iconBgClassName="bg-emerald-50 text-[#2C7738] border-emerald-100"
+          open={deductionsOpen}
+          onToggle={() => setDeductionsOpen((p) => !p)}
+          bodyClassName="p-3.5 pt-2.5 border-t border-slate-100 space-y-3 bg-slate-50/70"
+        >
+          {/* SVS Pflichtbeiträge */}
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <label className="font-semibold text-slate-700 text-[11px]">
+                Bezahlte SVS-Pflichtbeiträge {year} (€)
+              </label>
+              {summary.totalCashIncome > 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const approxSvs = Math.round(summary.totalCashIncome * 0.55 * 0.268);
+                    setSvsInput(String(approxSvs));
+                    updateTaxSettings({ svs_paid: approxSvs });
                   }}
-                  placeholder="z.B. 1800,00"
-                  className="w-full h-10 px-3 bg-white border border-slate-200 rounded-xl focus:border-[#3138A0] outline-hidden text-xs font-semibold text-slate-900"
-                />
-              </div>
-
-              {/* Arbeitsplatzpauschale (§ 4 Abs. 4 Z 8 EStG) */}
-              <div>
-                <div className="flex items-center justify-between mb-1">
-                  <label className="font-semibold text-slate-700 text-[11px]">
-                    Arbeitsplatzpauschale (§ 4 Abs. 4 Z 8 EStG)
-                  </label>
-                  <span className="text-[10px] text-amber-700 font-semibold">
-                    {year <= 2026 ? 'Bis inkl. 2026 gültig' : 'Ab 2027 gesetzlich entfallen'}
-                  </span>
-                </div>
-                <div className="grid grid-cols-3 gap-1.5">
-                  {(
-                    [
-                      { val: 0, label: 'Keines', sub: '0 €' },
-                      { val: 300, label: 'Klein', sub: '300 € / J.' },
-                      { val: 1200, label: 'Groß', sub: '1.200 € / J.' }
-                    ] as const
-                  ).map((opt) => {
-                    const active =
-                      year <= 2026
-                        ? taxSettings.workplace_allowance === opt.val
-                        : opt.val === 0;
-                    return (
-                      <button
-                        key={opt.val}
-                        type="button"
-                        disabled={year >= 2027 && opt.val > 0}
-                        onClick={() => updateTaxSettings({ workplace_allowance: opt.val })}
-                        className={`py-2 px-2 rounded-xl border text-center transition-all disabled:opacity-40 ${
-                          active
-                            ? 'bg-white border-[#3138A0] text-[#3138A0] font-bold shadow-2xs'
-                            : 'bg-white/70 border-slate-200 text-slate-600'
-                        }`}
-                      >
-                        <span className="block text-[11px] leading-tight">{opt.label}</span>
-                        <span className="block text-[10px] opacity-80">{opt.sub}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* Öffi-Ticket & Sonstige Betriebseinnahmen */}
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="font-semibold text-slate-700 text-[11px] block mb-1">
-                    Öffi-Ticket gesamt (50 % Abzug)
-                  </label>
-                  <input
-                    type="text"
-                    inputMode="decimal"
-                    value={transitInput}
-                    onChange={(e) => {
-                      setTransitInput(e.target.value);
-                      updateTaxSettings({ transit_ticket_full: parseEuroInput(e.target.value) });
-                    }}
-                    placeholder="0,00 €"
-                    className="w-full h-10 px-2.5 bg-white border border-slate-200 rounded-xl focus:border-[#3138A0] outline-hidden text-xs font-medium text-slate-900"
-                  />
-                </div>
-
-                <div>
-                  <label className="font-semibold text-slate-700 text-[11px] block mb-1">
-                    Sonst. Einnahmen {year} (€)
-                  </label>
-                  <input
-                    type="text"
-                    inputMode="decimal"
-                    value={extraIncomeInput}
-                    onChange={(e) => {
-                      setExtraIncomeInput(e.target.value);
-                      updateTaxSettings({ manual_extra_income: parseEuroInput(e.target.value) });
-                    }}
-                    placeholder="Optional (z.B. Barbeleg)"
-                    className="w-full h-10 px-2.5 bg-white border border-slate-200 rounded-xl focus:border-[#3138A0] outline-hidden text-xs font-medium text-slate-900"
-                  />
-                </div>
-              </div>
+                  className="text-[10px] font-bold text-[#3138A0] hover:underline"
+                >
+                  Richtwert (~{Math.round(summary.totalCashIncome * 0.55 * 0.268)} €) einsetzen
+                </button>
+              )}
             </div>
-          )}
-        </div>
+            <input
+              type="text"
+              inputMode="decimal"
+              value={svsInput}
+              onChange={(e) => {
+                setSvsInput(e.target.value);
+                updateTaxSettings({ svs_paid: parseEuroInput(e.target.value) });
+              }}
+              placeholder="z.B. 1800,00"
+              className="w-full h-10 px-3 bg-white border border-slate-200 rounded-xl focus:border-[#3138A0] outline-hidden text-xs font-semibold text-slate-900"
+            />
+          </div>
+
+          {/* Arbeitsplatzpauschale (§ 4 Abs. 4 Z 8 EStG) */}
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <label className="font-semibold text-slate-700 text-[11px]">
+                Arbeitsplatzpauschale (§ 4 Abs. 4 Z 8 EStG)
+              </label>
+              <span className="text-[10px] text-amber-700 font-semibold">
+                {year <= 2026 ? 'Bis inkl. 2026 gültig' : 'Ab 2027 gesetzlich entfallen'}
+              </span>
+            </div>
+            <div className="grid grid-cols-3 gap-1.5">
+              {(
+                [
+                  { val: 0, label: 'Keines', sub: '0 €' },
+                  { val: 300, label: 'Klein', sub: '300 € / J.' },
+                  { val: 1200, label: 'Groß', sub: '1.200 € / J.' }
+                ] as const
+              ).map((opt) => {
+                const active =
+                  year <= 2026
+                    ? taxSettings.workplace_allowance === opt.val
+                    : opt.val === 0;
+                return (
+                  <button
+                    key={opt.val}
+                    type="button"
+                    disabled={year >= 2027 && opt.val > 0}
+                    onClick={() => updateTaxSettings({ workplace_allowance: opt.val })}
+                    className={`py-2 px-2 rounded-xl border text-center transition-all disabled:opacity-40 ${
+                      active
+                        ? 'bg-white border-[#3138A0] text-[#3138A0] font-bold shadow-2xs'
+                        : 'bg-white/70 border-slate-200 text-slate-600'
+                    }`}
+                  >
+                    <span className="block text-[11px] leading-tight">{opt.label}</span>
+                    <span className="block text-[10px] opacity-80">{opt.sub}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Öffi-Ticket & Sonstige Betriebseinnahmen */}
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="font-semibold text-slate-700 text-[11px] block mb-1">
+                Öffi-Ticket gesamt (50 % Abzug)
+              </label>
+              <input
+                type="text"
+                inputMode="decimal"
+                value={transitInput}
+                onChange={(e) => {
+                  setTransitInput(e.target.value);
+                  updateTaxSettings({ transit_ticket_full: parseEuroInput(e.target.value) });
+                }}
+                placeholder="0,00 €"
+                className="w-full h-10 px-2.5 bg-white border border-slate-200 rounded-xl focus:border-[#3138A0] outline-hidden text-xs font-medium text-slate-900"
+              />
+            </div>
+
+            <div>
+              <label className="font-semibold text-slate-700 text-[11px] block mb-1">
+                Sonst. Einnahmen {year} (€)
+              </label>
+              <input
+                type="text"
+                inputMode="decimal"
+                value={extraIncomeInput}
+                onChange={(e) => {
+                  setExtraIncomeInput(e.target.value);
+                  updateTaxSettings({ manual_extra_income: parseEuroInput(e.target.value) });
+                }}
+                placeholder="Optional (z.B. Barbeleg)"
+                className="w-full h-10 px-2.5 bg-white border border-slate-200 rounded-xl focus:border-[#3138A0] outline-hidden text-xs font-medium text-slate-900"
+              />
+            </div>
+          </div>
+        </CollapsibleCard>
 
         {/* 6. Steuerjahr, Methoden-Auswahl & PDF-Export */}
         <div className="p-3.5 bg-white border border-slate-200 rounded-2xl shadow-2xs space-y-3">

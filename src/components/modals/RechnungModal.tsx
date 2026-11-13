@@ -1,7 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { InvoiceLineItem, useApp } from '../../context/AppContext.tsx';
+import { InvoiceLineItem, WorkRecord, useApp } from '../../context/AppContext.tsx';
 import { InvoicePaperPreview } from '../common/InvoicePaperPreview.tsx';
+import { CollapsibleCard } from '../common/CollapsibleCard.tsx';
 import {
+  DEFAULT_INVOICE_INTRO_TEXT,
+  DEFAULT_PAUSCHAL_INTRO_TEXT,
   HAFNER_LOGO_URL,
   ISSUER_CONTACT_PERSON,
   ResolvedInvoiceData,
@@ -23,21 +26,64 @@ import {
   AlertTriangle,
   Car,
   Check,
-  ChevronDown,
-  ChevronUp,
+  Edit3,
   FileText,
   Hash,
   Home,
+  Layers,
   Mail,
   Minus,
+  Pencil,
   Plus,
   Receipt,
   RotateCcw,
+  Trash2,
   User,
   X
 } from 'lucide-react';
 
 type PaymentTermChoice = '0' | '7' | '14' | '30' | 'cash';
+
+type IntroTemplateKey = 'standard' | 'pauschal' | 'sammel' | 'objekt' | 'kurz';
+
+const INTRO_TEMPLATES: Array<{
+  key: IntroTemplateKey;
+  label: string;
+  text: string;
+}> = [
+  {
+    key: 'standard',
+    label: 'Standard',
+    text: DEFAULT_INVOICE_INTRO_TEXT
+  },
+  {
+    key: 'pauschal',
+    label: 'Pauschal',
+    text: DEFAULT_PAUSCHAL_INTRO_TEXT
+  },
+  {
+    key: 'sammel',
+    label: 'Sammelrechnung',
+    text: 'Sehr geehrte Damen und Herren,\nvielen Dank für die gute Zusammenarbeit!\nHiermit rechne ich die im Leistungszeitraum durchgeführten Arbeiten gesammelt ab:'
+  },
+  {
+    key: 'objekt',
+    label: 'Objekt / Sub',
+    text: 'Sehr geehrte Damen und Herren,\nhiermit stelle ich Ihnen die durchgeführten Objekt- und Grünraumarbeiten gemäß Aufstellung in Rechnung:'
+  },
+  {
+    key: 'kurz',
+    label: 'Kurzfassung',
+    text: 'Sehr geehrte Damen und Herren,\nvielen Dank für Ihren Auftrag. Abrechnung der durchgeführten Leistungen:'
+  }
+];
+
+const PAUSCHAL_TITLE_PRESETS = [
+  'Garten- & Grünraumpflege pauschal',
+  'Dauerpflege / Objektbetreuung pauschal',
+  'Sammelabrechnung durchgeführte Arbeiten pauschal',
+  'Außenanlagen- & Winterdienstbetreuung pauschal'
+];
 
 const MONTH_NAMES_DE = [
   'Jänner',
@@ -58,6 +104,16 @@ function parsePositiveDecimal(raw: string): number {
   const cleaned = raw.replace(',', '.').replace(/[^0-9.]/g, '');
   const parsed = parseFloat(cleaned);
   return Number.isNaN(parsed) || parsed < 0 ? 0 : parsed;
+}
+
+function parseSignedDecimalInput(raw: string): number {
+  const trimmed = raw.trim();
+  if (!trimmed) return 0;
+  const isNeg = trimmed.startsWith('-');
+  const cleaned = trimmed.replace(',', '.').replace(/[^0-9.]/g, '');
+  const parsed = parseFloat(cleaned);
+  if (Number.isNaN(parsed)) return 0;
+  return isNeg ? -parsed : parsed;
 }
 
 function getMonthLabelsFromIso(isoDate: string): { currentMonth: string; prevMonth: string } {
@@ -86,6 +142,7 @@ export const RechnungModal: React.FC = () => {
     preselectedWorkRecordIds,
     setPreselectedWorkRecordIds,
     createInvoiceFromRecords,
+    updateWorkRecord,
     setSelectedInvoiceId,
     setSendingInvoiceId,
     navigate
@@ -105,6 +162,40 @@ export const RechnungModal: React.FC = () => {
   const [showPdfPreview, setShowPdfPreview] = useState(false);
   const wasOpenRef = React.useRef(false);
 
+  // Direktes Bearbeiten einer offenen Arbeit durch Antippen in der Rechnungsvorbereitung
+  const [editingWorkId, setEditingWorkId] = useState<string | null>(null);
+  const [editWorkTitle, setEditWorkTitle] = useState<string>('');
+  const [editWorkDate, setEditWorkDate] = useState<string>('');
+  const [editWorkHoursStr, setEditWorkHoursStr] = useState<string>('');
+  const [editWorkRateStr, setEditWorkRateStr] = useState<string>('');
+  const [editWorkAmountStr, setEditWorkAmountStr] = useState<string>('');
+  const [editWorkAmountManual, setEditWorkAmountManual] = useState<boolean>(false);
+
+  // Pauschalherstellung & Zusammenfassen mehrerer Rechnungen
+  const [isPauschalMode, setIsPauschalMode] = useState<boolean>(false);
+  const [pauschalSectionOpen, setPauschalSectionOpen] = useState<boolean>(false);
+  const [selectedMergeInvoiceIds, setSelectedMergeInvoiceIds] = useState<string[]>([]);
+  const [showAllInvoicesForMerge, setShowAllInvoicesForMerge] = useState<boolean>(false);
+  const [pauschalDescription, setPauschalDescription] = useState<string>(
+    'Garten- & Grünraumpflege pauschal'
+  );
+  const [pauschalAmountStr, setPauschalAmountStr] = useState<string>('');
+  const [pauschalAmountManuallyEdited, setPauschalAmountManuallyEdited] = useState<boolean>(false);
+
+  // Erweiterte Auswahl & Direkt editierbarer Rechnungstext + Positionen
+  const [textOptionsOpen, setTextOptionsOpen] = useState<boolean>(false);
+  const [activeIntroTemplate, setActiveIntroTemplate] = useState<IntroTemplateKey>('standard');
+  const [customSubjectText, setCustomSubjectText] = useState<string>('');
+  const [customIntroText, setCustomIntroText] = useState<string>(DEFAULT_INVOICE_INTRO_TEXT);
+  const [customPaymentTermsText, setCustomPaymentTermsText] = useState<string>('');
+  const [customClosingText, setCustomClosingText] = useState<string>('');
+
+  const [positionsEditorOpen, setPositionsEditorOpen] = useState<boolean>(false);
+  const [lineItemOverrides, setLineItemOverrides] = useState<
+    Record<string, Partial<InvoiceLineItem>>
+  >({});
+  const [customFreeItems, setCustomFreeItems] = useState<InvoiceLineItem[]>([]);
+
   // Zusatzpositionen, Pauschalen & Nachlass
   const [extrasOpen, setExtrasOpen] = useState(false);
   const [flatTravelEuro, setFlatTravelEuro] = useState<number>(0);
@@ -122,9 +213,11 @@ export const RechnungModal: React.FC = () => {
   const [discountPercent, setDiscountPercent] = useState<number>(0);
 
   useEffect(() => {
-    const isOpen = activeModal === 'RECHNUNG_VORBEREITEN';
+    const isOpen =
+      activeModal === 'RECHNUNG_VORBEREITEN' || activeModal === 'PAUSCHALRECHNUNG_VORBEREITEN';
     if (isOpen && !wasOpenRef.current) {
       wasOpenRef.current = true;
+      const startInPauschal = activeModal === 'PAUSCHALRECHNUNG_VORBEREITEN';
       const todayIso = getTodayLocalIso();
       let initialCustId = '';
 
@@ -169,6 +262,7 @@ export const RechnungModal: React.FC = () => {
         setSelectedRecordIds(initialAvailable);
       }
 
+      // Kundennummer direkt aus dem Kundenkonto übernehmen
       setCustomerNumberStr(resolveCustomerNumber(initialCustId, customers));
       setIssueDate(todayIso);
       setInvoiceNumberStr(computeNextInvoiceNumber(invoices, todayIso).formatted);
@@ -176,6 +270,28 @@ export const RechnungModal: React.FC = () => {
       setPaymentChoice('14');
       setCustomServicePeriod('');
       setShowPdfPreview(false);
+      setEditingWorkId(null);
+
+      setIsPauschalMode(startInPauschal);
+      setPauschalSectionOpen(startInPauschal);
+      setSelectedMergeInvoiceIds([]);
+      setShowAllInvoicesForMerge(false);
+      setPauschalDescription('Garten- & Grünraumpflege pauschal');
+      setPauschalAmountStr('');
+      setPauschalAmountManuallyEdited(false);
+
+      setTextOptionsOpen(false);
+      setActiveIntroTemplate(startInPauschal ? 'pauschal' : 'standard');
+      setCustomSubjectText('');
+      setCustomIntroText(
+        startInPauschal ? DEFAULT_PAUSCHAL_INTRO_TEXT : DEFAULT_INVOICE_INTRO_TEXT
+      );
+      setCustomPaymentTermsText('');
+      setCustomClosingText('');
+
+      setPositionsEditorOpen(false);
+      setLineItemOverrides({});
+      setCustomFreeItems([]);
 
       setExtrasOpen(false);
       setFlatTravelEuro(0);
@@ -190,6 +306,7 @@ export const RechnungModal: React.FC = () => {
       setDiscountPercent(0);
     } else if (!isOpen && wasOpenRef.current) {
       wasOpenRef.current = false;
+      setEditingWorkId(null);
       if (preselectedWorkRecordIds.length > 0) {
         setPreselectedWorkRecordIds([]);
       }
@@ -204,16 +321,42 @@ export const RechnungModal: React.FC = () => {
     setPreselectedWorkRecordIds
   ]);
 
-  const autoNextInvoice = useMemo(
-    () => computeNextInvoiceNumber(invoices, issueDate),
-    [invoices, issueDate]
+  // Bestehende Rechnungen, die in eine Pauschalrechnung zusammengefasst werden können
+  const mergeableInvoices = useMemo(
+    () =>
+      invoices.filter(
+        (inv) =>
+          !inv.is_storno &&
+          inv.status !== 'cancelled' &&
+          (showAllInvoicesForMerge ||
+            inv.customer_id === selectedCustomerId ||
+            selectedMergeInvoiceIds.includes(inv.id))
+      ),
+    [invoices, selectedCustomerId, showAllInvoicesForMerge, selectedMergeInvoiceIds]
   );
 
-  // Wenn das Jahr beim Rechnungsdatum wechselt und die Nummer nicht manuell überschrieben wurde, automatisch anpassen
+  const selectedMergeInvoices = useMemo(
+    () => mergeableInvoices.filter((inv) => selectedMergeInvoiceIds.includes(inv.id)),
+    [mergeableInvoices, selectedMergeInvoiceIds]
+  );
+
+  const invoicesForNextNumber = useMemo(
+    () =>
+      selectedMergeInvoiceIds.length > 0
+        ? invoices.filter((inv) => !selectedMergeInvoiceIds.includes(inv.id))
+        : invoices,
+    [invoices, selectedMergeInvoiceIds]
+  );
+
+  const autoNextInvoice = useMemo(
+    () => computeNextInvoiceNumber(invoicesForNextNumber, issueDate),
+    [invoicesForNextNumber, issueDate]
+  );
+
   const handleIssueDateChange = (nextDate: string) => {
     setIssueDate(nextDate);
     if (!invoiceNumManuallyChanged && nextDate) {
-      setInvoiceNumberStr(computeNextInvoiceNumber(invoices, nextDate).formatted);
+      setInvoiceNumberStr(computeNextInvoiceNumber(invoicesForNextNumber, nextDate).formatted);
     }
   };
 
@@ -260,13 +403,13 @@ export const RechnungModal: React.FC = () => {
 
   const isDuplicateInvoiceNumber = useMemo(
     () =>
-      invoices.some(
+      invoicesForNextNumber.some(
         (inv) =>
           !inv.is_storno &&
           inv.status !== 'cancelled' &&
           inv.invoice_number.trim().toLowerCase() === effectiveInvoiceNumber.toLowerCase()
       ),
-    [invoices, effectiveInvoiceNumber]
+    [invoicesForNextNumber, effectiveInvoiceNumber]
   );
 
   const totalOpenNonLcrCount = useMemo(
@@ -292,6 +435,25 @@ export const RechnungModal: React.FC = () => {
     () => availableRecords.filter((r) => selectedRecordIds.includes(r.id)),
     [availableRecords, selectedRecordIds]
   );
+
+  // Arbeitsaufzeichnungen, die bereits an ausgewählte zusammenzufassende Rechnungen gebunden sind
+  const recordsFromMergedInvoices = useMemo(() => {
+    if (selectedMergeInvoices.length === 0) return [];
+    const idSet = new Set<string>(selectedMergeInvoices.flatMap((inv) => inv.work_record_ids));
+    return workRecords.filter(
+      (w) =>
+        idSet.has(w.id) ||
+        (w.settlement_id !== null && selectedMergeInvoiceIds.includes(w.settlement_id))
+    );
+  }, [selectedMergeInvoices, selectedMergeInvoiceIds, workRecords]);
+
+  // Alle betroffenen Arbeitsaufzeichnungen (offene gewählte + jene aus zusammengefassten Rechnungen)
+  const allCombinedRecords = useMemo(() => {
+    const map = new Map<string, WorkRecord>();
+    for (const r of recordsFromMergedInvoices) map.set(r.id, r);
+    for (const r of selectedRecords) map.set(r.id, r);
+    return Array.from(map.values()).sort((a, b) => a.work_date.localeCompare(b.work_date));
+  }, [recordsFromMergedInvoices, selectedRecords]);
 
   const positiveExtraItems = useMemo<InvoiceLineItem[]>(() => {
     const items: InvoiceLineItem[] = [];
@@ -372,15 +534,105 @@ export const RechnungModal: React.FC = () => {
     smallMatEuroStr
   ]);
 
-  const baseLineItems = useMemo(
-    () =>
-      buildLineItemsFromRecords(selectedRecords, positiveExtraItems, {
+  // Referenz-Summe aus offenen Arbeiten + gewählten zusammenzufassenden Rechnungen
+  const calculatedReferenceSum = useMemo(() => {
+    const openItems = buildLineItemsFromRecords(selectedRecords, [], {
+      billingCustomerId: selectedCustomerId,
+      customers,
+      properties
+    });
+    const openSum = openItems.reduce((s, li) => s + li.amount, 0);
+    const mergedInvSum = selectedMergeInvoices.reduce((s, inv) => s + inv.total_amount, 0);
+    return Math.round((openSum + mergedInvSum) * 100) / 100;
+  }, [selectedRecords, selectedMergeInvoices, selectedCustomerId, customers, properties]);
+
+  // Wenn die Referenzsumme sich ändert und der Pauschalbetrag noch nicht manuell überschrieben wurde, automatisch synchronisieren
+  useEffect(() => {
+    if (!pauschalAmountManuallyEdited) {
+      if (calculatedReferenceSum > 0) {
+        setPauschalAmountStr(
+          calculatedReferenceSum.toLocaleString('de-DE', {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2
+          })
+        );
+      } else if (!pauschalAmountStr) {
+        setPauschalAmountStr('250,00');
+      }
+    }
+  }, [calculatedReferenceSum, pauschalAmountManuallyEdited, pauschalAmountStr]);
+
+  const baseLineItems = useMemo(() => {
+    let generated: InvoiceLineItem[] = [];
+
+    if (isPauschalMode) {
+      const lumpAmount =
+        pauschalAmountStr.trim() !== ''
+          ? parseSignedDecimalInput(pauschalAmountStr)
+          : calculatedReferenceSum;
+      const desc = pauschalDescription.trim() || 'Garten- & Grünraumpflege pauschal';
+      generated = [
+        {
+          id: 'li-pauschal-main',
+          description: desc,
+          quantity_label: '1,00 Psch',
+          unit_price_label: formatEuro(lumpAmount),
+          amount: Math.round(lumpAmount * 100) / 100
+        },
+        ...positiveExtraItems
+      ];
+    } else {
+      // Standard-Modus: Einzelpositionen aus offenen Arbeiten (+ ggf. Positionen aus zusammengefassten Rechnungen)
+      const recordItems = buildLineItemsFromRecords(selectedRecords, [], {
         billingCustomerId: selectedCustomerId,
         customers,
         properties
-      }),
-    [selectedRecords, positiveExtraItems, selectedCustomerId, customers, properties]
-  );
+      });
+      const mergedItems: InvoiceLineItem[] = selectedMergeInvoices.flatMap((inv) =>
+        inv.line_items && inv.line_items.length > 0
+          ? inv.line_items.map((li, idx) => ({
+              ...li,
+              id: `merged-${inv.id}-${idx}`
+            }))
+          : [
+              {
+                id: `merged-${inv.id}-0`,
+                description: `Leistungen lt. ${inv.invoice_number} (${formatDateDE(inv.issue_date)})`,
+                quantity_label: '1,00 Psch',
+                unit_price_label: formatEuro(inv.total_amount),
+                amount: inv.total_amount
+              }
+            ]
+      );
+      generated = [...mergedItems, ...recordItems, ...positiveExtraItems];
+    }
+
+    return [...generated, ...customFreeItems].map((item) => {
+      const ov = lineItemOverrides[item.id];
+      if (!ov) return item;
+      return {
+        ...item,
+        description: ov.description !== undefined ? ov.description : item.description,
+        quantity_label: ov.quantity_label !== undefined ? ov.quantity_label : item.quantity_label,
+        unit_price_label:
+          ov.unit_price_label !== undefined ? ov.unit_price_label : item.unit_price_label,
+        amount: ov.amount !== undefined ? ov.amount : item.amount
+      };
+    });
+  }, [
+    isPauschalMode,
+    pauschalAmountStr,
+    calculatedReferenceSum,
+    pauschalDescription,
+    positiveExtraItems,
+    selectedRecords,
+    selectedCustomerId,
+    customers,
+    properties,
+    selectedMergeInvoices,
+    customFreeItems,
+    lineItemOverrides
+  ]);
 
   const baseSubtotal = useMemo(
     () => Math.round(baseLineItems.reduce((sum, li) => sum + li.amount, 0) * 100) / 100,
@@ -416,8 +668,8 @@ export const RechnungModal: React.FC = () => {
   );
 
   const autoServicePeriod = useMemo(
-    () => computeServicePeriod(selectedRecords, issueDate),
-    [selectedRecords, issueDate]
+    () => computeServicePeriod(allCombinedRecords, issueDate),
+    [allCombinedRecords, issueDate]
   );
 
   const { currentMonth: currentMonthLabel, prevMonth: prevMonthLabel } = useMemo(
@@ -432,10 +684,15 @@ export const RechnungModal: React.FC = () => {
   const isPaidInCash = paymentChoice === 'cash';
   const dueDays = isPaidInCash ? 0 : parseInt(paymentChoice, 10);
   const dueIso = addDaysIso(issueDate, dueDays);
-  const paymentTermsClause = buildPaymentTermsClause(dueDays, isPaidInCash);
+  const autoPaymentTermsClause = buildPaymentTermsClause(dueDays, isPaidInCash);
+  const effectivePaymentTerms = customPaymentTermsText.trim() || autoPaymentTermsClause;
 
   const effectiveCustomerNumber =
     customerNumberStr.trim() || resolveCustomerNumber(selectedCustomerId, customers);
+
+  const defaultSubjectPlaceholder = isPauschalMode
+    ? `Pauschalrechnung Nr. ${effectiveInvoiceNumber}`
+    : `Rechnungs Nr. ${effectiveInvoiceNumber}`;
 
   const previewData: ResolvedInvoiceData = {
     invoiceNumber: effectiveInvoiceNumber,
@@ -451,15 +708,24 @@ export const RechnungModal: React.FC = () => {
     recipientCity: selectedCustomer?.city || '',
     recipientCountry: 'Österreich',
     servicePeriod: effectiveServicePeriod,
+    subjectText: customSubjectText.trim() || undefined,
+    introText: customIntroText.trim() || undefined,
+    closingText: customClosingText.trim() || undefined,
+    isPauschal: isPauschalMode,
     lineItems: draftLineItems,
     totalAmount,
     isStorno: false,
     stornoReason: null,
-    paymentTermsText: paymentTermsClause,
+    paymentTermsText: effectivePaymentTerms,
     isPaidInCash
   };
 
-  if (activeModal !== 'RECHNUNG_VORBEREITEN') return null;
+  if (
+    activeModal !== 'RECHNUNG_VORBEREITEN' &&
+    activeModal !== 'PAUSCHALRECHNUNG_VORBEREITEN'
+  ) {
+    return null;
+  }
 
   const canIssue = selectedCustomerId !== '' && draftLineItems.length > 0;
   const todayIso = getTodayLocalIso();
@@ -467,6 +733,12 @@ export const RechnungModal: React.FC = () => {
   const toggleRecord = (id: string) => {
     setSelectedRecordIds((prev) =>
       prev.includes(id) ? prev.filter((r) => r !== id) : [...prev, id]
+    );
+  };
+
+  const toggleMergeInvoice = (invId: string) => {
+    setSelectedMergeInvoiceIds((prev) =>
+      prev.includes(invId) ? prev.filter((id) => id !== invId) : [...prev, invId]
     );
   };
 
@@ -478,16 +750,153 @@ export const RechnungModal: React.FC = () => {
     }
   };
 
+  // Öffnet den Direkt-Editor für eine offene Arbeit direkt in der Rechnungs-Vorbereitung
+  const startInlineEditWork = (rec: WorkRecord) => {
+    if (editingWorkId === rec.id) {
+      setEditingWorkId(null);
+      return;
+    }
+    setEditingWorkId(rec.id);
+    setEditWorkTitle(rec.title);
+    setEditWorkDate(rec.work_date);
+    setEditWorkHoursStr(String(rec.hours).replace('.', ','));
+    setEditWorkRateStr(rec.hourly_rate !== null ? String(rec.hourly_rate).replace('.', ',') : '');
+    setEditWorkAmountStr(
+      rec.accounting_amount !== null ? String(rec.accounting_amount).replace('.', ',') : ''
+    );
+    setEditWorkAmountManual(rec.hourly_rate === null && rec.accounting_amount !== null);
+  };
+
+  const handleInlineWorkHoursOrRateChange = (nextHoursRaw: string, nextRateRaw: string) => {
+    setEditWorkHoursStr(nextHoursRaw);
+    setEditWorkRateStr(nextRateRaw);
+    const h = parsePositiveDecimal(nextHoursRaw);
+    const hasRate = nextRateRaw.trim() !== '';
+    if (hasRate && !editWorkAmountManual) {
+      const r = parsePositiveDecimal(nextRateRaw);
+      const calc = Math.round(h * r * 100) / 100;
+      setEditWorkAmountStr(String(calc).replace('.', ','));
+    }
+  };
+
+  const saveInlineEditWork = (rec: WorkRecord) => {
+    const nextHours = parsePositiveDecimal(editWorkHoursStr) || rec.hours;
+    const hasRate = editWorkRateStr.trim() !== '';
+    const nextRate = hasRate ? parsePositiveDecimal(editWorkRateStr) : null;
+    const matCost = rec.material_cost || 0;
+
+    let nextAccountingAmount: number | null = null;
+    if (editWorkAmountManual && editWorkAmountStr.trim() !== '') {
+      nextAccountingAmount =
+        Math.round(parsePositiveDecimal(editWorkAmountStr) * 100) / 100;
+    } else if (nextRate !== null) {
+      nextAccountingAmount = Math.round((nextHours * nextRate + matCost) * 100) / 100;
+    } else if (editWorkAmountStr.trim() !== '') {
+      nextAccountingAmount =
+        Math.round(parsePositiveDecimal(editWorkAmountStr) * 100) / 100;
+    }
+
+    updateWorkRecord(rec.id, {
+      title: editWorkTitle.trim() || rec.title,
+      work_date: editWorkDate || rec.work_date,
+      hours: nextHours,
+      hourly_rate: editWorkAmountManual ? null : nextRate,
+      accounting_amount: nextAccountingAmount
+    });
+
+    if (!selectedRecordIds.includes(rec.id)) {
+      setSelectedRecordIds((prev) => [...prev, rec.id]);
+    }
+    setEditingWorkId(null);
+  };
+
+  const handleGeneratePauschalSummaryDescription = () => {
+    const parts: string[] = [];
+    if (allCombinedRecords.length > 0) {
+      const uniqueTitles = Array.from(new Set(allCombinedRecords.map((r) => r.title)));
+      const dates = allCombinedRecords.map((r) => formatDateDE(r.work_date));
+      const dateSummary =
+        dates.length <= 3
+          ? dates.join(', ')
+          : `${dates[0]} – ${dates[dates.length - 1]} (${dates.length} Einsätze)`;
+      parts.push(`${uniqueTitles.join(', ')} (${dateSummary})`);
+    }
+    if (selectedMergeInvoices.length > 0) {
+      const invNums = selectedMergeInvoices.map((i) => i.invoice_number).join(', ');
+      parts.push(`Zusammenfassung aus ${invNums}`);
+    }
+    setPauschalDescription(
+      parts.length > 0 ? `Pauschalabrechnung: ${parts.join(' · ')}` : 'Garten- & Grünraumpflege pauschal'
+    );
+  };
+
+  const handleAddFreeLineItem = () => {
+    const newItem: InvoiceLineItem = {
+      id: `free-${Date.now()}`,
+      description: 'Zusatzleistung / Position',
+      quantity_label: '1,00 Psch',
+      unit_price_label: '50,00 EUR',
+      amount: 50
+    };
+    setCustomFreeItems((prev) => [...prev, newItem]);
+    setPositionsEditorOpen(true);
+  };
+
+  const handleUpdateLineItemOverride = (
+    id: string,
+    patch: Partial<InvoiceLineItem>
+  ) => {
+    if (id.startsWith('free-')) {
+      setCustomFreeItems((prev) =>
+        prev.map((item) => (item.id === id ? { ...item, ...patch } : item))
+      );
+      return;
+    }
+    setLineItemOverrides((prev) => ({
+      ...prev,
+      [id]: {
+        ...(prev[id] || {}),
+        ...patch
+      }
+    }));
+  };
+
+  const handleRemoveFreeLineItem = (id: string) => {
+    setCustomFreeItems((prev) => prev.filter((item) => item.id !== id));
+  };
+
+  const handleSwitchPauschalMode = (enablePauschal: boolean) => {
+    setIsPauschalMode(enablePauschal);
+    if (enablePauschal) {
+      setPauschalSectionOpen(true);
+      if (activeIntroTemplate === 'standard' && customIntroText === DEFAULT_INVOICE_INTRO_TEXT) {
+        setActiveIntroTemplate('pauschal');
+        setCustomIntroText(DEFAULT_PAUSCHAL_INTRO_TEXT);
+      }
+    } else {
+      if (activeIntroTemplate === 'pauschal' && customIntroText === DEFAULT_PAUSCHAL_INTRO_TEXT) {
+        setActiveIntroTemplate('standard');
+        setCustomIntroText(DEFAULT_INVOICE_INTRO_TEXT);
+      }
+    }
+  };
+
   const handleCreateInvoice = (openSendSheetAfter: boolean) => {
     if (!canIssue) return;
     const inv = createInvoiceFromRecords(selectedCustomerId, selectedRecordIds, {
       extraItems: allExtraItems,
+      customLineItems: draftLineItems,
       issueDate,
       servicePeriod: effectiveServicePeriod,
       invoiceNumber: effectiveInvoiceNumber,
       dueDays,
       customerNumber: effectiveCustomerNumber,
-      paymentTermsText: paymentTermsClause,
+      paymentTermsText: effectivePaymentTerms,
+      subjectText: customSubjectText.trim() || undefined,
+      introText: customIntroText.trim() || undefined,
+      closingText: customClosingText.trim() || undefined,
+      isPauschal: isPauschalMode,
+      replaceInvoiceIds: selectedMergeInvoiceIds,
       paidInCash: isPaidInCash
     });
     setPreselectedWorkRecordIds([]);
@@ -506,13 +915,14 @@ export const RechnungModal: React.FC = () => {
       : `${dueDays} Tage Zahlungsziel`;
 
   const activeExtraCount = allExtraItems.length;
-  const extraDeltaSum = Math.round(allExtraItems.reduce((s, item) => s + item.amount, 0) * 100) / 100;
+  const extraDeltaSum =
+    Math.round(allExtraItems.reduce((s, item) => s + item.amount, 0) * 100) / 100;
 
   return (
     <div className="absolute inset-0 z-50 bg-black/40 backdrop-blur-2xs flex flex-col justify-end animate-fade-in">
       <div className="flex-1" onClick={() => setActiveModal(null)} />
 
-      <div className="bg-white rounded-t-3xl border-t border-slate-200 shadow-2xl p-4 max-h-[93%] flex flex-col animate-slide-up">
+      <div className="bg-white rounded-t-3xl border-t border-slate-200 shadow-2xl p-4 max-h-[94%] flex flex-col animate-slide-up">
         {/* Header mit Original-Logo & Live-Rechnungsnummer */}
         <div className="flex items-center justify-between pb-2.5 border-b border-slate-100">
           <div className="flex items-center gap-2.5 min-w-0">
@@ -524,14 +934,14 @@ export const RechnungModal: React.FC = () => {
             <div className="min-w-0">
               <div className="flex items-center gap-1.5">
                 <h2 className="text-base font-bold text-slate-900 leading-tight truncate">
-                  Rechnung vorbereiten
+                  {isPauschalMode ? 'Pauschalrechnung' : 'Rechnung vorbereiten'}
                 </h2>
                 <span className="px-1.5 py-0.5 rounded-md bg-indigo-50 text-[#3138A0] font-bold text-[10px] shrink-0">
                   {effectiveInvoiceNumber}
                 </span>
               </div>
               <p className="text-[11px] text-slate-500 truncate">
-                Hafner Grünraum Handwerk · {paymentSubtitle}
+                Kd.-Nr. {effectiveCustomerNumber} · {paymentSubtitle}
               </p>
             </div>
           </div>
@@ -569,31 +979,240 @@ export const RechnungModal: React.FC = () => {
             </div>
           </div>
         ) : (
-          /* Entwurfs-Ansicht: Übersicht oben, alle Eingabeoptionen im unteren Bereich (Pixel 10 Pro) */
+          /* Entwurfs-Ansicht: Übersicht oben, alle Optionen übersichtlich darunter (Pixel 10 Pro) */
           <div className="flex-1 overflow-y-auto py-3 flex flex-col gap-3 text-xs text-slate-700 overscroll-contain">
-            {/* OBEN: Übersicht (Gesamtbetrag & Rechnungspositionen / Offene Arbeiten) */}
-            <div className="space-y-3">
-              {/* Gesamtbetrag */}
-              <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between">
+            {/* OBEN: Gesamtbetrag & Modus-Umschalter (Einzelabrechnung vs. Pauschalherstellung) */}
+            <div className="space-y-2.5">
+              <div className="p-3 bg-slate-50 border border-slate-200 rounded-2xl flex items-center justify-between gap-2">
                 <div>
-                  <span className="font-semibold text-slate-800 block">Gesamtbetrag brutto:</span>
+                  <span className="font-bold text-slate-900 block">
+                    {isPauschalMode ? 'Pauschalbetrag brutto:' : 'Gesamtbetrag brutto:'}
+                  </span>
                   <span className="text-[10px] text-slate-500">
                     Gem. §6 Abs. 1 Z 27 UStG 1994 ·{' '}
                     {isPaidInCash ? 'Bar bezahlt' : `Fällig bis ${formatDateDE(dueIso)}`}
                   </span>
                 </div>
-                <span className="text-base font-bold text-[#B4470B] shrink-0">
+                <span className="text-base font-bold text-[#B4470B] shrink-0 tabular-nums">
                   {formatEuro(totalAmount)}
                 </span>
               </div>
 
-              {/* Offene Arbeiten (Mehrfachauswahl) */}
+              {/* 1-Tipp Umschalter: Einzelpositionen vs. Pauschalherstellung */}
+              <div className="grid grid-cols-2 gap-1.5 p-1 bg-slate-100 rounded-2xl">
+                <button
+                  type="button"
+                  onClick={() => handleSwitchPauschalMode(false)}
+                  className={`h-9 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all ${
+                    !isPauschalMode
+                      ? 'bg-white text-[#3138A0] shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <Receipt size={14} />
+                  <span>Einzelpositionen</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSwitchPauschalMode(true)}
+                  className={`h-9 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all ${
+                    isPauschalMode
+                      ? 'bg-[#3138A0] text-white shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <Layers size={14} />
+                  <span>Pauschalherstellung</span>
+                </button>
+              </div>
+
+              {/* PAUSCHALHERSTELLUNG & MEHRERE RECHNUNGEN ZUSAMMENFASSEN */}
+              {(isPauschalMode || selectedMergeInvoiceIds.length > 0) && (
+                <CollapsibleCard
+                  title="Pauschalrechnung & Rechnungen bündeln"
+                  subtitle={
+                    selectedMergeInvoiceIds.length > 0
+                      ? `${selectedMergeInvoiceIds.length} Rechnungen + ${selectedRecordIds.length} Arbeiten → ${allCombinedRecords.length} als abgerechnet`
+                      : 'Pauschalbetrag festlegen oder mehrere Rechnungen zusammenfassen'
+                  }
+                  icon={<Layers size={16} />}
+                  iconBgClassName="bg-indigo-50 text-[#3138A0] border-indigo-100"
+                  open={pauschalSectionOpen}
+                  onToggle={() => setPauschalSectionOpen((p) => !p)}
+                >
+                  <div className="space-y-3 text-xs">
+                    {/* Pauschalbetrag & Bezeichnung */}
+                    {isPauschalMode && (
+                      <div className="space-y-2.5">
+                        <div className="grid grid-cols-12 gap-2 items-end">
+                          <div className="col-span-7">
+                            <label className="text-[11px] font-bold text-slate-700 block mb-1">
+                              Pauschalbetrag (€)
+                            </label>
+                            <input
+                              type="text"
+                              inputMode="decimal"
+                              value={pauschalAmountStr}
+                              onChange={(e) => {
+                                setPauschalAmountStr(e.target.value);
+                                setPauschalAmountManuallyEdited(true);
+                              }}
+                              placeholder="250,00"
+                              className="w-full h-10 px-3 bg-white border border-indigo-200 rounded-xl focus:border-[#3138A0] outline-hidden text-sm font-bold text-[#B4470B]"
+                            />
+                          </div>
+                          <div className="col-span-5">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setPauschalAmountManuallyEdited(false);
+                                setPauschalAmountStr(
+                                  calculatedReferenceSum.toLocaleString('de-DE', {
+                                    minimumFractionDigits: 2,
+                                    maximumFractionDigits: 2
+                                  })
+                                );
+                              }}
+                              className="w-full h-10 px-2 bg-indigo-50 hover:bg-indigo-100 text-[#3138A0] font-bold text-[11px] rounded-xl border border-indigo-200 transition-colors"
+                            >
+                              Summe ({calculatedReferenceSum.toFixed(0)} €)
+                            </button>
+                          </div>
+                        </div>
+
+                        <div>
+                          <div className="flex items-center justify-between mb-1">
+                            <label className="text-[11px] font-bold text-slate-700">
+                              Pauschal-Bezeichnung auf Rechnung
+                            </label>
+                            <button
+                              type="button"
+                              onClick={handleGeneratePauschalSummaryDescription}
+                              className="text-[10px] font-bold text-[#3138A0] hover:underline"
+                            >
+                              Aus Auswahl erzeugen
+                            </button>
+                          </div>
+                          <div className="flex flex-wrap gap-1 mb-1.5">
+                            {PAUSCHAL_TITLE_PRESETS.map((preset) => (
+                              <button
+                                key={preset}
+                                type="button"
+                                onClick={() => setPauschalDescription(preset)}
+                                className={`px-2 py-1 rounded-lg border text-[10px] font-semibold transition-colors ${
+                                  pauschalDescription === preset
+                                    ? 'bg-[#3138A0] border-[#3138A0] text-white'
+                                    : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-100'
+                                }`}
+                              >
+                                {preset}
+                              </button>
+                            ))}
+                          </div>
+                          <textarea
+                            rows={2}
+                            value={pauschalDescription}
+                            onChange={(e) => setPauschalDescription(e.target.value)}
+                            className="w-full p-2.5 bg-white border border-slate-200 rounded-xl focus:border-[#3138A0] outline-hidden text-xs font-medium text-slate-900 resize-none"
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Mehrere bestehende Rechnungen auswählen & zu einer Pauschalrechnung bündeln */}
+                    <div className="pt-2 border-t border-slate-200/80 space-y-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <div>
+                          <span className="font-bold text-slate-800 block text-[11px]">
+                            Aus bestehenden Rechnungen zusammenfassen ({selectedMergeInvoiceIds.length})
+                          </span>
+                          <span className="text-[10px] text-slate-500 block">
+                            Arbeiten daraus werden als abgerechnet markiert & einsortiert
+                          </span>
+                        </div>
+                        {invoices.filter((i) => !i.is_storno && i.status !== 'cancelled').length >
+                          mergeableInvoices.length || showAllInvoicesForMerge ? (
+                          <button
+                            type="button"
+                            onClick={() => setShowAllInvoicesForMerge((p) => !p)}
+                            className={`px-2 py-1 rounded-lg text-[10px] font-bold shrink-0 ${
+                              showAllInvoicesForMerge
+                                ? 'bg-[#3138A0] text-white'
+                                : 'bg-white border border-slate-200 text-slate-700'
+                            }`}
+                          >
+                            Alle Kunden
+                          </button>
+                        ) : null}
+                      </div>
+
+                      {mergeableInvoices.length === 0 ? (
+                        <p className="text-[11px] text-slate-400 italic">
+                          Keine bestehenden Rechnungen für diesen Kunden vorhanden.
+                        </p>
+                      ) : (
+                        <div className="space-y-1.5 max-h-40 overflow-y-auto pr-0.5">
+                          {mergeableInvoices.map((inv) => {
+                            const isChecked = selectedMergeInvoiceIds.includes(inv.id);
+                            const linkedCount = workRecords.filter(
+                              (w) =>
+                                inv.work_record_ids.includes(w.id) || w.settlement_id === inv.id
+                            ).length;
+                            return (
+                              <div
+                                key={inv.id}
+                                onClick={() => toggleMergeInvoice(inv.id)}
+                                className={`p-2 rounded-xl border cursor-pointer flex items-center justify-between gap-2 transition-colors ${
+                                  isChecked
+                                    ? 'bg-indigo-50/70 border-[#3138A0]'
+                                    : 'bg-white border-slate-200 hover:border-slate-300'
+                                }`}
+                              >
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <div
+                                    className={`w-4.5 h-4.5 rounded-md flex items-center justify-center border shrink-0 ${
+                                      isChecked
+                                        ? 'bg-[#3138A0] border-[#3138A0] text-white'
+                                        : 'bg-white border-slate-300'
+                                    }`}
+                                  >
+                                    {isChecked && <Check size={11} strokeWidth={3} />}
+                                  </div>
+                                  <div className="min-w-0">
+                                    <span className="font-bold text-slate-900 block text-xs truncate">
+                                      {inv.invoice_number} · {inv.billing_customer_name}
+                                    </span>
+                                    <span className="text-[10px] text-slate-500 block">
+                                      {formatDateDE(inv.issue_date)} · {linkedCount}{' '}
+                                      {linkedCount === 1 ? 'Arbeit' : 'Arbeiten'}
+                                    </span>
+                                  </div>
+                                </div>
+                                <span className="font-bold text-xs text-slate-900 shrink-0 tabular-nums">
+                                  {formatEuro(inv.total_amount)}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </CollapsibleCard>
+              )}
+
+              {/* Offene Arbeiten (Mehrfachauswahl + durch Tippen direkt bearbeitbar) */}
               <div>
                 <div className="flex items-center justify-between gap-2 mb-1.5">
-                  <label className="font-semibold text-slate-700">
-                    Offene Arbeiten ({selectedRecordIds.length}/{availableRecords.length} gewählt)
-                  </label>
-                  <div className="flex items-center gap-2.5">
+                  <div>
+                    <label className="font-semibold text-slate-700 block">
+                      Offene Arbeiten ({selectedRecordIds.length}/{availableRecords.length} gewählt)
+                    </label>
+                    <span className="text-[10px] text-slate-400">
+                      Antippen zum direkten Bearbeiten · Checkbox für Auswahl
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
                     {totalOpenNonLcrCount > availableRecords.length || showAllOpenRecords ? (
                       <button
                         type="button"
@@ -625,13 +1244,14 @@ export const RechnungModal: React.FC = () => {
                   <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-center text-slate-500">
                     <p className="text-xs">Keine offenen Arbeiten für diesen Kunden.</p>
                     <p className="text-[10px] text-slate-400 mt-0.5">
-                      L.C.R.-Arbeiten sind ausgeschlossen · Pauschale unten möglich.
+                      Sie können oben eine Pauschalrechnung oder unten eine freie Position erstellen.
                     </p>
                   </div>
                 ) : (
                   <div className="space-y-2">
                     {availableRecords.map((rec) => {
                       const isSelected = selectedRecordIds.includes(rec.id);
+                      const isEditingThis = editingWorkId === rec.id;
                       const isSubWork = rec.customer_id !== selectedCustomerId;
                       const origCust = isSubWork
                         ? customers.find((c) => c.id === rec.customer_id)
@@ -643,58 +1263,206 @@ export const RechnungModal: React.FC = () => {
                       return (
                         <div
                           key={rec.id}
-                          onClick={() => toggleRecord(rec.id)}
-                          className={`p-3 rounded-xl border cursor-pointer transition-all flex items-center justify-between ${
-                            isSelected
-                              ? 'bg-indigo-50/50 border-[#3138A0]'
-                              : 'bg-slate-50 border-slate-200 hover:border-slate-300'
+                          className={`rounded-2xl border transition-all overflow-hidden ${
+                            isEditingThis
+                              ? 'bg-white border-[#3138A0] shadow-sm'
+                              : isSelected
+                                ? 'bg-indigo-50/50 border-[#3138A0]'
+                                : 'bg-slate-50 border-slate-200 hover:border-slate-300'
                           }`}
                         >
-                          <div className="flex items-center gap-2.5 min-w-0 pr-2">
-                            <div
-                              className={`w-5 h-5 rounded-md flex items-center justify-center border shrink-0 transition-colors ${
-                                isSelected
-                                  ? 'bg-[#3138A0] border-[#3138A0] text-white'
-                                  : 'bg-white border-slate-300'
+                          <div className="p-3 flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                              {/* Checkbox links: schaltet Auswahl um */}
+                              <button
+                                type="button"
+                                onClick={() => toggleRecord(rec.id)}
+                                aria-label="Arbeit für Rechnung auswählen"
+                                className={`w-6 h-6 rounded-lg flex items-center justify-center border shrink-0 transition-colors ${
+                                  isSelected
+                                    ? 'bg-[#3138A0] border-[#3138A0] text-white'
+                                    : 'bg-white border-slate-300'
+                                }`}
+                              >
+                                {isSelected && <Check size={14} strokeWidth={3} />}
+                              </button>
+
+                              {/* Textbereich: Antippen öffnet sofortige Direkt-Bearbeitung */}
+                              <div
+                                onClick={() => startInlineEditWork(rec)}
+                                className="min-w-0 flex-1 cursor-pointer"
+                              >
+                                <div className="flex items-center gap-1.5">
+                                  <span className="font-bold text-slate-900 block text-xs truncate">
+                                    {rec.title} · {formatDateDE(rec.work_date)}
+                                  </span>
+                                  <Pencil size={11} className="text-[#3138A0] shrink-0" />
+                                </div>
+                                {(isSubWork || recProp) && (
+                                  <span className="text-[10px] font-semibold text-[#3138A0] flex items-center gap-1 truncate mt-0.5">
+                                    <Home size={10} className="shrink-0" />
+                                    <span className="truncate">
+                                      {isSubWork && origCust ? `Sub: ${origCust.name}` : ''}
+                                      {isSubWork && origCust && recProp ? ' · ' : ''}
+                                      {recProp ? recProp.name : ''}
+                                    </span>
+                                  </span>
+                                )}
+                                <span className="text-[11px] text-slate-500 block">
+                                  {formatQtyTwoDecimals(rec.hours)} Std{' '}
+                                  {rec.hourly_rate !== null
+                                    ? `· ${formatEuro(rec.hourly_rate)}`
+                                    : '· Pauschal / Satz tippen'}
+                                  {rec.materials.length > 0
+                                    ? ` · +${rec.materials.length} Material`
+                                    : ''}
+                                </span>
+                              </div>
+                            </div>
+
+                            {/* Betrag rechts: Antippen öffnet ebenfalls Direkt-Bearbeitung */}
+                            <button
+                              type="button"
+                              onClick={() => startInlineEditWork(rec)}
+                              className={`px-2 py-1 rounded-lg font-bold text-xs shrink-0 border transition-colors ${
+                                rec.accounting_amount !== null
+                                  ? 'bg-white border-slate-200 text-slate-900 hover:border-[#3138A0]'
+                                  : 'bg-red-50 border-red-200 text-[#B42318]'
                               }`}
                             >
-                              {isSelected && <Check size={13} strokeWidth={3} />}
-                            </div>
-                            <div className="min-w-0">
-                              <span className="font-semibold text-slate-900 block text-xs truncate">
-                                {rec.title} · {formatDateDE(rec.work_date)}
-                              </span>
-                              {(isSubWork || recProp) && (
-                                <span className="text-[10px] font-semibold text-[#3138A0] flex items-center gap-1 truncate mt-0.5">
-                                  <Home size={10} className="shrink-0" />
-                                  <span className="truncate">
-                                    {isSubWork && origCust ? `Sub: ${origCust.name}` : ''}
-                                    {isSubWork && origCust && recProp ? ' · ' : ''}
-                                    {recProp ? recProp.name : ''}
-                                  </span>
-                                </span>
-                              )}
-                              <span className="text-[11px] text-slate-500 block">
-                                {formatQtyTwoDecimals(rec.hours)} Std{' '}
-                                {rec.hourly_rate !== null
-                                  ? `· ${formatEuro(rec.hourly_rate)}`
-                                  : '· Satz offen'}
-                                {rec.materials.length > 0
-                                  ? ` · +${rec.materials.length} Material`
-                                  : ''}
-                              </span>
-                            </div>
+                              {rec.accounting_amount !== null
+                                ? formatEuro(rec.accounting_amount)
+                                : 'Satz eingeben'}
+                            </button>
                           </div>
 
-                          <span
-                            className={`font-bold text-xs shrink-0 ${
-                              rec.accounting_amount !== null ? 'text-slate-900' : 'text-[#B42318]'
-                            }`}
-                          >
-                            {rec.accounting_amount !== null
-                              ? formatEuro(rec.accounting_amount)
-                              : 'Satz offen'}
-                          </span>
+                          {/* DIREKT-BEARBEITUNG BEIM ANTIPPEN */}
+                          {isEditingThis && (
+                            <div className="px-3 pb-3 pt-2.5 border-t border-indigo-100 bg-indigo-50/30 space-y-2.5">
+                              <div className="grid grid-cols-12 gap-2">
+                                <div className="col-span-7">
+                                  <label className="text-[10px] font-bold text-slate-600 block mb-0.5">
+                                    Tätigkeit / Positionstext
+                                  </label>
+                                  <input
+                                    type="text"
+                                    value={editWorkTitle}
+                                    onChange={(e) => setEditWorkTitle(e.target.value)}
+                                    className="w-full h-9 px-2.5 bg-white border border-slate-200 rounded-xl text-xs font-semibold text-slate-900 outline-hidden focus:border-[#3138A0]"
+                                  />
+                                </div>
+                                <div className="col-span-5">
+                                  <label className="text-[10px] font-bold text-slate-600 block mb-0.5">
+                                    Datum
+                                  </label>
+                                  <input
+                                    type="date"
+                                    value={editWorkDate}
+                                    onChange={(e) => setEditWorkDate(e.target.value)}
+                                    className="w-full h-9 px-2 bg-white border border-slate-200 rounded-xl text-xs font-semibold text-slate-900 outline-hidden focus:border-[#3138A0]"
+                                  />
+                                </div>
+                              </div>
+
+                              <div className="grid grid-cols-3 gap-2">
+                                <div>
+                                  <label className="text-[10px] font-bold text-slate-600 block mb-0.5">
+                                    Stunden
+                                  </label>
+                                  <input
+                                    type="text"
+                                    inputMode="decimal"
+                                    value={editWorkHoursStr}
+                                    onChange={(e) =>
+                                      handleInlineWorkHoursOrRateChange(
+                                        e.target.value,
+                                        editWorkRateStr
+                                      )
+                                    }
+                                    className="w-full h-9 px-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-900 outline-hidden focus:border-[#3138A0]"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="text-[10px] font-bold text-slate-600 block mb-0.5">
+                                    Satz (€/Std.)
+                                  </label>
+                                  <input
+                                    type="text"
+                                    inputMode="decimal"
+                                    value={editWorkRateStr}
+                                    onChange={(e) => {
+                                      setEditWorkAmountManual(false);
+                                      handleInlineWorkHoursOrRateChange(
+                                        editWorkHoursStr,
+                                        e.target.value
+                                      );
+                                    }}
+                                    placeholder="z.B. 50"
+                                    className="w-full h-9 px-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-900 outline-hidden focus:border-[#3138A0]"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="text-[10px] font-bold text-slate-600 block mb-0.5">
+                                    Betrag (€)
+                                  </label>
+                                  <input
+                                    type="text"
+                                    inputMode="decimal"
+                                    value={editWorkAmountStr}
+                                    onChange={(e) => {
+                                      setEditWorkAmountManual(true);
+                                      setEditWorkAmountStr(e.target.value);
+                                    }}
+                                    placeholder="Gesamt €"
+                                    className="w-full h-9 px-2.5 bg-white border border-indigo-200 rounded-xl text-xs font-bold text-[#B4470B] outline-hidden focus:border-[#3138A0]"
+                                  />
+                                </div>
+                              </div>
+
+                              {/* 1-Tipp Stundensatz-Schnellwahl */}
+                              <div className="flex items-center justify-between gap-1.5 flex-wrap">
+                                <div className="flex items-center gap-1 flex-wrap">
+                                  {[45, 50, 55, 60, 70].map((rate) => (
+                                    <button
+                                      key={rate}
+                                      type="button"
+                                      onClick={() => {
+                                        setEditWorkAmountManual(false);
+                                        handleInlineWorkHoursOrRateChange(
+                                          editWorkHoursStr,
+                                          String(rate)
+                                        );
+                                      }}
+                                      className={`px-2 h-7 rounded-lg text-[10px] font-bold border transition-colors ${
+                                        !editWorkAmountManual && editWorkRateStr === String(rate)
+                                          ? 'bg-[#3138A0] border-[#3138A0] text-white'
+                                          : 'bg-white border-slate-200 text-slate-700'
+                                      }`}
+                                    >
+                                      {rate} €/h
+                                    </button>
+                                  ))}
+                                </div>
+
+                                <div className="flex items-center gap-1.5 ml-auto">
+                                  <button
+                                    type="button"
+                                    onClick={() => setEditingWorkId(null)}
+                                    className="px-2.5 h-8 bg-white border border-slate-200 rounded-xl text-[11px] font-semibold text-slate-600"
+                                  >
+                                    Abbrechen
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => saveInlineEditWork(rec)}
+                                    className="px-3 h-8 bg-[#3138A0] hover:bg-[#272d82] text-white rounded-xl text-[11px] font-bold shadow-2xs"
+                                  >
+                                    Übernehmen
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          )}
                         </div>
                       );
                     })}
@@ -703,9 +1471,9 @@ export const RechnungModal: React.FC = () => {
               </div>
             </div>
 
-            {/* UNTERER BEREICH: Alle Eingabeoptionen gebündelt direkt über den Aktionsbuttons */}
+            {/* UNTERER BEREICH: Alle Rechnungsoptionen übersichtlich & direkt editierbar */}
             <div className="mt-auto pt-2.5 border-t border-slate-100 space-y-3">
-              {/* Empfänger & Kundennummer */}
+              {/* Empfänger & aus Kundenkonto übernommene Kundennummer */}
               <div className="grid grid-cols-12 gap-2">
                 <div className="col-span-8">
                   <label className="font-semibold text-slate-700 mb-1 flex items-center gap-1">
@@ -718,6 +1486,7 @@ export const RechnungModal: React.FC = () => {
                       const nextId = e.target.value;
                       setSelectedCustomerId(nextId);
                       setCustomerNumberStr(resolveCustomerNumber(nextId, customers));
+                      setSelectedMergeInvoiceIds([]);
                       const nextRecs = workRecords
                         .filter(
                           (w) =>
@@ -730,16 +1499,21 @@ export const RechnungModal: React.FC = () => {
                     }}
                     className="w-full h-11 px-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-[#3138A0] outline-hidden text-xs text-slate-900 font-semibold"
                   >
-                    {customers.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name} {c.city ? `(${c.city})` : ''}
-                      </option>
-                    ))}
+                    {customers.map((c) => {
+                      const cNum = c.customer_number?.trim() || resolveCustomerNumber(c.id, customers);
+                      return (
+                        <option key={c.id} value={c.id}>
+                          {c.name} (#{cNum}){c.city ? ` · ${c.city}` : ''}
+                        </option>
+                      );
+                    })}
                   </select>
                 </div>
 
                 <div className="col-span-4">
-                  <label className="font-semibold text-slate-700 block mb-1">Kunden-Nr.</label>
+                  <label className="font-semibold text-slate-700 block mb-1 truncate">
+                    Kunden-Nr.
+                  </label>
                   <div className="flex items-center h-11 bg-slate-50 border border-slate-200 rounded-xl overflow-hidden focus-within:bg-white focus-within:border-[#3138A0]">
                     <button
                       type="button"
@@ -754,7 +1528,7 @@ export const RechnungModal: React.FC = () => {
                       inputMode="numeric"
                       value={customerNumberStr}
                       onChange={(e) => setCustomerNumberStr(e.target.value)}
-                      className="min-w-0 flex-1 h-full px-1 bg-transparent text-center font-semibold text-xs text-slate-900 outline-hidden"
+                      className="min-w-0 flex-1 h-full px-1 bg-transparent text-center font-bold text-xs text-slate-900 outline-hidden"
                     />
                     <button
                       type="button"
@@ -942,265 +1716,449 @@ export const RechnungModal: React.FC = () => {
                 />
               </div>
 
-              {/* Zusatzpositionen, Pauschalen & Nachlass (1-Tipp-Auswahl) */}
-              <div className="border border-slate-200 rounded-2xl overflow-hidden bg-slate-50/70">
-                <button
-                  type="button"
-                  onClick={() => setExtrasOpen((p) => !p)}
-                  className="w-full px-3 py-2.5 flex items-center justify-between text-left hover:bg-slate-100/70 transition-colors"
-                >
-                  <div className="flex items-center gap-2 min-w-0">
-                    <Car size={15} className="text-[#3138A0] shrink-0" />
-                    <div className="min-w-0">
-                      <span className="font-semibold text-slate-800 block text-xs">
-                        Anfahrt, Pauschalen & Nachlass
-                      </span>
-                      <span className="text-[10px] text-slate-500 block truncate">
-                        {activeExtraCount > 0
-                          ? `${activeExtraCount} gewählt (${extraDeltaSum >= 0 ? '+' : ''}${formatEuro(extraDeltaSum)})`
-                          : 'Anfahrtspauschale, Entsorgung, Kleinmaterial oder Rabatt'}
-                      </span>
+              {/* AUSKLAPPBAR 1: RECHNUNGSTEXT & VORLAGEN DIREKT EDITIERBAR */}
+              <CollapsibleCard
+                title="Rechnungstext & Vorlagen"
+                subtitle="Betreff, Anschreiben & Zahlungstext direkt bearbeiten"
+                icon={<Edit3 size={15} />}
+                iconBgClassName="bg-indigo-50 text-[#3138A0] border-indigo-100"
+                open={textOptionsOpen}
+                onToggle={() => setTextOptionsOpen((p) => !p)}
+              >
+                <div className="space-y-3 text-xs">
+                  {/* 1-Tipp Textvorlagen */}
+                  <div>
+                    <label className="text-[11px] font-bold text-slate-700 block mb-1">
+                      Vorlage wählen (1-Tipp)
+                    </label>
+                    <div className="flex flex-wrap gap-1.5">
+                      {INTRO_TEMPLATES.map((tpl) => {
+                        const active = activeIntroTemplate === tpl.key;
+                        return (
+                          <button
+                            key={tpl.key}
+                            type="button"
+                            onClick={() => {
+                              setActiveIntroTemplate(tpl.key);
+                              setCustomIntroText(tpl.text);
+                            }}
+                            className={`px-2.5 py-1 rounded-lg border text-[11px] font-semibold transition-colors ${
+                              active
+                                ? 'bg-[#3138A0] border-[#3138A0] text-white'
+                                : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-100'
+                            }`}
+                          >
+                            {tpl.label}
+                          </button>
+                        );
+                      })}
                     </div>
                   </div>
-                  {extrasOpen ? (
-                    <ChevronUp size={16} className="text-slate-400 shrink-0" />
-                  ) : (
-                    <ChevronDown size={16} className="text-slate-400 shrink-0" />
-                  )}
-                </button>
 
-                {extrasOpen && (
-                  <div className="p-3 bg-white border-t border-slate-200 space-y-3">
-                    {/* Anfahrtspauschale Schnellwahl */}
+                  {/* Betreffzeile direkt editierbar */}
+                  <div>
+                    <label className="text-[11px] font-bold text-slate-700 block mb-1">
+                      Betreff / Überschrift
+                    </label>
+                    <input
+                      type="text"
+                      value={customSubjectText}
+                      onChange={(e) => setCustomSubjectText(e.target.value)}
+                      placeholder={defaultSubjectPlaceholder}
+                      className="w-full h-10 px-3 bg-white border border-slate-200 rounded-xl focus:border-[#3138A0] outline-hidden text-xs font-bold text-slate-900"
+                    />
+                  </div>
+
+                  {/* Einleitungstext / Anschreiben direkt editierbar */}
+                  <div>
+                    <label className="text-[11px] font-bold text-slate-700 block mb-1">
+                      Anschreiben / Einleitungstext
+                    </label>
+                    <textarea
+                      rows={3}
+                      value={customIntroText}
+                      onChange={(e) => setCustomIntroText(e.target.value)}
+                      className="w-full p-2.5 bg-white border border-slate-200 rounded-xl focus:border-[#3138A0] outline-hidden text-xs text-slate-900 leading-relaxed resize-none"
+                    />
+                  </div>
+
+                  {/* Zahlungsbedingungen & Schlusstext direkt editierbar */}
+                  <div>
+                    <label className="text-[11px] font-bold text-slate-700 block mb-1">
+                      Zahlungsbedingungen
+                    </label>
+                    <input
+                      type="text"
+                      value={customPaymentTermsText}
+                      onChange={(e) => setCustomPaymentTermsText(e.target.value)}
+                      placeholder={autoPaymentTermsClause}
+                      className="w-full h-10 px-3 bg-white border border-slate-200 rounded-xl focus:border-[#3138A0] outline-hidden text-xs text-slate-900"
+                    />
+                  </div>
+
+                  {!isPaidInCash && (
                     <div>
-                      <label className="text-[11px] font-semibold text-slate-700 block mb-1">
-                        Anfahrtspauschale (1-Tipp)
+                      <label className="text-[11px] font-bold text-slate-700 block mb-1">
+                        Zusätzlicher Überweisungs- / Schlusstext (optional)
                       </label>
-                      <div className="grid grid-cols-4 gap-1.5">
-                        {[0, 15, 25, 35].map((euro) => {
-                          const active = flatTravelEuro === euro;
-                          return (
-                            <button
-                              key={euro}
-                              type="button"
-                              onClick={() => setFlatTravelEuro(euro)}
-                              className={`h-8.5 rounded-xl border text-[11px] font-semibold transition-colors ${
-                                active
-                                  ? 'bg-[#3138A0] border-[#3138A0] text-white'
-                                  : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'
-                              }`}
-                            >
-                              {euro === 0 ? 'Keine' : `${euro} €`}
-                            </button>
-                          );
-                        })}
-                      </div>
+                      <textarea
+                        rows={2}
+                        value={customClosingText}
+                        onChange={(e) => setCustomClosingText(e.target.value)}
+                        placeholder={`Bitte überweisen Sie den Rechnungsbetrag unter Angabe der Rechnungsnummer auf das unten angegebene Konto. Der Rechnungsbetrag ist bis zum ${formatDateDE(dueIso)} fällig.`}
+                        className="w-full p-2.5 bg-white border border-slate-200 rounded-xl focus:border-[#3138A0] outline-hidden text-xs text-slate-900 resize-none"
+                      />
                     </div>
+                  )}
+                </div>
+              </CollapsibleCard>
 
-                    {/* Schnell-Pauschalen: Grünschnitt & Kleinmaterial */}
-                    <div className="space-y-2 pt-1 border-t border-slate-100">
-                      <label className="text-[11px] font-semibold text-slate-700 block">
-                        Häufige Pauschalen
-                      </label>
-
-                      {/* Grünschnitt-Entsorgung */}
-                      <div className="p-2 rounded-xl border border-slate-200 bg-slate-50/70 space-y-1.5">
+              {/* AUSKLAPPBAR 2: RECHNUNGSPOSITIONEN & FREIE POSITIONEN DIREKT BEARBEITEN */}
+              <CollapsibleCard
+                title="Positionstexte & Freie Positionen"
+                subtitle={`${draftLineItems.length} ${
+                  draftLineItems.length === 1 ? 'Position' : 'Positionen'
+                } auf der Rechnung direkt anpassen`}
+                icon={<FileText size={15} />}
+                iconBgClassName="bg-slate-100 text-slate-700 border-slate-200"
+                open={positionsEditorOpen}
+                onToggle={() => setPositionsEditorOpen((p) => !p)}
+              >
+                <div className="space-y-2.5 text-xs">
+                  {baseLineItems.map((item, idx) => {
+                    const isFree = item.id.startsWith('free-');
+                    return (
+                      <div
+                        key={item.id}
+                        className="p-2.5 bg-white border border-slate-200 rounded-xl space-y-2"
+                      >
                         <div className="flex items-center justify-between gap-2">
-                          <button
-                            type="button"
-                            onClick={() => setDisposalEnabled((p) => !p)}
-                            className="flex items-center gap-2 text-left min-w-0 flex-1"
-                          >
-                            <span
-                              className={`w-4.5 h-4.5 rounded-md flex items-center justify-center border shrink-0 ${
-                                disposalEnabled
-                                  ? 'bg-[#3138A0] border-[#3138A0] text-white'
-                                  : 'bg-white border-slate-300'
-                              }`}
+                          <span className="text-[10px] font-bold text-slate-400 uppercase">
+                            Position {idx + 1}
+                          </span>
+                          {isFree && (
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveFreeLineItem(item.id)}
+                              className="text-[10px] font-bold text-[#B42318] flex items-center gap-0.5"
                             >
-                              {disposalEnabled && <Check size={12} strokeWidth={3} />}
-                            </span>
-                            <span className="font-semibold text-slate-800 text-xs truncate">
-                              Grünschnitt-Entsorgung
-                            </span>
-                          </button>
-                          <div className="flex items-center gap-1">
-                            {['15', '25', '45'].map((val) => (
-                              <button
-                                key={val}
-                                type="button"
-                                onClick={() => {
-                                  setDisposalEuroStr(val);
-                                  setDisposalEnabled(true);
-                                }}
-                                className={`px-2 h-7 rounded-lg text-[10px] font-bold border transition-colors ${
-                                  disposalEnabled && disposalEuroStr === val
-                                    ? 'bg-[#3138A0] border-[#3138A0] text-white'
-                                    : 'bg-white border-slate-200 text-slate-700'
-                                }`}
-                              >
-                                {val} €
-                              </button>
-                            ))}
+                              <Trash2 size={11} />
+                              <span>Entfernen</span>
+                            </button>
+                          )}
+                        </div>
+                        <input
+                          type="text"
+                          value={item.description}
+                          onChange={(e) =>
+                            handleUpdateLineItemOverride(item.id, {
+                              description: e.target.value
+                            })
+                          }
+                          placeholder="Beschreibung auf Rechnung..."
+                          className="w-full h-9 px-2.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold text-slate-900 outline-hidden focus:bg-white focus:border-[#3138A0]"
+                        />
+                        <div className="grid grid-cols-3 gap-1.5">
+                          <div>
+                            <label className="text-[10px] text-slate-500 block">Menge</label>
+                            <input
+                              type="text"
+                              value={item.quantity_label}
+                              onChange={(e) =>
+                                handleUpdateLineItemOverride(item.id, {
+                                  quantity_label: e.target.value
+                                })
+                              }
+                              className="w-full h-8 px-2 bg-slate-50 border border-slate-200 rounded-lg text-[11px] font-semibold text-slate-900"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[10px] text-slate-500 block">Einzelpreis</label>
+                            <input
+                              type="text"
+                              value={item.unit_price_label}
+                              onChange={(e) =>
+                                handleUpdateLineItemOverride(item.id, {
+                                  unit_price_label: e.target.value
+                                })
+                              }
+                              className="w-full h-8 px-2 bg-slate-50 border border-slate-200 rounded-lg text-[11px] font-semibold text-slate-900"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[10px] text-slate-500 block">Gesamt (€)</label>
                             <input
                               type="text"
                               inputMode="decimal"
-                              value={disposalEuroStr}
+                              value={String(item.amount).replace('.', ',')}
                               onChange={(e) => {
-                                setDisposalEuroStr(e.target.value);
+                                const parsed = parseSignedDecimalInput(e.target.value);
+                                handleUpdateLineItemOverride(item.id, {
+                                  amount: parsed
+                                });
+                              }}
+                              className="w-full h-8 px-2 bg-slate-50 border border-slate-200 rounded-lg text-[11px] font-bold text-[#B4470B]"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+
+                  <button
+                    type="button"
+                    onClick={handleAddFreeLineItem}
+                    className="w-full h-9 rounded-xl border border-dashed border-[#3138A0] bg-indigo-50/50 hover:bg-indigo-50 text-[#3138A0] font-bold text-xs flex items-center justify-center gap-1.5 transition-colors"
+                  >
+                    <Plus size={14} />
+                    <span>Freie Rechnungsposition hinzufügen</span>
+                  </button>
+                </div>
+              </CollapsibleCard>
+
+              {/* AUSKLAPPBAR 3: ANFAHRT, PAUSCHALEN & NACHLASS */}
+              <CollapsibleCard
+                title="Anfahrt, Pauschalen & Nachlass"
+                subtitle={
+                  activeExtraCount > 0
+                    ? `${activeExtraCount} gewählt (${extraDeltaSum >= 0 ? '+' : ''}${formatEuro(extraDeltaSum)})`
+                    : 'Anfahrtspauschale, Entsorgung, Kleinmaterial oder Rabatt'
+                }
+                icon={<Car size={15} />}
+                iconBgClassName="bg-indigo-50 text-[#3138A0] border-indigo-100"
+                open={extrasOpen}
+                onToggle={() => setExtrasOpen((p) => !p)}
+              >
+                <div className="space-y-3 text-xs">
+                  {/* Anfahrtspauschale Schnellwahl */}
+                  <div>
+                    <label className="text-[11px] font-semibold text-slate-700 block mb-1">
+                      Anfahrtspauschale (1-Tipp)
+                    </label>
+                    <div className="grid grid-cols-4 gap-1.5">
+                      {[0, 15, 25, 35].map((euro) => {
+                        const active = flatTravelEuro === euro;
+                        return (
+                          <button
+                            key={euro}
+                            type="button"
+                            onClick={() => setFlatTravelEuro(euro)}
+                            className={`h-8.5 rounded-xl border text-[11px] font-semibold transition-colors ${
+                              active
+                                ? 'bg-[#3138A0] border-[#3138A0] text-white'
+                                : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-100'
+                            }`}
+                          >
+                            {euro === 0 ? 'Keine' : `${euro} €`}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Schnell-Pauschalen: Grünschnitt & Kleinmaterial */}
+                  <div className="space-y-2 pt-1 border-t border-slate-200/80">
+                    <label className="text-[11px] font-semibold text-slate-700 block">
+                      Häufige Pauschalen
+                    </label>
+
+                    {/* Grünschnitt-Entsorgung */}
+                    <div className="p-2 rounded-xl border border-slate-200 bg-white space-y-1.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setDisposalEnabled((p) => !p)}
+                          className="flex items-center gap-2 text-left min-w-0 flex-1"
+                        >
+                          <span
+                            className={`w-4.5 h-4.5 rounded-md flex items-center justify-center border shrink-0 ${
+                              disposalEnabled
+                                ? 'bg-[#3138A0] border-[#3138A0] text-white'
+                                : 'bg-white border-slate-300'
+                            }`}
+                          >
+                            {disposalEnabled && <Check size={12} strokeWidth={3} />}
+                          </span>
+                          <span className="font-semibold text-slate-800 text-xs truncate">
+                            Grünschnitt-Entsorgung
+                          </span>
+                        </button>
+                        <div className="flex items-center gap-1">
+                          {['15', '25', '45'].map((val) => (
+                            <button
+                              key={val}
+                              type="button"
+                              onClick={() => {
+                                setDisposalEuroStr(val);
                                 setDisposalEnabled(true);
                               }}
-                              aria-label="Betrag Grünschnitt-Entsorgung"
-                              className="w-14 h-7 px-1.5 bg-white border border-slate-200 rounded-lg text-right text-[11px] font-bold text-slate-900"
-                            />
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Klein- & Verbrauchsmaterial */}
-                      <div className="p-2 rounded-xl border border-slate-200 bg-slate-50/70 space-y-1.5">
-                        <div className="flex items-center justify-between gap-2">
-                          <button
-                            type="button"
-                            onClick={() => setSmallMatEnabled((p) => !p)}
-                            className="flex items-center gap-2 text-left min-w-0 flex-1"
-                          >
-                            <span
-                              className={`w-4.5 h-4.5 rounded-md flex items-center justify-center border shrink-0 ${
-                                smallMatEnabled
+                              className={`px-2 h-7 rounded-lg text-[10px] font-bold border transition-colors ${
+                                disposalEnabled && disposalEuroStr === val
                                   ? 'bg-[#3138A0] border-[#3138A0] text-white'
-                                  : 'bg-white border-slate-300'
+                                  : 'bg-slate-50 border-slate-200 text-slate-700'
                               }`}
                             >
-                              {smallMatEnabled && <Check size={12} strokeWidth={3} />}
-                            </span>
-                            <span className="font-semibold text-slate-800 text-xs truncate">
-                              Kleinmaterial-Pauschale
-                            </span>
-                          </button>
-                          <div className="flex items-center gap-1">
-                            {['10', '15', '30'].map((val) => (
-                              <button
-                                key={val}
-                                type="button"
-                                onClick={() => {
-                                  setSmallMatEuroStr(val);
-                                  setSmallMatEnabled(true);
-                                }}
-                                className={`px-2 h-7 rounded-lg text-[10px] font-bold border transition-colors ${
-                                  smallMatEnabled && smallMatEuroStr === val
-                                    ? 'bg-[#3138A0] border-[#3138A0] text-white'
-                                    : 'bg-white border-slate-200 text-slate-700'
-                                }`}
-                              >
-                                {val} €
-                              </button>
-                            ))}
-                            <input
-                              type="text"
-                              inputMode="decimal"
-                              value={smallMatEuroStr}
-                              onChange={(e) => {
-                                setSmallMatEuroStr(e.target.value);
+                              {val} €
+                            </button>
+                          ))}
+                          <input
+                            type="text"
+                            inputMode="decimal"
+                            value={disposalEuroStr}
+                            onChange={(e) => {
+                              setDisposalEuroStr(e.target.value);
+                              setDisposalEnabled(true);
+                            }}
+                            aria-label="Betrag Grünschnitt-Entsorgung"
+                            className="w-14 h-7 px-1.5 bg-slate-50 border border-slate-200 rounded-lg text-right text-[11px] font-bold text-slate-900"
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Klein- & Verbrauchsmaterial */}
+                    <div className="p-2 rounded-xl border border-slate-200 bg-white space-y-1.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setSmallMatEnabled((p) => !p)}
+                          className="flex items-center gap-2 text-left min-w-0 flex-1"
+                        >
+                          <span
+                            className={`w-4.5 h-4.5 rounded-md flex items-center justify-center border shrink-0 ${
+                              smallMatEnabled
+                                ? 'bg-[#3138A0] border-[#3138A0] text-white'
+                                : 'bg-white border-slate-300'
+                            }`}
+                          >
+                            {smallMatEnabled && <Check size={12} strokeWidth={3} />}
+                          </span>
+                          <span className="font-semibold text-slate-800 text-xs truncate">
+                            Kleinmaterial-Pauschale
+                          </span>
+                        </button>
+                        <div className="flex items-center gap-1">
+                          {['10', '15', '30'].map((val) => (
+                            <button
+                              key={val}
+                              type="button"
+                              onClick={() => {
+                                setSmallMatEuroStr(val);
                                 setSmallMatEnabled(true);
                               }}
-                              aria-label="Betrag Kleinmaterial"
-                              className="w-14 h-7 px-1.5 bg-white border border-slate-200 rounded-lg text-right text-[11px] font-bold text-slate-900"
-                            />
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Nachlass / Rabatt Schnellwahl */}
-                    <div className="pt-1 border-t border-slate-100">
-                      <label className="text-[11px] font-semibold text-slate-700 block mb-1">
-                        Nachlass / Rabatt
-                      </label>
-                      <div className="grid grid-cols-4 gap-1.5">
-                        {[0, 3, 5, 10].map((pct) => {
-                          const active = discountPercent === pct;
-                          return (
-                            <button
-                              key={pct}
-                              type="button"
-                              onClick={() => setDiscountPercent(pct)}
-                              className={`h-8.5 rounded-xl border text-[11px] font-semibold transition-colors ${
-                                active
+                              className={`px-2 h-7 rounded-lg text-[10px] font-bold border transition-colors ${
+                                smallMatEnabled && smallMatEuroStr === val
                                   ? 'bg-[#3138A0] border-[#3138A0] text-white'
-                                  : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'
+                                  : 'bg-slate-50 border-slate-200 text-slate-700'
                               }`}
                             >
-                              {pct === 0 ? 'Kein' : `−${pct} %`}
+                              {val} €
                             </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-
-                    {/* Detaillierte Anfahrtszeit / Kilometer */}
-                    <div className="pt-1 border-t border-slate-100 space-y-2">
-                      <div className="grid grid-cols-2 gap-2">
-                        <div>
-                          <label className="text-[11px] font-semibold text-slate-600 block mb-1">
-                            Anfahrtszeit (Std)
-                          </label>
+                          ))}
                           <input
                             type="text"
                             inputMode="decimal"
-                            value={travelHoursStr}
-                            onChange={(e) => setTravelHoursStr(e.target.value)}
-                            placeholder="z.B. 0,5"
-                            className="w-full h-9.5 px-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-900"
-                          />
-                        </div>
-                        <div>
-                          <label className="text-[11px] font-semibold text-slate-600 block mb-1">
-                            Satz Anfahrt (EUR/Std)
-                          </label>
-                          <input
-                            type="text"
-                            inputMode="decimal"
-                            value={travelRateStr}
-                            onChange={(e) => setTravelRateStr(e.target.value)}
-                            placeholder="50,00"
-                            className="w-full h-9.5 px-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-900"
-                          />
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-2">
-                        <div>
-                          <label className="text-[11px] font-semibold text-slate-600 block mb-1">
-                            Fahrtkosten (km)
-                          </label>
-                          <input
-                            type="text"
-                            inputMode="decimal"
-                            value={travelKmStr}
-                            onChange={(e) => setTravelKmStr(e.target.value)}
-                            placeholder="z.B. 35"
-                            className="w-full h-9.5 px-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-900"
-                          />
-                        </div>
-                        <div>
-                          <label className="text-[11px] font-semibold text-slate-600 block mb-1">
-                            Kilometersatz (EUR/km)
-                          </label>
-                          <input
-                            type="text"
-                            inputMode="decimal"
-                            value={travelKmRateStr}
-                            onChange={(e) => setTravelKmRateStr(e.target.value)}
-                            placeholder="0,60"
-                            className="w-full h-9.5 px-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-900"
+                            value={smallMatEuroStr}
+                            onChange={(e) => {
+                              setSmallMatEuroStr(e.target.value);
+                              setSmallMatEnabled(true);
+                            }}
+                            aria-label="Betrag Kleinmaterial"
+                            className="w-14 h-7 px-1.5 bg-slate-50 border border-slate-200 rounded-lg text-right text-[11px] font-bold text-slate-900"
                           />
                         </div>
                       </div>
                     </div>
                   </div>
-                )}
-              </div>
+
+                  {/* Nachlass / Rabatt Schnellwahl */}
+                  <div className="pt-1 border-t border-slate-200/80">
+                    <label className="text-[11px] font-semibold text-slate-700 block mb-1">
+                      Nachlass / Rabatt
+                    </label>
+                    <div className="grid grid-cols-4 gap-1.5">
+                      {[0, 3, 5, 10].map((pct) => {
+                        const active = discountPercent === pct;
+                        return (
+                          <button
+                            key={pct}
+                            type="button"
+                            onClick={() => setDiscountPercent(pct)}
+                            className={`h-8.5 rounded-xl border text-[11px] font-semibold transition-colors ${
+                              active
+                                ? 'bg-[#3138A0] border-[#3138A0] text-white'
+                                : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-100'
+                            }`}
+                          >
+                            {pct === 0 ? 'Kein' : `−${pct} %`}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Detaillierte Anfahrtszeit / Kilometer */}
+                  <div className="pt-1 border-t border-slate-200/80 space-y-2">
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="text-[11px] font-semibold text-slate-600 block mb-1">
+                          Anfahrtszeit (Std)
+                        </label>
+                        <input
+                          type="text"
+                          inputMode="decimal"
+                          value={travelHoursStr}
+                          onChange={(e) => setTravelHoursStr(e.target.value)}
+                          placeholder="z.B. 0,5"
+                          className="w-full h-9.5 px-2.5 bg-white border border-slate-200 rounded-xl text-xs font-semibold text-slate-900"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[11px] font-semibold text-slate-600 block mb-1">
+                          Satz Anfahrt (EUR/Std)
+                        </label>
+                        <input
+                          type="text"
+                          inputMode="decimal"
+                          value={travelRateStr}
+                          onChange={(e) => setTravelRateStr(e.target.value)}
+                          placeholder="50,00"
+                          className="w-full h-9.5 px-2.5 bg-white border border-slate-200 rounded-xl text-xs font-semibold text-slate-900"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="text-[11px] font-semibold text-slate-600 block mb-1">
+                          Fahrtkosten (km)
+                        </label>
+                        <input
+                          type="text"
+                          inputMode="decimal"
+                          value={travelKmStr}
+                          onChange={(e) => setTravelKmStr(e.target.value)}
+                          placeholder="z.B. 35"
+                          className="w-full h-9.5 px-2.5 bg-white border border-slate-200 rounded-xl text-xs font-semibold text-slate-900"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[11px] font-semibold text-slate-600 block mb-1">
+                          Kilometersatz (EUR/km)
+                        </label>
+                        <input
+                          type="text"
+                          inputMode="decimal"
+                          value={travelKmRateStr}
+                          onChange={(e) => setTravelKmRateStr(e.target.value)}
+                          placeholder="0,60"
+                          className="w-full h-9.5 px-2.5 bg-white border border-slate-200 rounded-xl text-xs font-semibold text-slate-900"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </CollapsibleCard>
             </div>
           </div>
         )}

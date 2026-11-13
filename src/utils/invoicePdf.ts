@@ -70,6 +70,12 @@ if (typeof window !== 'undefined') {
   void ensureHafnerLogoLoaded();
 }
 
+export const DEFAULT_INVOICE_INTRO_TEXT =
+  'Sehr geehrte Damen und Herren,\nvielen Dank für Ihren Auftrag und das damit verbundene Vertrauen!\nHiermit stelle ich Ihnen die folgenden Leistungen in Rechnung:';
+
+export const DEFAULT_PAUSCHAL_INTRO_TEXT =
+  'Sehr geehrte Damen und Herren,\nvielen Dank für Ihren Auftrag und das damit verbundene Vertrauen!\nVereinbarungsgemäß stelle ich Ihnen für die durchgeführten Arbeiten folgende Pauschale in Rechnung:';
+
 export interface ResolvedInvoiceData {
   invoiceNumber: string;
   issueDateIso: string;
@@ -84,6 +90,10 @@ export interface ResolvedInvoiceData {
   recipientCity: string;
   recipientCountry: string;
   servicePeriod: string;
+  subjectText?: string;
+  introText?: string;
+  closingText?: string;
+  isPauschal?: boolean;
   lineItems: InvoiceLineItem[];
   totalAmount: number;
   isStorno: boolean;
@@ -186,7 +196,28 @@ export function computeServicePeriod(records: WorkRecord[], fallbackIsoDate: str
   return `${formatDateDE(first)} - ${formatDateDE(last)}`;
 }
 
+export function computeNextCustomerNumber(customers: Customer[]): string {
+  let maxNum = 1000 + customers.length;
+  for (const c of customers) {
+    const raw = c.customer_number?.trim();
+    if (raw) {
+      const m = raw.match(/(\d+)$/);
+      if (m) {
+        const parsed = parseInt(m[1], 10);
+        if (!Number.isNaN(parsed) && parsed > maxNum) {
+          maxNum = parsed;
+        }
+      }
+    }
+  }
+  return String(maxNum + 1);
+}
+
 export function resolveCustomerNumber(customerId: string, customers: Customer[]): string {
+  const cust = customers.find((c) => c.id === customerId);
+  if (cust?.customer_number?.trim()) {
+    return cust.customer_number.trim();
+  }
   const idx = customers.findIndex((c) => c.id === customerId);
   if (idx >= 0) {
     return String(1001 + idx);
@@ -346,7 +377,9 @@ export function resolveInvoiceDisplayData(
     dueDateIso: dueIso,
     dueDateFormatted: formatDateDE(dueIso),
     customerNumber:
-      invoice.customer_number?.trim() || resolveCustomerNumber(invoice.customer_id, customers),
+      invoice.customer_number?.trim() ||
+      customer?.customer_number?.trim() ||
+      resolveCustomerNumber(invoice.customer_id, customers),
     contactPerson: ISSUER_CONTACT_PERSON,
     recipientName: invoice.billing_customer_name || customer?.name || 'Kunde',
     recipientStreet: invoice.recipient_street ?? customer?.street ?? '',
@@ -354,6 +387,10 @@ export function resolveInvoiceDisplayData(
     recipientCity: invoice.recipient_city ?? customer?.city ?? '',
     recipientCountry: 'Österreich',
     servicePeriod,
+    subjectText: invoice.subject_text?.trim() || undefined,
+    introText: invoice.intro_text?.trim() || undefined,
+    closingText: invoice.closing_text?.trim() || undefined,
+    isPauschal: invoice.is_pauschal,
     lineItems,
     totalAmount: invoice.total_amount,
     isStorno: invoice.is_storno,
@@ -519,30 +556,46 @@ export function generateInvoicePdf(
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(12.5);
   doc.setTextColor(10, 10, 10);
-  doc.text(
-    data.isStorno
+  const resolvedSubject =
+    data.subjectText?.trim() ||
+    (data.isStorno
       ? `Stornorechnung Nr. ${data.invoiceNumber}`
-      : `Rechnungs Nr. ${data.invoiceNumber}`,
-    contentLeftX,
-    y
-  );
+      : data.isPauschal
+        ? `Pauschalrechnung Nr. ${data.invoiceNumber}`
+        : `Rechnungs Nr. ${data.invoiceNumber}`);
+  doc.text(resolvedSubject, contentLeftX, y);
 
   // Anschreiben / Einleitungstext
   y = 109;
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(9.5);
   doc.setTextColor(20, 20, 20);
-  doc.text('Sehr geehrte Damen und Herren,', contentLeftX, y);
 
-  y += 7.5;
   if (data.isStorno) {
+    doc.text('Sehr geehrte Damen und Herren,', contentLeftX, y);
+    y += 7.5;
     doc.text(
       `hiermit stornieren wir die betreffende Abrechnung (${data.stornoReason || 'Korrektur'}):`,
       contentLeftX,
       y
     );
     y += 7;
+  } else if (data.introText?.trim()) {
+    const paragraphs = data.introText.trim().split(/\r?\n/);
+    for (let i = 0; i < paragraphs.length; i++) {
+      const line = paragraphs[i].trim();
+      if (!line) {
+        y += 3;
+        continue;
+      }
+      const wrapped = doc.splitTextToSize(line, tableWidth) as string[];
+      doc.text(wrapped, contentLeftX, y);
+      y += wrapped.length * 4.5 + (i === 0 && line.endsWith(',') ? 2.5 : 0.5);
+    }
+    y += 3;
   } else {
+    doc.text('Sehr geehrte Damen und Herren,', contentLeftX, y);
+    y += 7.5;
     doc.text('vielen Dank für Ihren Auftrag und das damit verbundene Vertrauen!', contentLeftX, y);
     y += 4.5;
     doc.text('Hiermit stelle ich Ihnen die folgenden Leistungen in Rechnung:', contentLeftX, y);
@@ -635,29 +688,39 @@ export function generateInvoicePdf(
 
   if (!data.isStorno) {
     if (data.isPaidInCash) {
-      doc.text(
-        data.paymentTermsText || 'Zahlungsbedingungen: Rechnungsbetrag dankend bar erhalten.',
-        contentLeftX,
-        y
-      );
-      y += 8.5;
+      const cashTerms =
+        data.paymentTermsText || 'Zahlungsbedingungen: Rechnungsbetrag dankend bar erhalten.';
+      const wrappedCash = doc.splitTextToSize(cashTerms, tableWidth) as string[];
+      doc.text(wrappedCash, contentLeftX, y);
+      y += wrappedCash.length * 4.5 + 4;
     } else {
-      doc.text(data.paymentTermsText || PAYMENT_TERMS_CLAUSE, contentLeftX, y);
-      y += 7.5;
-      doc.text(
-        'Bitte überweisen Sie den Rechnungsbetrag unter Angabe der Rechnungsnummer auf das unten angegebene',
-        contentLeftX,
-        y
-      );
-      y += 4.3;
-      doc.text('Konto.', contentLeftX, y);
-      y += 4.5;
-      doc.text(
-        `Der Rechnungsbetrag ist bis zum ${data.dueDateFormatted} fällig.`,
-        contentLeftX,
-        y
-      );
-      y += 8.5;
+      const termsLines = doc.splitTextToSize(
+        data.paymentTermsText || PAYMENT_TERMS_CLAUSE,
+        tableWidth
+      ) as string[];
+      doc.text(termsLines, contentLeftX, y);
+      y += termsLines.length * 4.5 + 3;
+
+      if (data.closingText?.trim()) {
+        const closingLines = doc.splitTextToSize(data.closingText.trim(), tableWidth) as string[];
+        doc.text(closingLines, contentLeftX, y);
+        y += closingLines.length * 4.5 + 4;
+      } else {
+        doc.text(
+          'Bitte überweisen Sie den Rechnungsbetrag unter Angabe der Rechnungsnummer auf das unten angegebene',
+          contentLeftX,
+          y
+        );
+        y += 4.3;
+        doc.text('Konto.', contentLeftX, y);
+        y += 4.5;
+        doc.text(
+          `Der Rechnungsbetrag ist bis zum ${data.dueDateFormatted} fällig.`,
+          contentLeftX,
+          y
+        );
+        y += 8.5;
+      }
     }
   } else {
     y += 4;
