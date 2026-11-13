@@ -142,7 +142,6 @@ class NativeStoreManager(context: Context) {
 
                 if (
                     existingRaw != null &&
-                    currentActor == "pixel_tunnel" &&
                     currentRev > lastWebViewLoadedRevision
                 ) {
                     val existingObj = ensureAllCollections(JSONObject(existingRaw))
@@ -155,6 +154,10 @@ class NativeStoreManager(context: Context) {
                 } else {
                     finalJsonStr = incomingObj.toString()
                     wasMergedWithNewerTunnelState = false
+                    if (existingRaw != null && existingRaw == finalJsonStr) {
+                        lastWebViewLoadedRevision = currentRev
+                        return@synchronized true
+                    }
                 }
 
                 if (!writeAtomicallyAndVerifyLocked(finalJsonStr)) {
@@ -166,7 +169,7 @@ class NativeStoreManager(context: Context) {
                 prefs.edit()
                     .putInt(KEY_LOCAL_REVISION, nextRev)
                     .putString(KEY_LOCAL_UPDATED_AT, nowIso)
-                    .putString(KEY_LOCAL_LAST_ACTOR, if (wasMergedWithNewerTunnelState) "pixel_tunnel" else "ui")
+                    .putString(KEY_LOCAL_LAST_ACTOR, if (wasMergedWithNewerTunnelState) currentActor else "ui")
                     .putString(KEY_LOCAL_LAST_SUMMARY, "Lokale Speicherung (Oberfläche)")
                     .commit()
                 lastWebViewLoadedRevision = nextRev

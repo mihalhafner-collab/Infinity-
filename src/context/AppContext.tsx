@@ -704,11 +704,22 @@ export const AppProvider: React.FC<{
       try {
         const parsed = JSON.parse(rawNative) as Partial<ReturnType<typeof buildCurrentSnapshot>>;
         if (parsed && typeof parsed === 'object') {
-          const mergedBoot = mergeSnapshotsClientSide(localBootSnap, parsed);
-          applyServerData(mergedBoot);
-          const mergedStr = JSON.stringify(mergedBoot);
-          lastNativeSavedJsonRef.current = mergedStr;
-          saveNativeStoreJson(mergedStr);
+          const nativeHasData =
+            hasAnySnapshotRecords(parsed) ||
+            Object.keys(parsed.deletedIds || {}).length > 0;
+          if (nativeHasData) {
+            applyServerData(parsed);
+            lastNativeSavedJsonRef.current = lastSyncedSnapshotJsonRef.current;
+          } else if (hasAnySnapshotRecords(localBootSnap)) {
+            const mergedBoot = mergeSnapshotsClientSide(localBootSnap, parsed);
+            applyServerData(mergedBoot);
+            const mergedStr = JSON.stringify(mergedBoot);
+            lastNativeSavedJsonRef.current = mergedStr;
+            saveNativeStoreJson(mergedStr);
+          } else {
+            applyServerData(parsed);
+            lastNativeSavedJsonRef.current = lastSyncedSnapshotJsonRef.current;
+          }
         }
       } catch {
         const fallbackStr = JSON.stringify(localBootSnap);
