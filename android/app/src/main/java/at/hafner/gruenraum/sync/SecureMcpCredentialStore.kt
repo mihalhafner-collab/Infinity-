@@ -162,8 +162,11 @@ class SecureMcpCredentialStore(private val context: Context) {
             if (cleaned.startsWith("http://") && !cleaned.contains("localhost") && !cleaned.contains("127.0.0.1")) {
                 cleaned = "https://" + cleaned.removePrefix("http://")
             }
-            if (cleaned.contains("ais-pre-usuarrctzvo6yzyghmhedg")) {
-                cleaned = "https://hafner-gruenraum.ai.studio"
+            if (
+                cleaned.contains("ais-pre-usuarrctzvo6yzyghmhedg") ||
+                cleaned.contains("hafner-gruenraum.ai.studio", ignoreCase = true)
+            ) {
+                cleaned = "https://infinity-hafner.ai.studio"
             }
             return cleaned
         }

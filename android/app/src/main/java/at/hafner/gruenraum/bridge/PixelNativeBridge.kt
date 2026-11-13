@@ -8,6 +8,7 @@ import at.hafner.gruenraum.MainActivity
 import at.hafner.gruenraum.documents.NativeDocumentManager
 import at.hafner.gruenraum.storage.NativeStoreManager
 import at.hafner.gruenraum.sync.NativeMcpSyncManager
+import at.hafner.gruenraum.tunnel.PixelTunnelService
 
 class PixelNativeBridge(
     private val activity: MainActivity,
@@ -40,6 +41,55 @@ class PixelNativeBridge(
     @JavascriptInterface
     fun getMcpSyncStatusJson(): String {
         return mcpSyncManager.getStatusJson()
+    }
+
+    @JavascriptInterface
+    fun getPixelTunnelStatusJson(): String {
+        return PixelTunnelService.status(activity.applicationContext).toString()
+    }
+
+    @JavascriptInterface
+    fun openPixelTunnelSetup(): Boolean {
+        activity.runOnUiThread {
+            activity.openPixelTunnelSetupActivity()
+        }
+        return true
+    }
+
+    @JavascriptInterface
+    fun setPixelTunnelEnabled(enabled: Boolean): String {
+        var result = PixelTunnelService.status(activity.applicationContext).toString()
+        val latch = java.util.concurrent.CountDownLatch(1)
+        activity.runOnUiThread {
+            try {
+                result = activity.setPixelTunnelEnabledFromWeb(enabled)
+            } finally {
+                latch.countDown()
+            }
+        }
+        try {
+            latch.await(2, java.util.concurrent.TimeUnit.SECONDS)
+        } catch (_: InterruptedException) {
+        }
+        return result
+    }
+
+    @JavascriptInterface
+    fun setPixelTunnelWriteEnabled(writeEnabled: Boolean): String {
+        var result = PixelTunnelService.status(activity.applicationContext).toString()
+        val latch = java.util.concurrent.CountDownLatch(1)
+        activity.runOnUiThread {
+            try {
+                result = activity.setPixelTunnelWriteEnabledFromWeb(writeEnabled)
+            } finally {
+                latch.countDown()
+            }
+        }
+        try {
+            latch.await(2, java.util.concurrent.TimeUnit.SECONDS)
+        } catch (_: InterruptedException) {
+        }
+        return result
     }
 
     @JavascriptInterface

@@ -36,6 +36,10 @@ import at.hafner.gruenraum.documents.NativeDocumentManager
 import at.hafner.gruenraum.storage.NativeStoreManager
 import at.hafner.gruenraum.sync.NativeMcpSyncManager
 import at.hafner.gruenraum.sync.SecureMcpCredentialStore
+import at.hafner.gruenraum.tunnel.PixelTunnelActivity
+import at.hafner.gruenraum.tunnel.PixelTunnelConfig
+import at.hafner.gruenraum.tunnel.PixelTunnelService
+import android.os.Build
 import org.json.JSONObject
 import java.io.File
 
@@ -75,6 +79,25 @@ class MainActivity : AppCompatActivity() {
     private var pendingWebGeoCallback: GeolocationPermissions.Callback? = null
     private var pendingBackupWrite: PendingBackupWrite? = null
     private var pendingRestoreRequestId: String? = null
+
+    private val tunnelMutationListener: (String, Int, String) -> Unit = { stateJson, revision, summary ->
+        runOnUiThread {
+            NativeStoreManager.notifyWebViewSyncedRevision(revision)
+            dispatchRemoteMcpStateToWeb(stateJson, revision, summary)
+        }
+    }
+
+    private val staticLocalSaveListener: () -> Unit = {
+        if (::mcpSyncManager.isInitialized) {
+            mcpSyncManager.onLocalStateSaved()
+        }
+    }
+
+    private val pixelTunnelStatusListener: (JSONObject) -> Unit = { statusObj ->
+        runOnUiThread {
+            dispatchPixelTunnelStatusToWeb(statusObj.toString())
+        }
+    }
 
     private val fileChooserLauncher = registerForActivityResult(
         ActivityResultContracts.GetMultipleContents()
@@ -241,6 +264,7 @@ class MainActivity : AppCompatActivity() {
             credentialStore = credentialStore,
             onRemoteStateApplied = { stateJson, revision, summary ->
                 runOnUiThread {
+                    NativeStoreManager.notifyWebViewSyncedRevision(revision)
                     dispatchRemoteMcpStateToWeb(stateJson, revision, summary)
                 }
             },
@@ -250,9 +274,9 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         )
-        storeManager.onLocalStateChanged = {
-            mcpSyncManager.onLocalStateSaved()
-        }
+        NativeStoreManager.registerTunnelMutationListener(tunnelMutationListener)
+        NativeStoreManager.registerStaticLocalSaveListener(staticLocalSaveListener)
+        PixelTunnelService.registerStatusListener(pixelTunnelStatusListener)
 
         webView = WebView(this).apply {
             setBackgroundColor(Color.parseColor("#F8F9FA"))
@@ -432,6 +456,8 @@ class MainActivity : AppCompatActivity() {
         if (::mcpSyncManager.isInitialized) {
             mcpSyncManager.onAppForegrounded()
         }
+        resumePixelTunnelIfEnabled()
+        dispatchPixelTunnelStatusToWeb(PixelTunnelService.status(this).toString())
     }
 
     override fun onStop() {
@@ -723,7 +749,89 @@ class MainActivity : AppCompatActivity() {
         webView.evaluateJavascript(js, null)
     }
 
+    private fun dispatchPixelTunnelStatusToWeb(statusJson: String) {
+        if (!::webView.isInitialized) return
+        val safeJson = JSONObject.quote(statusJson)
+        val js = "window.__onHafnerNativePixelTunnelStatus && window.__onHafnerNativePixelTunnelStatus($safeJson);"
+        webView.evaluateJavascript(js, null)
+    }
+
+    private fun resumePixelTunnelIfEnabled() {
+        try {
+            val tunnelCfg = PixelTunnelConfig(this)
+            if (tunnelCfg.enabled() && tunnelCfg.configured() && !PixelTunnelService.isServiceRunning()) {
+                val hasNotifPerm = if (Build.VERSION.SDK_INT >= 33) {
+                    ContextCompat.checkSelfPermission(
+                        this,
+                        Manifest.permission.POST_NOTIFICATIONS
+                    ) == PackageManager.PERMISSION_GRANTED
+                } else {
+                    true
+                }
+                if (hasNotifPerm) {
+                    startForegroundService(Intent(this, PixelTunnelService::class.java))
+                }
+            }
+        } catch (_: Exception) {
+        }
+    }
+
+    fun openPixelTunnelSetupActivity() {
+        try {
+            startActivity(Intent(this, PixelTunnelActivity::class.java))
+        } catch (_: Exception) {
+        }
+    }
+
+    fun setPixelTunnelEnabledFromWeb(enable: Boolean): String {
+        try {
+            val cfg = PixelTunnelConfig(this)
+            if (!enable) {
+                cfg.enabled(false)
+                stopService(Intent(this, PixelTunnelService::class.java))
+                PixelTunnelService.notifyStatusListeners(this)
+                return PixelTunnelService.status(this).toString()
+            }
+            if (!cfg.configured()) {
+                openPixelTunnelSetupActivity()
+                return PixelTunnelService.status(this).toString()
+            }
+            if (
+                Build.VERSION.SDK_INT >= 33 &&
+                ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) !=
+                    PackageManager.PERMISSION_GRANTED
+            ) {
+                openPixelTunnelSetupActivity()
+                return PixelTunnelService.status(this).toString()
+            }
+            cfg.enabled(true)
+            startForegroundService(Intent(this, PixelTunnelService::class.java))
+            PixelTunnelService.notifyStatusListeners(this)
+        } catch (_: Exception) {
+        }
+        return PixelTunnelService.status(this).toString()
+    }
+
+    fun setPixelTunnelWriteEnabledFromWeb(writeEnable: Boolean): String {
+        try {
+            val cfg = PixelTunnelConfig(this)
+            if (cfg.writeEnabled() != writeEnable) {
+                cfg.writeEnabled(writeEnable)
+                if (cfg.enabled() && cfg.configured() && PixelTunnelService.isServiceRunning()) {
+                    stopService(Intent(this, PixelTunnelService::class.java))
+                    startForegroundService(Intent(this, PixelTunnelService::class.java))
+                }
+                PixelTunnelService.notifyStatusListeners(this)
+            }
+        } catch (_: Exception) {
+        }
+        return PixelTunnelService.status(this).toString()
+    }
+
     override fun onDestroy() {
+        NativeStoreManager.unregisterTunnelMutationListener(tunnelMutationListener)
+        NativeStoreManager.unregisterStaticLocalSaveListener(staticLocalSaveListener)
+        PixelTunnelService.unregisterStatusListener(pixelTunnelStatusListener)
         if (::mcpSyncManager.isInitialized) {
             mcpSyncManager.shutdown()
         }
