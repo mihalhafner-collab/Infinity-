@@ -33,16 +33,10 @@ import {
   NativeMcpSyncStatus,
   NativePixelTunnelStatus,
   configureNativeMcpSync,
-  copyTextRobustly,
   getNativeMcpSyncStatus,
   getNativePixelTunnelStatus,
-  getRevealedNativeMcpToken,
   isNativeAndroidApp,
-  normalizeInfinityCloudBaseUrl,
-  openExternalUrlNatively,
   openNativePixelTunnelSetup,
-  pairNativeMcpWithCode,
-  resolveMcpAdminEndpoint,
   setNativePixelTunnelEnabled,
   setNativePixelTunnelWriteEnabled,
   subscribeNativeMcpStatus,
@@ -59,48 +53,23 @@ import {
   CheckCircle,
   Mail,
   LogOut,
-  Copy,
-  Check,
   RefreshCw,
   ShieldCheck,
-  Eye,
-  EyeOff,
+  Smartphone,
   WifiOff,
   AlertCircle
 } from 'lucide-react';
 
-interface McpClientConfigInfo {
-  requireToken: boolean;
-  tokenSource: 'env' | 'file';
-  maskedToken: string;
-  adminToken?: string;
-  oauthEnabled: boolean;
-  activeOAuthGrants: number;
-  pairedAndroidDevices: number;
-  activePairingCodes?: number;
-  androidTelemetry: {
-    lastSyncAt: string | null;
-    lastDeviceModel: string | null;
-    lastDirection: string | null;
-  };
-  persistence?: {
-    atomicDiskActive: boolean;
-    firestoreConfigured: boolean;
-    firestoreCloudActive: boolean;
-  };
-  lastAccessAt: string | null;
-  lastOperation: string | null;
-  totalCalls: number;
-  revision: number;
-  toolCount: number;
-  isPreviewEnvironment: boolean;
-  endpoints: {
-    baseUrl: string;
-    mcpHeaderUrl: string;
-    mcpSseHeaderUrl: string;
-    oauthProtectedResourceUrl: string;
-    oauthAuthServerUrl: string;
-  };
+function formatSyncTimeShort(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleString('de-AT', {
+    day: '2-digit',
+    month: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
 }
 
 export const EinstellungenView: React.FC = () => {
@@ -114,115 +83,14 @@ export const EinstellungenView: React.FC = () => {
 
   const isNativeAndroid = isNativeAndroidApp();
 
-  // Gemeinsamer Cloud- & MCP-Server-Status (ausschließlich in der primären Android-App)
-  const [mcpInfo, setMcpInfo] = useState<McpClientConfigInfo | null>(null);
-  const [revealedAdminToken, setRevealedAdminToken] = useState<string | null>(() =>
-    getRevealedNativeMcpToken()
-  );
-  const [showSecretToken, setShowSecretToken] = useState(false);
-  const [resetInProgress, setResetInProgress] = useState(false);
-  const [resetDoneBanner, setResetDoneBanner] = useState(false);
-  const [pairingCodeInput, setPairingCodeInput] = useState('');
-  const [pairingFeedback, setPairingFeedback] = useState<string | null>(null);
-  const [pairingError, setPairingError] = useState<string | null>(null);
-
-  // Native Pixel 10 Pro Keystore & Sync Status
+  // Native Pixel 10 Pro Hintergrund-Synchronisation & Direkter Pixel-Tunnel
   const [nativeSyncStatus, setNativeSyncStatus] = useState<NativeMcpSyncStatus | null>(() =>
     getNativeMcpSyncStatus()
   );
   const [pixelTunnelStatus, setPixelTunnelStatus] = useState<NativePixelTunnelStatus | null>(() =>
     getNativePixelTunnelStatus()
   );
-  const [nativeBaseUrlInput, setNativeBaseUrlInput] = useState<string>(() =>
-    normalizeInfinityCloudBaseUrl(getNativeMcpSyncStatus()?.baseUrl)
-  );
-
-  const [copiedKey, setCopiedKey] = useState<string | null>(null);
-  const [rotatingToken, setRotatingToken] = useState(false);
-
-  const fetchRevealedToken = async (overrideBaseUrl?: string): Promise<string | null> => {
-    if (!isNativeAndroid) {
-      return null;
-    }
-    try {
-      const endpoint = resolveMcpAdminEndpoint(
-        '/api/internal/reveal-token',
-        overrideBaseUrl || nativeBaseUrlInput
-      );
-      const res = await fetch(endpoint.url, {
-        method: 'POST',
-        credentials: 'omit',
-        headers: endpoint.headers
-      });
-      if (res.ok) {
-        const data = (await res.json()) as { adminToken?: string };
-        if (data.adminToken && data.adminToken.trim().length >= 16) {
-          const clean = data.adminToken.trim();
-          setRevealedAdminToken(clean);
-          return clean;
-        }
-      }
-    } catch {
-      // Ignore network error and fall back to local keystore token
-    }
-
-    const nativeFallback =
-      getRevealedNativeMcpToken() ||
-      nativeSyncStatus?.revealedToken?.trim() ||
-      nativeSyncStatus?.deviceToken?.trim() ||
-      null;
-    if (nativeFallback) {
-      setRevealedAdminToken(nativeFallback);
-      return nativeFallback;
-    }
-    return revealedAdminToken;
-  };
-
-  const loadMcpInfo = async (customBaseUrl?: string) => {
-    if (!isNativeAndroid) {
-      return;
-    }
-
-    const latest = getNativeMcpSyncStatus();
-    setNativeSyncStatus(latest);
-    const latestTunnel = getNativePixelTunnelStatus();
-    if (latestTunnel) {
-      setPixelTunnelStatus(latestTunnel);
-    }
-    const cleanBase = normalizeInfinityCloudBaseUrl(latest?.baseUrl);
-    setNativeBaseUrlInput(cleanBase);
-
-    const immediateNativeToken =
-      getRevealedNativeMcpToken() ||
-      latest?.revealedToken?.trim() ||
-      latest?.deviceToken?.trim();
-    if (immediateNativeToken) {
-      setRevealedAdminToken((prev) => prev || immediateNativeToken);
-    }
-
-    try {
-      const endpoint = resolveMcpAdminEndpoint(
-        '/api/internal/mcp-config',
-        customBaseUrl || cleanBase
-      );
-      const res = await fetch(endpoint.url, {
-        headers: endpoint.headers,
-        credentials: 'omit'
-      });
-      if (res.ok) {
-        const data = (await res.json()) as McpClientConfigInfo;
-        setMcpInfo(data);
-        if (data.adminToken && data.adminToken.trim().length >= 16) {
-          setRevealedAdminToken(data.adminToken.trim());
-          return;
-        }
-      }
-    } catch {
-      // Offline tolerance
-    }
-
-    void fetchRevealedToken(customBaseUrl || cleanBase);
-  };
+  const [syncInProgress, setSyncInProgress] = useState(false);
 
   useEffect(() => {
     const unsubGmail = subscribeGmailAuth(({ user, hasToken, error }) => {
@@ -243,25 +111,20 @@ export const EinstellungenView: React.FC = () => {
       };
     }
 
-    // Falls in älteren APK-Ständen noch hafner-gruenraum.ai.studio gespeichert war, sofort auf infinity-hafner.ai.studio aktualisieren
     configureNativeMcpSync(DEFAULT_INFINITY_CLOUD_URL, '');
+    setNativeSyncStatus(getNativeMcpSyncStatus());
+    const latestTunnel = getNativePixelTunnelStatus();
+    if (latestTunnel) {
+      setPixelTunnelStatus(latestTunnel);
+    }
 
     const unsubNativeStatus = subscribeNativeMcpStatus((status) => {
       setNativeSyncStatus(status);
-      if (status.baseUrl) {
-        setNativeBaseUrlInput(normalizeInfinityCloudBaseUrl(status.baseUrl));
-      }
-      const nextToken = status.revealedToken?.trim() || status.deviceToken?.trim();
-      if (nextToken && nextToken.length >= 16) {
-        setRevealedAdminToken((prev) => prev || nextToken);
-      }
     });
 
     const unsubTunnelStatus = subscribeNativePixelTunnelStatus((tStatus) => {
       setPixelTunnelStatus(tStatus);
     });
-
-    void loadMcpInfo(DEFAULT_INFINITY_CLOUD_URL);
 
     return () => {
       unsubGmail();
@@ -269,7 +132,6 @@ export const EinstellungenView: React.FC = () => {
       unsubNativeStatus();
       unsubTunnelStatus();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isNativeAndroid]);
 
   const [arbeitsvorgabenOpen, setArbeitsvorgabenOpen] = useState(false);
@@ -280,131 +142,17 @@ export const EinstellungenView: React.FC = () => {
   const [hourlyRate, setHourlyRate] = useState('50');
   const [paymentTarget, setPaymentTarget] = useState('14 Tage ohne Abzug');
   const [numberPrefix, setNumberPrefix] = useState('RE');
-  const [statusCheckRunning, setStatusCheckRunning] = useState(false);
-  const [statusChecked, setStatusChecked] = useState(false);
   const [storageCleaned, setStorageCleaned] = useState(false);
 
-  const handleCopyText = async (key: string, value: string, label = 'MCP') => {
-    const ok = await copyTextRobustly(label, value);
-    if (ok) {
-      setCopiedKey(key);
-      setTimeout(() => setCopiedKey((prev) => (prev === key ? null : prev)), 2500);
-    }
-  };
-
-  const resolveCurrentFullTokenSync = (): string | null => {
-    return (
-      revealedAdminToken?.trim() ||
-      mcpInfo?.adminToken?.trim() ||
-      getRevealedNativeMcpToken() ||
-      nativeSyncStatus?.revealedToken?.trim() ||
-      nativeSyncStatus?.deviceToken?.trim() ||
-      null
-    );
-  };
-
-  const handleToggleShowSecret = async () => {
-    if (!isNativeAndroid) return;
-    if (showSecretToken) {
-      setShowSecretToken(false);
-      return;
-    }
-    setShowSecretToken(true);
-    const immediate = resolveCurrentFullTokenSync();
-    if (immediate) {
-      setRevealedAdminToken(immediate);
-    }
-    const fetched = await fetchRevealedToken();
-    if (fetched) {
-      setRevealedAdminToken(fetched);
-    }
-  };
-
-  const handleCopyAdminToken = async () => {
-    if (!isNativeAndroid) return;
-    const immediate = resolveCurrentFullTokenSync();
-    if (immediate) {
-      setRevealedAdminToken(immediate);
-      await handleCopyText('mcp_token', immediate, 'MCP-Zugangsschlüssel');
-      return;
-    }
-    const fetched = await fetchRevealedToken();
-    if (fetched) {
-      await handleCopyText('mcp_token', fetched, 'MCP-Zugangsschlüssel');
-    }
-  };
-
-  const handleRotateMcpToken = async () => {
-    if (!isNativeAndroid) return;
-    setRotatingToken(true);
+  const handleManualSync = async () => {
+    setSyncInProgress(true);
     try {
-      const endpoint = resolveMcpAdminEndpoint('/api/internal/mcp-config', nativeBaseUrlInput);
-      const res = await fetch(endpoint.url, {
-        method: 'POST',
-        credentials: isNativeAndroid ? 'omit' : 'include',
-        headers: {
-          'Content-Type': 'application/json',
-          ...endpoint.headers
-        },
-        body: JSON.stringify({ rotate: true })
-      });
-      if (res.ok) {
-        setRevealedAdminToken(null);
-        setShowSecretToken(false);
-        await loadMcpInfo();
+      if (isNativeAndroid) {
+        triggerNativeMcpSyncNow();
       }
+      await refreshFromServer();
     } finally {
-      setRotatingToken(false);
-    }
-  };
-
-  const handleSyncNow = async () => {
-    if (!isNativeAndroid) return;
-    setResetInProgress(true);
-    try {
-      triggerNativeMcpSyncNow();
-      await loadMcpInfo();
-      setResetDoneBanner(true);
-      setTimeout(() => setResetDoneBanner(false), 3000);
-    } finally {
-      setResetInProgress(false);
-    }
-  };
-
-  const handleGoogleConnectAndroid = () => {
-    if (!isNativeAndroid) return;
-    setPairingError(null);
-    setPairingFeedback(null);
-    const targetUrl = normalizeInfinityCloudBaseUrl(nativeBaseUrlInput);
-    configureNativeMcpSync(targetUrl, '');
-    const opened = openExternalUrlNatively(`${targetUrl}/android-connect`);
-    if (!opened) {
-      setPairingError('Browser konnte nicht geöffnet werden.');
-    }
-  };
-
-  const handlePairWithSixDigitCode = async () => {
-    if (!isNativeAndroid) return;
-    const digits = pairingCodeInput.replace(/[^0-9]/g, '');
-    if (digits.length !== 6) {
-      setPairingError('Bitte gültigen 6-stelligen Kopplungscode eingeben.');
-      return;
-    }
-    setPairingError(null);
-    setPairingFeedback(null);
-    setResetInProgress(true);
-    try {
-      const targetUrl = normalizeInfinityCloudBaseUrl(nativeBaseUrlInput);
-      const updated = pairNativeMcpWithCode(targetUrl, digits);
-      if (updated) {
-        setNativeSyncStatus(updated);
-      }
-      setPairingCodeInput('');
-      setPairingFeedback('Kopplungscode wird geprüft und synchronisiert…');
-      await loadMcpInfo(targetUrl);
-      setTimeout(() => setPairingFeedback(null), 4000);
-    } finally {
-      setResetInProgress(false);
+      setTimeout(() => setSyncInProgress(false), 600);
     }
   };
 
@@ -431,32 +179,6 @@ export const EinstellungenView: React.FC = () => {
     openNativePixelTunnelSetup();
   };
 
-  const handleStatusCheck = async () => {
-    if (!isNativeAndroid) return;
-    setStatusCheckRunning(true);
-    try {
-      const latestTunnel = getNativePixelTunnelStatus();
-      if (latestTunnel) {
-        setPixelTunnelStatus(latestTunnel);
-      }
-      triggerNativeMcpSyncNow();
-      const endpoint = resolveMcpAdminEndpoint('/api/internal/mcp-health', nativeBaseUrlInput);
-      const res = await fetch(endpoint.url, {
-        headers: endpoint.headers,
-        credentials: 'omit'
-      });
-      await loadMcpInfo();
-      if (res.ok || isNativeAndroid) {
-        setStatusChecked(true);
-        setTimeout(() => setStatusChecked(false), 4000);
-      }
-    } catch {
-      // Ignore
-    } finally {
-      setStatusCheckRunning(false);
-    }
-  };
-
   const handleCleanStorage = () => {
     setStorageCleaned(true);
     setTimeout(() => setStorageCleaned(false), 3000);
@@ -468,25 +190,16 @@ export const EinstellungenView: React.FC = () => {
   const effectiveRevision = isNativeAndroid
     ? pixelTunnelStatus?.local_revision ??
       nativeSyncStatus?.revision ??
-      mcpInfo?.revision ??
       appSyncStatus.revision
     : appSyncStatus.revision;
-  const effectiveMcpUrl = isNativeAndroid
-    ? `${normalizeInfinityCloudBaseUrl(
-        mcpInfo?.endpoints.baseUrl || nativeSyncStatus?.baseUrl
-      )}/mcp`
-    : '';
-  const effectiveMaskedToken = isNativeAndroid
-    ? mcpInfo?.maskedToken ||
-      nativeSyncStatus?.maskedToken ||
-      'hgh_mcp_••••••••••••••••••••'
-    : '';
-  const effectiveLastSyncIso = isNativeAndroid
-    ? nativeSyncStatus?.lastSyncAt || mcpInfo?.androidTelemetry.lastSyncAt || null
-    : appSyncStatus.lastSyncAt || null;
-  const effectiveTotalCalls = isNativeAndroid
-    ? mcpInfo?.totalCalls ?? nativeSyncStatus?.totalMcpCalls ?? 0
-    : 0;
+  const isSyncBusy =
+    syncInProgress ||
+    (isNativeAndroid ? Boolean(nativeSyncStatus?.syncInFlight) : appSyncStatus.syncInFlight);
+  const lastSyncFormatted = formatSyncTimeShort(
+    isNativeAndroid
+      ? nativeSyncStatus?.lastSyncAt
+      : appSyncStatus.lastAndroidSyncAt || appSyncStatus.lastSyncAt
+  );
 
   return (
     <div className="flex-1 min-h-0 flex flex-col h-full bg-[#F8F9FA] overflow-hidden relative">
@@ -635,7 +348,7 @@ export const EinstellungenView: React.FC = () => {
           )}
         </div>
 
-        {/* GRUPPE 3: Verbindungen (MCP ausschließlich in der primären Android-App, Web zeigt nur E-Mail/Kalender/Wetter) */}
+        {/* GRUPPE 3: Verbindungen & Hintergrund-Synchronisation */}
         <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-2xs">
           <button
             onClick={() => setVerbindungenOpen(!verbindungenOpen)}
@@ -643,12 +356,12 @@ export const EinstellungenView: React.FC = () => {
           >
             <div>
               <span className="text-xs font-bold text-slate-900 block leading-tight">
-                Verbindungen
+                Verbindungen &amp; Hintergrund-Sync
               </span>
               <span className="text-[11px] text-slate-500">
                 {isNativeAndroid
-                  ? 'Kalender, Wetter und privates ChatGPT-MCP-Plugin'
-                  : 'Gmail-Versand, Kalender und Wetter'}
+                  ? 'Primärquelle Pixel 10 Pro, ChatGPT-Tunnel, Kalender & Wetter'
+                  : 'Parallel-Abgleich mit Pixel 10 Pro, Gmail, Kalender & Wetter'}
               </span>
             </div>
             {verbindungenOpen ? (
@@ -660,6 +373,190 @@ export const EinstellungenView: React.FC = () => {
 
           {verbindungenOpen && (
             <div className="p-3.5 bg-slate-50 border-t border-slate-100 space-y-2.5">
+              {/* ROTER BEREICH AUS HEUTE: Hintergrund-Synchronisation & Primärquelle passend in Einstellungen */}
+              <div className="p-3 bg-white border border-slate-200 rounded-xl space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div className="w-8 h-8 rounded-xl bg-indigo-50 text-[#3138A0] flex items-center justify-center shrink-0">
+                      <Smartphone size={16} />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-xs font-bold text-slate-900">
+                          {isNativeAndroid
+                            ? 'Primärquelle: Pixel 10 Pro'
+                            : 'Parallel-Datenstand mit Pixel 10 Pro'}
+                        </span>
+                        <span className="text-[11px] font-semibold text-emerald-700 tabular-nums">
+                          · Rev. #{effectiveRevision}
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-slate-500 truncate">
+                        {lastSyncFormatted
+                          ? `Letzter Hintergrund-Abgleich: ${lastSyncFormatted}`
+                          : 'Automatische Hintergrund-Synchronisation aktiv'}
+                      </p>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => void handleManualSync()}
+                    disabled={isSyncBusy}
+                    className="p-2 rounded-xl bg-slate-100 hover:bg-indigo-50 text-slate-700 hover:text-[#3138A0] active:scale-95 transition-all shrink-0 disabled:opacity-50"
+                    title="Datenstand jetzt im Hintergrund abgleichen"
+                  >
+                    <RefreshCw
+                      size={15}
+                      className={isSyncBusy ? 'animate-spin text-[#3138A0]' : ''}
+                    />
+                  </button>
+                </div>
+
+                {effectivePendingCount > 0 && (
+                  <div className="p-2 bg-amber-50 border border-amber-200 rounded-lg flex items-center justify-between gap-2 text-[10px] text-amber-900">
+                    <span>
+                      {effectivePendingCount} lokale Änderung(en) warten auf Übertragung.
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => void flushPendingAppSync()}
+                      className="h-7 px-2.5 bg-amber-700 text-white font-semibold rounded-md shrink-0"
+                    >
+                      Jetzt senden
+                    </button>
+                  </div>
+                )}
+
+                {isNativeAndroid &&
+                  (nativeSyncStatus?.state === 'offline' ||
+                    nativeSyncStatus?.state === 'offline_queued') && (
+                    <div className="p-2 bg-amber-50 border border-amber-200 rounded-lg text-[10px] text-amber-900 flex items-center gap-1.5">
+                      <WifiOff size={13} className="shrink-0" />
+                      <span>
+                        Offline-Modus: Änderungen lokal gesichert – automatische Übertragung sobald WLAN/5G verfügbar ist.
+                      </span>
+                    </div>
+                  )}
+
+                {isNativeAndroid && nativeSyncStatus?.lastError && (
+                  <div className="p-2 bg-red-50 border border-red-200 rounded-lg text-[10px] text-red-800 flex items-center gap-1.5">
+                    <AlertCircle size={13} className="shrink-0" />
+                    <span>{nativeSyncStatus.lastError}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Direkter privater OpenAI-Pixel-Tunnel (nur Android-App) */}
+              {isNativeAndroid && (
+                <div className="p-3 bg-white border border-indigo-200/90 rounded-xl space-y-2.5">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-start gap-2.5 min-w-0">
+                      <div className="w-8 h-8 rounded-xl bg-indigo-50 flex items-center justify-center text-[#3138A0] shrink-0">
+                        <Bot size={17} />
+                      </div>
+                      <div className="min-w-0">
+                        <span className="font-bold text-slate-900 block text-xs">
+                          Direkter ChatGPT Pixel-Tunnel (OpenAI HTTPS)
+                        </span>
+                        <span className="text-[10px] text-[#3138A0] font-semibold block leading-snug">
+                          {pixelTunnelStatus?.label || 'Noch nicht eingerichtet'}
+                        </span>
+                      </div>
+                    </div>
+                    <span
+                      className={`text-[10px] font-bold px-2 py-0.5 rounded-md shrink-0 ${
+                        pixelTunnelStatus?.transport_confirmed
+                          ? 'text-[#2C7738] bg-emerald-50'
+                          : pixelTunnelStatus?.enabled
+                            ? 'text-amber-700 bg-amber-50'
+                            : 'text-slate-600 bg-slate-100'
+                      }`}
+                    >
+                      {pixelTunnelStatus?.transport_confirmed
+                        ? 'Verbunden'
+                        : pixelTunnelStatus?.enabled
+                          ? 'Aktiv'
+                          : 'Aus'}
+                    </span>
+                  </div>
+
+                  <div className="p-2 bg-slate-50 border border-slate-200/80 rounded-lg text-[10px] text-slate-700 space-y-1">
+                    <div className="font-semibold text-slate-900">
+                      {pixelTunnelStatus?.detail ||
+                        'Eigener ChatGPT-Tunnel direkt zum Pixel 10 Pro (api.openai.com).'}
+                    </div>
+                    {pixelTunnelStatus?.tunnel_id_masked ? (
+                      <div className="font-mono text-slate-600">
+                        Tunnel-ID: {pixelTunnelStatus.tunnel_id_masked}
+                        {pixelTunnelStatus.organization
+                          ? ` · Org: ${pixelTunnelStatus.organization}`
+                          : ''}
+                      </div>
+                    ) : null}
+                    <div className="text-slate-500">
+                      Letzter Kontakt:{' '}
+                      <span className="font-semibold text-slate-700">
+                        {pixelTunnelStatus?.last_contact_at
+                          ? new Date(pixelTunnelStatus.last_contact_at).toLocaleString('de-AT')
+                          : 'Noch kein Kontakt'}
+                      </span>
+                      {' · '}Letzte Antwort:{' '}
+                      <span className="font-semibold text-slate-700">
+                        {pixelTunnelStatus?.last_response_at
+                          ? new Date(pixelTunnelStatus.last_response_at).toLocaleString('de-AT')
+                          : 'Keine'}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={handleTogglePixelTunnelEnabled}
+                      className={`h-9 px-2.5 rounded-lg text-[11px] font-semibold flex items-center justify-between border transition-all ${
+                        pixelTunnelStatus?.enabled
+                          ? 'bg-emerald-50 border-emerald-300 text-[#166534]'
+                          : 'bg-white border-slate-300 text-slate-700'
+                      }`}
+                    >
+                      <span>Pixel-Tunnel</span>
+                      <span className="font-bold">
+                        {pixelTunnelStatus?.enabled ? 'EIN' : 'AUS'}
+                      </span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleTogglePixelTunnelWrite}
+                      className={`h-9 px-2.5 rounded-lg text-[11px] font-semibold flex items-center justify-between border transition-all ${
+                        pixelTunnelStatus?.write_enabled
+                          ? 'bg-indigo-50 border-indigo-300 text-[#3138A0]'
+                          : 'bg-white border-slate-300 text-slate-700'
+                      }`}
+                    >
+                      <span>Schreibfreigabe</span>
+                      <span className="font-bold">
+                        {pixelTunnelStatus?.write_enabled ? 'EIN' : 'AUS'}
+                      </span>
+                    </button>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleOpenPixelTunnelSetup}
+                    className="w-full h-9 px-3 bg-[#3138A0] hover:bg-[#272d82] active:scale-98 text-white text-[11px] font-semibold rounded-lg flex items-center justify-center gap-1.5 transition-all"
+                  >
+                    <ShieldCheck size={13} />
+                    <span>
+                      {pixelTunnelStatus?.configured
+                        ? 'Tunnel-Einrichtung & Diagnose öffnen'
+                        : 'Eigenen ChatGPT-Tunnel jetzt einrichten'}
+                    </span>
+                  </button>
+                </div>
+              )}
+
               {!isNativeAndroid && (
                 <div className="p-3 bg-white border border-slate-200 rounded-xl flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2.5 min-w-0">
@@ -838,389 +735,6 @@ export const EinstellungenView: React.FC = () => {
                   </button>
                 </div>
               </div>
-
-              {/* Direkter privater OpenAI-Pixel-Tunnel (nur Android-App) + Cloud-Abgleich */}
-              {isNativeAndroid && (
-              <>
-              <div className="p-3 bg-white border border-indigo-200/90 rounded-xl space-y-2.5">
-                <div className="flex items-start justify-between gap-2">
-                  <div className="flex items-start gap-2.5 min-w-0">
-                    <div className="w-8 h-8 rounded-xl bg-indigo-50 flex items-center justify-center text-[#3138A0] shrink-0">
-                      <Bot size={17} />
-                    </div>
-                    <div className="min-w-0">
-                      <span className="font-bold text-slate-900 block text-xs">
-                        Direkter ChatGPT Pixel-Tunnel (OpenAI HTTPS)
-                      </span>
-                      <span className="text-[10px] text-[#3138A0] font-semibold block leading-snug">
-                        {pixelTunnelStatus?.label || 'Noch nicht eingerichtet'}
-                      </span>
-                    </div>
-                  </div>
-                  <span
-                    className={`text-[10px] font-bold px-2 py-0.5 rounded-md shrink-0 ${
-                      pixelTunnelStatus?.transport_confirmed
-                        ? 'text-[#2C7738] bg-emerald-50'
-                        : pixelTunnelStatus?.enabled
-                          ? 'text-amber-700 bg-amber-50'
-                          : 'text-slate-600 bg-slate-100'
-                    }`}
-                  >
-                    {pixelTunnelStatus?.transport_confirmed
-                      ? 'Verbunden'
-                      : pixelTunnelStatus?.enabled
-                        ? 'Aktiv'
-                        : 'Aus'}
-                  </span>
-                </div>
-
-                <div className="p-2 bg-slate-50 border border-slate-200/80 rounded-lg text-[10px] text-slate-700 space-y-1">
-                  <div className="font-semibold text-slate-900">
-                    {pixelTunnelStatus?.detail ||
-                      'Eigener ChatGPT-Tunnel direkt zum Pixel 10 Pro (api.openai.com).'}
-                  </div>
-                  {pixelTunnelStatus?.tunnel_id_masked ? (
-                    <div className="font-mono text-slate-600">
-                      Tunnel-ID: {pixelTunnelStatus.tunnel_id_masked}
-                      {pixelTunnelStatus.organization
-                        ? ` · Org: ${pixelTunnelStatus.organization}`
-                        : ''}
-                    </div>
-                  ) : null}
-                  <div className="text-slate-500">
-                    Letzter Kontakt:{' '}
-                    <span className="font-semibold text-slate-700">
-                      {pixelTunnelStatus?.last_contact_at
-                        ? new Date(pixelTunnelStatus.last_contact_at).toLocaleString('de-AT')
-                        : 'Noch kein Kontakt'}
-                    </span>
-                    {' · '}Letzte Antwort:{' '}
-                    <span className="font-semibold text-slate-700">
-                      {pixelTunnelStatus?.last_response_at
-                        ? new Date(pixelTunnelStatus.last_response_at).toLocaleString('de-AT')
-                        : 'Keine'}
-                    </span>
-                  </div>
-                  <div className="text-slate-500">
-                    Lokaler Infinity-Bestand:{' '}
-                    <span className="font-semibold text-slate-700">
-                      Rev. #{pixelTunnelStatus?.local_revision ?? effectiveRevision}
-                      {pixelTunnelStatus?.dataset_id ? ` (${pixelTunnelStatus.dataset_id})` : ''}
-                    </span>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={handleTogglePixelTunnelEnabled}
-                    className={`h-9 px-2.5 rounded-lg text-[11px] font-semibold flex items-center justify-between border transition-all ${
-                      pixelTunnelStatus?.enabled
-                        ? 'bg-emerald-50 border-emerald-300 text-[#166534]'
-                        : 'bg-white border-slate-300 text-slate-700'
-                    }`}
-                  >
-                    <span>Pixel-Tunnel</span>
-                    <span className="font-bold">
-                      {pixelTunnelStatus?.enabled ? 'EIN' : 'AUS'}
-                    </span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={handleTogglePixelTunnelWrite}
-                    className={`h-9 px-2.5 rounded-lg text-[11px] font-semibold flex items-center justify-between border transition-all ${
-                      pixelTunnelStatus?.write_enabled
-                        ? 'bg-indigo-50 border-indigo-300 text-[#3138A0]'
-                        : 'bg-white border-slate-300 text-slate-700'
-                    }`}
-                  >
-                    <span>Schreibfreigabe</span>
-                    <span className="font-bold">
-                      {pixelTunnelStatus?.write_enabled ? 'EIN' : 'AUS'}
-                    </span>
-                  </button>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={handleOpenPixelTunnelSetup}
-                  className="w-full h-9 px-3 bg-[#3138A0] hover:bg-[#272d82] active:scale-98 text-white text-[11px] font-semibold rounded-lg flex items-center justify-center gap-1.5 transition-all"
-                >
-                  <ShieldCheck size={13} />
-                  <span>
-                    {pixelTunnelStatus?.configured
-                      ? 'Tunnel-Einrichtung & Diagnose öffnen'
-                      : 'Eigenen ChatGPT-Tunnel jetzt einrichten'}
-                  </span>
-                </button>
-              </div>
-
-              <div className="p-3 bg-white border border-indigo-200/80 rounded-xl space-y-2.5">
-                <div className="flex items-start justify-between gap-2">
-                  <div className="flex items-start gap-2.5 min-w-0">
-                    <div className="w-8 h-8 rounded-xl bg-indigo-50 flex items-center justify-center text-[#3138A0] shrink-0">
-                      <RefreshCw size={16} />
-                    </div>
-                    <div className="min-w-0">
-                      <span className="font-bold text-slate-900 block text-xs">
-                        Infinity Web-App &amp; Cloud-Synchronisation
-                      </span>
-                      <span className="text-[10px] text-[#3138A0] font-semibold block leading-snug">
-                        infinity-hafner.ai.studio ↔ Pixel 10 Pro
-                      </span>
-                    </div>
-                  </div>
-                  <span className="text-[10px] font-bold text-[#2C7738] bg-emerald-50 px-2 py-0.5 rounded-md shrink-0">
-                    Infinity Cloud
-                  </span>
-                </div>
-
-                <div className="space-y-2 pt-1.5 border-t border-slate-100">
-                  <div className="grid grid-cols-3 gap-1.5 text-[10px]">
-                    <div
-                      className={`p-2 border rounded-lg ${
-                        effectivePendingCount > 0
-                          ? 'bg-amber-50 border-amber-200'
-                          : 'bg-slate-50 border-slate-200/70'
-                      }`}
-                    >
-                      <span className="text-slate-500 block">Lokale Datenbank</span>
-                      <span
-                        className={`font-bold ${
-                          effectivePendingCount > 0 ? 'text-amber-800' : 'text-[#2C7738]'
-                        }`}
-                      >
-                        {effectivePendingCount > 0
-                          ? `${effectivePendingCount} ausstehend`
-                          : `Offline-fähig (Rev. ${effectiveRevision})`}
-                      </span>
-                    </div>
-                    <div className="p-2 bg-slate-50 border border-slate-200/70 rounded-lg">
-                      <span className="text-slate-500 block">HTTPS-Tunnel</span>
-                      <span className="font-bold text-[#2C7738] flex items-center gap-1">
-                        <ShieldCheck size={11} className="shrink-0" />
-                        <span>Keep-Alive aktiv</span>
-                      </span>
-                    </div>
-                    <div className="p-2 bg-slate-50 border border-slate-200/70 rounded-lg">
-                      <span className="text-slate-500 block">Tempo-Bündelung</span>
-                      <span className="font-bold text-[#2C7738]">
-                        {mcpInfo?.toolCount ?? 3} Kombi-Tools
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="p-2 bg-indigo-50/50 border border-indigo-100 rounded-lg text-[10px] text-slate-700 space-y-0.5 leading-snug">
-                    <div>
-                      <strong className="text-slate-900">Lokale Datenhaltung:</strong> App arbeitet auf dem Pixel 10 Pro auch ohne Internet.
-                    </div>
-                    <div>
-                      <strong className="text-slate-900">Gezielter Zugriff:</strong> ChatGPT erhält nur die angeforderten Daten.
-                    </div>
-                    <div>
-                      <strong className="text-slate-900">Gemeinsame Funktionen &amp; Tempo:</strong> Geprüfte App-Logik, warmgehaltener Tunnel &amp; gebündelte Werkzeugaufrufe (`pixel_abfrage`, `pixel_aktion`, `pixel_abrechnung`).
-                    </div>
-                  </div>
-
-                  {effectivePendingCount > 0 && (
-                    <div className="p-2 bg-amber-50 border border-amber-200 rounded-lg flex items-center justify-between gap-2 text-[10px] text-amber-900">
-                      <span>
-                        {effectivePendingCount} lokale Änderung(en) warten auf Übertragung.
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => void flushPendingAppSync()}
-                        className="h-7 px-2.5 bg-amber-700 text-white font-semibold rounded-md shrink-0"
-                      >
-                        Jetzt senden
-                      </button>
-                    </div>
-                  )}
-
-                  {isNativeAndroid &&
-                    (nativeSyncStatus?.state === 'offline' ||
-                      nativeSyncStatus?.state === 'offline_queued') && (
-                      <div className="p-2 bg-amber-50 border border-amber-200 rounded-lg text-[10px] text-amber-900 flex items-center gap-1.5">
-                        <WifiOff size={13} className="shrink-0" />
-                        <span>
-                          Offline-Modus: Änderungen lokal gesichert – automatische Übertragung sobald WLAN/5G verfügbar ist.
-                        </span>
-                      </div>
-                    )}
-
-                  {isNativeAndroid && nativeSyncStatus?.lastError && (
-                    <div className="p-2 bg-red-50 border border-red-200 rounded-lg text-[10px] text-red-800 flex items-center gap-1.5">
-                      <AlertCircle size={13} className="shrink-0" />
-                      <span>{nativeSyncStatus.lastError}</span>
-                    </div>
-                  )}
-
-                  {/* 1. MCP-Server-Adresse (für ChatGPT) – Identisch in Web-App & Android-App */}
-                  <div className="p-2.5 bg-slate-50 border border-slate-200/80 rounded-lg space-y-1.5">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-[10px] font-bold text-[#3138A0] uppercase tracking-tight">
-                        1. MCP-Server-Adresse (für ChatGPT)
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          void handleCopyText('mcp_url', effectiveMcpUrl, 'MCP-Server-Adresse')
-                        }
-                        className="h-7 px-2.5 bg-[#3138A0] hover:bg-[#272d82] active:scale-98 text-white text-[10px] font-semibold rounded-md flex items-center gap-1 shrink-0 transition-all"
-                      >
-                        {copiedKey === 'mcp_url' ? <Check size={11} /> : <Copy size={11} />}
-                        <span>{copiedKey === 'mcp_url' ? 'Kopiert' : 'URL kopieren'}</span>
-                      </button>
-                    </div>
-                    <p className="text-[11px] font-mono text-slate-800 break-all leading-snug select-all bg-white border border-slate-200/80 rounded-md px-2 py-1.5">
-                      {effectiveMcpUrl}
-                    </p>
-                    <span className="text-[10px] text-slate-500 block">
-                      Verbindung in ChatGPT: <strong>OAuth (1-Klick-Freigabe ohne Passwort-Eingabe)</strong> oder{' '}
-                      <strong>Bearer-Schlüssel</strong> unten kopieren
-                    </span>
-                  </div>
-
-                  {/* 2. MCP-Zugangsschlüssel (direkt auslesbar & kopierbar in Web-App & Android-App) */}
-                  <div className="p-2.5 bg-slate-50 border border-slate-200/80 rounded-lg space-y-2">
-                    <span className="text-[10px] font-bold text-slate-800 uppercase tracking-tight block">
-                      2. MCP-Zugangsschlüssel (Bearer / API-Key)
-                    </span>
-                    <p className="text-[11px] font-mono text-slate-800 break-all leading-snug select-all bg-white border border-slate-200/80 rounded-md px-2 py-1.5">
-                      {showSecretToken
-                        ? resolveCurrentFullTokenSync() || effectiveMaskedToken
-                        : effectiveMaskedToken}
-                    </p>
-                    <div className="grid grid-cols-2 gap-2">
-                      <button
-                        type="button"
-                        onClick={() => void handleToggleShowSecret()}
-                        className="h-8 px-2.5 bg-white hover:bg-slate-100 active:scale-98 border border-slate-300 text-slate-800 text-[11px] font-semibold rounded-lg flex items-center justify-center gap-1.5 transition-all"
-                      >
-                        {showSecretToken ? <EyeOff size={13} /> : <Eye size={13} />}
-                        <span>{showSecretToken ? 'Verbergen' : 'Anzeigen'}</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => void handleCopyAdminToken()}
-                        className="h-8 px-2.5 bg-slate-900 hover:bg-slate-800 active:scale-98 text-white text-[11px] font-semibold rounded-lg flex items-center justify-center gap-1.5 transition-all"
-                      >
-                        {copiedKey === 'mcp_token' ? <Check size={13} /> : <Copy size={13} />}
-                        <span>
-                          {copiedKey === 'mcp_token' ? 'Kopiert!' : 'Schlüssel kopieren'}
-                        </span>
-                      </button>
-                    </div>
-                    {copiedKey === 'mcp_token' && (
-                      <div className="px-2 py-1 bg-emerald-50 border border-emerald-200 rounded-md text-[10px] font-semibold text-[#2C7738] flex items-center gap-1">
-                        <Check size={11} className="shrink-0" />
-                        <span>MCP-Zugangsschlüssel in die Zwischenablage kopiert.</span>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* 3. Sichere Google-Kontokopplung für Pixel 10 Pro + Abgleich */}
-                  <div className="space-y-2 pt-0.5">
-                    <div className="flex items-center justify-between gap-2 flex-wrap">
-                      <button
-                        type="button"
-                        onClick={handleGoogleConnectAndroid}
-                        className="h-9 px-3 bg-[#3138A0] hover:bg-[#272d82] active:scale-98 text-white text-[11px] font-semibold rounded-lg flex items-center gap-1.5 transition-all"
-                      >
-                        <ShieldCheck size={13} />
-                        <span>Mit Google verbinden (Pixel 10 Pro)</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => void handleSyncNow()}
-                        disabled={resetInProgress}
-                        className="h-9 px-2.5 bg-indigo-50 hover:bg-indigo-100 text-[#3138A0] text-[11px] font-semibold rounded-lg flex items-center gap-1 transition-colors"
-                      >
-                        <RefreshCw size={11} className={resetInProgress ? 'animate-spin' : ''} />
-                        <span>
-                          {resetDoneBanner ? 'Abgleich gestartet' : 'Jetzt abgleichen'}
-                        </span>
-                      </button>
-
-                      {mcpInfo?.tokenSource !== 'env' && (
-                        <button
-                          type="button"
-                          onClick={() => void handleRotateMcpToken()}
-                          disabled={rotatingToken}
-                          className="h-9 px-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-[10px] font-semibold rounded-lg flex items-center gap-1 transition-colors"
-                        >
-                          <RefreshCw size={11} className={rotatingToken ? 'animate-spin' : ''} />
-                          <span>Schlüssel erneuern</span>
-                        </button>
-                      )}
-                    </div>
-
-                    <div className="flex items-center gap-1.5">
-                      <input
-                        type="text"
-                        inputMode="numeric"
-                        maxLength={7}
-                        placeholder="Optional: 6-stelliger Code"
-                        value={pairingCodeInput}
-                        onChange={(e) => setPairingCodeInput(e.target.value)}
-                        className="flex-1 h-8 px-2.5 bg-white border border-slate-200 rounded-lg text-[11px] font-mono text-slate-900 outline-hidden focus:border-[#3138A0]"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => void handlePairWithSixDigitCode()}
-                        disabled={resetInProgress || !pairingCodeInput.trim()}
-                        className="h-8 px-2.5 bg-slate-900 hover:bg-slate-800 disabled:opacity-40 text-white text-[10px] font-semibold rounded-lg shrink-0"
-                      >
-                        Code verbinden
-                      </button>
-                    </div>
-
-                    {pairingError && (
-                      <p className="text-[10px] font-semibold text-[#B42318]">{pairingError}</p>
-                    )}
-                    {pairingFeedback && (
-                      <p className="text-[10px] font-semibold text-[#2C7738]">{pairingFeedback}</p>
-                    )}
-                  </div>
-
-                  {(effectiveLastSyncIso || effectiveTotalCalls > 0) && (
-                    <p className="text-[10px] text-slate-500">
-                      {effectiveLastSyncIso ? (
-                        <>
-                          Letzter Abgleich:{' '}
-                          <span className="font-semibold text-slate-700">
-                            {new Date(effectiveLastSyncIso).toLocaleString('de-AT')}
-                          </span>
-                        </>
-                      ) : null}
-                      {effectiveTotalCalls > 0 ? ` · ChatGPT-Aufrufe: ${effectiveTotalCalls}` : ''}
-                    </p>
-                  )}
-                </div>
-              </div>
-              </>
-              )}
-
-              {isNativeAndroid && statusChecked && (
-                <div className="p-2 bg-emerald-50 border border-emerald-200 rounded-xl text-[11px] text-[#2C7738] font-semibold flex items-center gap-1.5 animate-fade-in">
-                  <CheckCircle size={14} />
-                  <span>
-                    MCP-Verbindung, OAuth-2.1-Endpunkte und Hintergrund-Synchronisation geprüft.
-                  </span>
-                </div>
-              )}
-
-              {isNativeAndroid && (
-                <button
-                  onClick={() => void handleStatusCheck()}
-                  disabled={statusCheckRunning}
-                  className="w-full h-11 bg-[#3138A0] hover:bg-[#272d82] active:scale-98 text-white font-semibold rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-2xs transition-all"
-                >
-                  <span>{statusCheckRunning ? 'Prüfe Verbindung…' : 'Verbindungsstatus prüfen'}</span>
-                </button>
-              )}
             </div>
           )}
         </div>
@@ -1238,7 +752,7 @@ export const EinstellungenView: React.FC = () => {
               <span className="text-[11px] text-slate-500">
                 {isNativeAndroid
                   ? 'Startbildschirm-Icon · 128 MB insgesamt · Bereinigung'
-                  : 'Datenabgleich mit Pixel 10 Pro · Speicher & Bereinigung'}
+                  : 'Lokaler Browser-Cache & App-Installation'}
               </span>
             </div>
             {speicherOpen ? (
@@ -1250,40 +764,6 @@ export const EinstellungenView: React.FC = () => {
 
           {speicherOpen && (
             <div className="p-3.5 bg-slate-50 border-t border-slate-100 space-y-3">
-              {!isNativeAndroid && (
-                <div className="p-3 bg-white border border-slate-200 rounded-xl space-y-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <div>
-                      <span className="text-xs font-bold text-slate-900 block leading-tight">
-                        Datenstand (Synchronisation mit Pixel 10 Pro)
-                      </span>
-                      <span className="text-[11px] text-slate-500 block">
-                        Revision #{appSyncStatus.revision}
-                        {appSyncStatus.pendingSyncCount > 0
-                          ? ` · ${appSyncStatus.pendingSyncCount} lokale Änderung(en) ausstehend`
-                          : ' · Alle Geschäftsdaten synchron'}
-                      </span>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        void (appSyncStatus.pendingSyncCount > 0
-                          ? flushPendingAppSync()
-                          : refreshFromServer())
-                      }
-                      disabled={appSyncStatus.syncInFlight}
-                      className="h-8 px-2.5 bg-indigo-50 hover:bg-indigo-100 text-[#3138A0] text-[11px] font-semibold rounded-lg flex items-center gap-1 transition-colors shrink-0"
-                    >
-                      <RefreshCw
-                        size={12}
-                        className={appSyncStatus.syncInFlight ? 'animate-spin' : ''}
-                      />
-                      <span>Jetzt abgleichen</span>
-                    </button>
-                  </div>
-                </div>
-              )}
-
               <PWAInstallCard />
 
               <div className="grid grid-cols-2 gap-2 text-center">

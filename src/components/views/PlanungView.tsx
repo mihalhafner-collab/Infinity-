@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { User as FirebaseUser } from 'firebase/auth';
 import { useApp } from '../../context/AppContext.tsx';
 import { Header } from '../common/Header.tsx';
@@ -17,6 +17,7 @@ import {
 import { isNativeAndroidApp } from '../../services/nativeBridge.ts';
 import {
   AlertTriangle,
+  ArrowRight,
   Calendar,
   Check,
   ChevronLeft,
@@ -28,7 +29,8 @@ import {
   Navigation,
   RefreshCw,
   Trash2,
-  User
+  User,
+  X
 } from 'lucide-react';
 import { Appointment } from '../../types/index.ts';
 import { findDayConflictingAppointmentIds } from '../../utils/appointmentConflict.ts';
@@ -53,6 +55,7 @@ interface UnifiedPlanItem {
 }
 
 const WEEKDAY_SHORT = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'];
+const WEEKDAY_MON_FIRST = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'];
 const MONTH_SHORT = [
   'Jan.',
   'Feb.',
@@ -66,6 +69,20 @@ const MONTH_SHORT = [
   'Okt.',
   'Nov.',
   'Dez.'
+];
+const MONTH_LONG = [
+  'Januar',
+  'Februar',
+  'März',
+  'April',
+  'Mai',
+  'Juni',
+  'Juli',
+  'August',
+  'September',
+  'Oktober',
+  'November',
+  'Dezember'
 ];
 
 function toLocalIsoDate(d: Date): string {
@@ -83,6 +100,13 @@ function parseIsoLocal(iso: string): Date {
 function shiftIsoDate(iso: string, deltaDays: number): string {
   const dt = parseIsoLocal(iso);
   dt.setDate(dt.getDate() + deltaDays);
+  return toLocalIsoDate(dt);
+}
+
+function shiftMonthIso(monthStartIso: string, deltaMonths: number): string {
+  const dt = parseIsoLocal(monthStartIso);
+  dt.setDate(1);
+  dt.setMonth(dt.getMonth() + deltaMonths);
   return toLocalIsoDate(dt);
 }
 
@@ -119,9 +143,17 @@ function formatShortDayDE(iso: string): string {
   return `${wd}, ${String(dt.getDate()).padStart(2, '0')}.${String(dt.getMonth() + 1).padStart(2, '0')}.`;
 }
 
+function formatRelativeDayBadgeDE(iso: string, todayIso: string): string {
+  if (iso === todayIso) return 'Heute';
+  if (iso === shiftIsoDate(todayIso, 1)) return 'Morgen';
+  if (iso === shiftIsoDate(todayIso, 2)) return 'Übermorgen';
+  return formatShortDayDE(iso);
+}
+
 export const PlanungView: React.FC = () => {
   const {
     appointments,
+    workRecords,
     customers,
     properties,
     addAppointment,
@@ -129,7 +161,8 @@ export const PlanungView: React.FC = () => {
     setSelectedCustomerId,
     setPrefilledWorkTitle,
     setActiveModal,
-    navigate
+    navigate,
+    registerLocalBackLayer
   } = useApp();
 
   const todayIso = useMemo(() => toLocalIsoDate(new Date()), []);
@@ -137,6 +170,28 @@ export const PlanungView: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'tag' | 'woche' | 'tour'>('tag');
   const [selectedDate, setSelectedDate] = useState<string>(todayIso);
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>('all');
+
+  // Kompakter Monatskalender-Picker (Schnellwahl in der Daumenzone)
+  const [isCalendarPickerOpen, setIsCalendarPickerOpen] = useState(false);
+  const [calendarViewMonthIso, setCalendarViewMonthIso] = useState<string>(
+    () => `${todayIso.slice(0, 7)}-01`
+  );
+  const [showAllUpcoming, setShowAllUpcoming] = useState(false);
+
+  // Horizontal-Swipe für die 7-Tage-Leiste (Roter Bereich)
+  const swipeStartRef = useRef<{ x: number; y: number } | null>(null);
+  const didSwipeRef = useRef(false);
+  const [swipeOffsetX, setSwipeOffsetX] = useState(0);
+
+  const closeCalendarBackRef = useRef<() => void>(() => {});
+  closeCalendarBackRef.current = () => {
+    setIsCalendarPickerOpen(false);
+  };
+
+  useEffect(() => {
+    if (!isCalendarPickerOpen) return;
+    return registerLocalBackLayer('planung_calendar_picker', closeCalendarBackRef);
+  }, [isCalendarPickerOpen, registerLocalBackLayer]);
 
   const isNativeAndroid = isNativeAndroidApp();
 
@@ -179,7 +234,7 @@ export const PlanungView: React.FC = () => {
   }, [weekMondayIso]);
 
   const fetchStartIso = useMemo(() => shiftIsoDate(weekMondayIso, -14), [weekMondayIso]);
-  const fetchEndIso = useMemo(() => shiftIsoDate(weekMondayIso, 35), [weekMondayIso]);
+  const fetchEndIso = useMemo(() => shiftIsoDate(weekMondayIso, 45), [weekMondayIso]);
 
   const loadCalendarEvents = useCallback(
     async (forceRefresh = false) => {
@@ -245,6 +300,17 @@ export const PlanungView: React.FC = () => {
     return keys;
   }, [appointments]);
 
+  // Erledigte Termine (denen bereits ein Arbeitsnachweis zugeordnet ist)
+  const completedAppointmentIds = useMemo(() => {
+    const set = new Set<string>();
+    workRecords.forEach((w) => {
+      if (w.appointment_id) {
+        set.add(w.appointment_id);
+      }
+    });
+    return set;
+  }, [workRecords]);
+
   const allUnifiedItems = useMemo<UnifiedPlanItem[]>(() => {
     const appItems: UnifiedPlanItem[] = appointments.map((a) => ({
       uid: `app-${a.id}`,
@@ -287,24 +353,69 @@ export const PlanungView: React.FC = () => {
     return allUnifiedItems;
   }, [allUnifiedItems, sourceFilter]);
 
-  const sortPlanItems = (items: UnifiedPlanItem[]) =>
-    [...items].sort((a, b) => {
-      if (!a.start_time && !b.start_time) return a.title.localeCompare(b.title);
-      if (!a.start_time) return 1;
-      if (!b.start_time) return -1;
-      const cmp = a.start_time.localeCompare(b.start_time);
-      if (cmp !== 0) return cmp;
-      return a.source === 'app' ? -1 : 1;
-    });
+  const sortPlanItems = useCallback(
+    (items: UnifiedPlanItem[]) =>
+      [...items].sort((a, b) => {
+        if (a.date !== b.date) return a.date.localeCompare(b.date);
+        if (!a.start_time && !b.start_time) return a.title.localeCompare(b.title);
+        if (!a.start_time) return 1;
+        if (!b.start_time) return -1;
+        const cmp = a.start_time.localeCompare(b.start_time);
+        if (cmp !== 0) return cmp;
+        return a.source === 'app' ? -1 : 1;
+      }),
+    []
+  );
 
   const dayAllSources = useMemo(
     () => sortPlanItems(allUnifiedItems.filter((i) => i.date === selectedDate)),
-    [allUnifiedItems, selectedDate]
+    [allUnifiedItems, selectedDate, sortPlanItems]
   );
 
   const dayItems = useMemo(
     () => sortPlanItems(filteredUnifiedItems.filter((i) => i.date === selectedDate)),
-    [filteredUnifiedItems, selectedDate]
+    [filteredUnifiedItems, selectedDate, sortPlanItems]
+  );
+
+  // Nächste offene Termine (chronologisch ab den Folgetagen nach selectedDate, ohne bereits erledigte oder doppelt importierte Einträge)
+  const upcomingOpenItems = useMemo(() => {
+    const minFutureDate = selectedDate >= todayIso ? selectedDate : todayIso;
+    const candidates = filteredUnifiedItems.filter((item) => {
+      // Nur kommende Tage nach dem aktuell angezeigten Tag (und nicht in der Vergangenheit)
+      if (item.date <= selectedDate || item.date < minFutureDate) return false;
+
+      // Bereits als Arbeit erledigte App-Termine ausblenden
+      if (item.source === 'app' && item.appRecord && completedAppointmentIds.has(item.appRecord.id)) {
+        return false;
+      }
+
+      // Bei Filter 'all' bereits in die App übernommene Google-Termine nicht doppelt listen
+      if (
+        sourceFilter === 'all' &&
+        item.source === 'google' &&
+        item.googleRecord &&
+        importedGoogleKeys.has(`${item.googleRecord.googleEventId}_${item.date}`)
+      ) {
+        return false;
+      }
+
+      return true;
+    });
+
+    return sortPlanItems(candidates);
+  }, [
+    filteredUnifiedItems,
+    selectedDate,
+    todayIso,
+    completedAppointmentIds,
+    sourceFilter,
+    importedGoogleKeys,
+    sortPlanItems
+  ]);
+
+  const visibleUpcomingItems = useMemo(
+    () => (showAllUpcoming ? upcomingOpenItems : upcomingOpenItems.slice(0, 6)),
+    [upcomingOpenItems, showAllUpcoming]
   );
 
   const dayAppCount = useMemo(
@@ -361,7 +472,6 @@ export const PlanungView: React.FC = () => {
     () => allUnifiedItems.filter((i) => weekDateSet.has(i.date)),
     [allUnifiedItems, weekDateSet]
   );
-  const activeScopeAllCount = activeTab === 'woche' ? weekAllSources.length : dayAllSources.length;
   const activeScopeAppCount =
     activeTab === 'woche'
       ? weekAllSources.filter((i) => i.source === 'app').length
@@ -371,12 +481,93 @@ export const PlanungView: React.FC = () => {
       ? weekAllSources.filter((i) => i.source === 'google').length
       : dayGoogleCount;
 
-  const handlePrev = () => {
-    setSelectedDate((prev) => shiftIsoDate(prev, activeTab === 'woche' ? -7 : -1));
+  // Monatskalender-Zellen für das Kalender-Popup berechnen
+  const calendarMonthData = useMemo(() => {
+    const firstDayDt = parseIsoLocal(calendarViewMonthIso);
+    const year = firstDayDt.getFullYear();
+    const month = firstDayDt.getMonth();
+    const monthLabel = `${MONTH_LONG[month]} ${year}`;
+
+    const firstWeekdayMondayBased = (firstDayDt.getDay() + 6) % 7; // Mo=0 .. So=6
+    const gridStartIso = shiftIsoDate(calendarViewMonthIso, -firstWeekdayMondayBased);
+
+    const days = Array.from({ length: 42 }, (_, idx) => {
+      const iso = shiftIsoDate(gridStartIso, idx);
+      const dt = parseIsoLocal(iso);
+      return {
+        iso,
+        dayNum: dt.getDate(),
+        inCurrentMonth: dt.getMonth() === month
+      };
+    });
+
+    return { monthLabel, days };
+  }, [calendarViewMonthIso]);
+
+  // Swipe-Handler für die 7-Tage-Leiste (Woche vor/zurück wischen)
+  const handleWeekStripTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
+    const touch = e.touches[0];
+    if (!touch) return;
+    swipeStartRef.current = { x: touch.clientX, y: touch.clientY };
+    didSwipeRef.current = false;
   };
 
-  const handleNext = () => {
-    setSelectedDate((prev) => shiftIsoDate(prev, activeTab === 'woche' ? 7 : 1));
+  const handleWeekStripTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (!swipeStartRef.current) return;
+    const touch = e.touches[0];
+    if (!touch) return;
+    const dx = touch.clientX - swipeStartRef.current.x;
+    const dy = touch.clientY - swipeStartRef.current.y;
+    if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 8) {
+      didSwipeRef.current = true;
+      const clamped = Math.max(-44, Math.min(44, dx * 0.45));
+      setSwipeOffsetX(clamped);
+    }
+  };
+
+  const handleWeekStripTouchEnd = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (!swipeStartRef.current) return;
+    const touch = e.changedTouches[0];
+    const start = swipeStartRef.current;
+    swipeStartRef.current = null;
+    setSwipeOffsetX(0);
+    if (!touch) return;
+
+    const dx = touch.clientX - start.x;
+    const dy = touch.clientY - start.y;
+    if (Math.abs(dx) >= 36 && Math.abs(dx) > Math.abs(dy) * 1.15) {
+      didSwipeRef.current = true;
+      // Links wischen -> nächste Woche (+7), Rechts wischen -> vorige Woche (-7)
+      setSelectedDate((prev) => shiftIsoDate(prev, dx < 0 ? 7 : -7));
+      setTimeout(() => {
+        didSwipeRef.current = false;
+      }, 80);
+    } else {
+      setTimeout(() => {
+        didSwipeRef.current = false;
+      }, 40);
+    }
+  };
+
+  const handleWeekStripPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.pointerType === 'touch') return;
+    swipeStartRef.current = { x: e.clientX, y: e.clientY };
+    didSwipeRef.current = false;
+  };
+
+  const handleWeekStripPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.pointerType === 'touch' || !swipeStartRef.current) return;
+    const start = swipeStartRef.current;
+    swipeStartRef.current = null;
+    const dx = e.clientX - start.x;
+    const dy = e.clientY - start.y;
+    if (Math.abs(dx) >= 36 && Math.abs(dx) > Math.abs(dy) * 1.15) {
+      didSwipeRef.current = true;
+      setSelectedDate((prev) => shiftIsoDate(prev, dx < 0 ? 7 : -7));
+      setTimeout(() => {
+        didSwipeRef.current = false;
+      }, 80);
+    }
   };
 
   const handleImportGoogleToApp = (item: UnifiedPlanItem) => {
@@ -485,9 +676,9 @@ export const PlanungView: React.FC = () => {
           </div>
         )}
 
-        {/* 1. TAG-ANSICHT */}
+        {/* 1. TAG-ANSICHT (ZEITPLAN + NÄCHSTE OFFENE TERMINE) */}
         {activeTab === 'tag' && (
-          <div className="space-y-3">
+          <div className="space-y-4">
             {untimedDayItems.length > 0 && (
               <div className="space-y-1.5">
                 <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 px-0.5 block">
@@ -787,18 +978,140 @@ export const PlanungView: React.FC = () => {
             )}
 
             {dayItems.length === 0 && (
-              <div className="p-8 bg-white border border-slate-200 rounded-2xl text-center space-y-1.5">
-                <div className="w-10 h-10 rounded-full bg-slate-100 text-slate-400 flex items-center justify-center mx-auto">
-                  <Calendar size={18} />
+              <div className="p-4 bg-white border border-slate-200 rounded-2xl flex items-center gap-3">
+                <div className="w-9 h-9 rounded-full bg-slate-100 text-slate-400 flex items-center justify-center shrink-0">
+                  <Calendar size={17} />
                 </div>
-                <p className="text-xs font-bold text-slate-800">
-                  Freier Tag ({formatDayHeaderDE(selectedDate)})
-                </p>
-                <p className="text-[11px] text-slate-500">
-                  Keine Termine im gewählten Filter eingetragen.
-                </p>
+                <div className="min-w-0">
+                  <p className="text-xs font-bold text-slate-800">
+                    Freier Tag ({formatDayHeaderDE(selectedDate)})
+                  </p>
+                  <p className="text-[11px] text-slate-500">
+                    Keine Termine am gewählten Tag eingetragen.
+                  </p>
+                </div>
               </div>
             )}
+
+            {/* NÄCHSTE OFFENE TERMINE DIREKT IM ZEITPLAN */}
+            <div className="space-y-2 pt-1">
+              <div className="flex items-center justify-between px-0.5">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                  Nächste offene Termine ({upcomingOpenItems.length})
+                </span>
+                {upcomingOpenItems.length > 6 && (
+                  <button
+                    type="button"
+                    onClick={() => setShowAllUpcoming((prev) => !prev)}
+                    className="text-[11px] font-bold text-[#3138A0] hover:underline"
+                  >
+                    {showAllUpcoming ? 'Weniger anzeigen' : `Alle ${upcomingOpenItems.length} zeigen`}
+                  </button>
+                )}
+              </div>
+
+              {upcomingOpenItems.length === 0 ? (
+                <div className="p-3.5 bg-white/80 border border-dashed border-slate-200 rounded-xl text-center text-[11px] text-slate-400">
+                  Keine weiteren offenen Termine in den nächsten Wochen.
+                </div>
+              ) : (
+                <div className="space-y-1.5">
+                  {visibleUpcomingItems.map((item) => {
+                    const cust = item.customer_id
+                      ? customers.find((c) => c.id === item.customer_id)
+                      : null;
+                    const prop = item.property_id
+                      ? properties.find((p) => p.id === item.property_id)
+                      : null;
+                    const addr = resolveDisplayAddress(item);
+                    const relBadge = formatRelativeDayBadgeDE(item.date, todayIso);
+                    const isAlreadyInApp =
+                      item.source === 'google' &&
+                      item.googleRecord &&
+                      importedGoogleKeys.has(
+                        `${item.googleRecord.googleEventId}_${item.date}`
+                      );
+
+                    return (
+                      <div
+                        key={`upcoming-${item.uid}`}
+                        onClick={() => setSelectedDate(item.date)}
+                        className={`p-2.5 bg-white border border-slate-200 hover:border-slate-300 rounded-xl shadow-2xs border-l-4 flex items-center justify-between gap-2.5 cursor-pointer transition-all active:scale-[0.99] ${
+                          item.source === 'app' ? 'border-l-[#3138A0]' : 'border-l-[#0B8043]'
+                        }`}
+                      >
+                        {/* Links: Kompaktes Datum & Uhrzeit */}
+                        <div className="w-21 shrink-0 pr-2 border-r border-slate-100">
+                          <span className="text-[11px] font-bold text-slate-900 block leading-tight">
+                            {relBadge}
+                          </span>
+                          <span className="text-[10px] text-slate-400 font-medium block leading-tight">
+                            {relBadge !== formatShortDayDE(item.date)
+                              ? formatShortDayDE(item.date)
+                              : item.start_time
+                                ? `${item.start_time}${item.end_time ? `–${item.end_time}` : ''}`
+                                : 'Ganztägig'}
+                          </span>
+                          {relBadge !== formatShortDayDE(item.date) && (
+                            <span className="text-[10px] font-mono font-semibold text-slate-600 block mt-0.5 leading-tight">
+                              {item.start_time
+                                ? `${item.start_time}${item.end_time ? `–${item.end_time}` : ''}`
+                                : 'Ganztägig'}
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Mitte: Titel + Kunde / Adresse */}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-1.5">
+                            <span
+                              className={`px-1.5 py-0.2 rounded text-[9px] font-bold shrink-0 ${
+                                item.source === 'app'
+                                  ? 'bg-indigo-50 text-[#3138A0]'
+                                  : 'bg-emerald-50 text-[#0B8043]'
+                              }`}
+                            >
+                              {item.source === 'app' ? 'App' : 'Google'}
+                            </span>
+                            <h4 className="text-xs font-bold text-slate-900 truncate">
+                              {item.title}
+                            </h4>
+                          </div>
+
+                          {(cust || prop || addr) && (
+                            <p className="text-[11px] text-slate-500 truncate mt-0.5">
+                              {cust ? cust.name : ''}
+                              {cust && prop ? ` · ${prop.name}` : prop ? prop.name : ''}
+                              {(cust || prop) && addr ? ` · ${addr}` : addr || ''}
+                            </p>
+                          )}
+                        </div>
+
+                        {/* Rechts: Schnellaktion / Sprung zum Tag */}
+                        <div className="shrink-0 flex items-center gap-1">
+                          {item.source === 'google' && !isAlreadyInApp && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleImportGoogleToApp(item);
+                              }}
+                              title="In App übernehmen"
+                              className="h-7 px-2 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-[#0B8043] text-[10px] font-bold flex items-center gap-1"
+                            >
+                              <Download size={11} />
+                            </button>
+                          )}
+                          <span className="w-6 h-6 rounded-lg bg-slate-50 text-slate-400 flex items-center justify-center">
+                            <ArrowRight size={13} />
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           </div>
         )}
 
@@ -1036,6 +1349,123 @@ export const PlanungView: React.FC = () => {
         )}
       </div>
 
+      {/* ==================== SCHNELLWAHL-KALENDER POPUP (ÖFFNET ÜBER SCHWARZEN BEREICH) ==================== */}
+      {isCalendarPickerOpen && (
+        <div
+          className="fixed inset-0 z-40 bg-slate-900/25 flex flex-col justify-end"
+          onClick={() => setIsCalendarPickerOpen(false)}
+        >
+          <div
+            className="mx-3 mb-36 bg-white border border-slate-200 rounded-2xl shadow-xl p-3 space-y-2.5 animate-in fade-in slide-in-from-bottom-2 duration-150"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between gap-2 pb-1.5 border-b border-slate-100">
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => setCalendarViewMonthIso((prev) => shiftMonthIso(prev, -1))}
+                  className="w-8 h-8 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 flex items-center justify-center"
+                  aria-label="Vorheriger Monat"
+                >
+                  <ChevronLeft size={16} />
+                </button>
+                <span className="text-xs font-bold text-slate-900 px-2 min-w-[115px] text-center">
+                  {calendarMonthData.monthLabel}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setCalendarViewMonthIso((prev) => shiftMonthIso(prev, 1))}
+                  className="w-8 h-8 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 flex items-center justify-center"
+                  aria-label="Nächster Monat"
+                >
+                  <ChevronRight size={16} />
+                </button>
+              </div>
+
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedDate(todayIso);
+                    setCalendarViewMonthIso(`${todayIso.slice(0, 7)}-01`);
+                    setIsCalendarPickerOpen(false);
+                  }}
+                  className="h-8 px-2.5 rounded-lg bg-indigo-50 text-[#3138A0] text-xs font-bold"
+                >
+                  Heute
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsCalendarPickerOpen(false)}
+                  className="w-8 h-8 rounded-lg bg-slate-100 text-slate-500 hover:text-slate-800 flex items-center justify-center"
+                  aria-label="Kalender schließen"
+                >
+                  <X size={15} />
+                </button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-7 gap-1 text-center">
+              {WEEKDAY_MON_FIRST.map((wd) => (
+                <span
+                  key={wd}
+                  className="text-[10px] font-bold uppercase text-slate-400 py-0.5"
+                >
+                  {wd}
+                </span>
+              ))}
+            </div>
+
+            <div className="grid grid-cols-7 gap-1">
+              {calendarMonthData.days.map((d) => {
+                const isSelected = d.iso === selectedDate;
+                const isToday = d.iso === todayIso;
+                const hasApp = appointments.some((a) => a.date === d.iso);
+                const hasGoogle = googleEvents.some((g) => g.date === d.iso);
+
+                return (
+                  <button
+                    key={d.iso}
+                    type="button"
+                    onClick={() => {
+                      setSelectedDate(d.iso);
+                      setIsCalendarPickerOpen(false);
+                    }}
+                    className={`h-9 rounded-xl flex flex-col items-center justify-center transition-all border ${
+                      isSelected
+                        ? 'bg-[#3138A0] border-[#3138A0] text-white font-bold shadow-2xs'
+                        : isToday
+                          ? 'bg-indigo-50 border-indigo-200 text-[#3138A0] font-bold'
+                          : d.inCurrentMonth
+                            ? 'bg-slate-50/70 border-transparent text-slate-800 hover:bg-slate-100 font-semibold'
+                            : 'bg-transparent border-transparent text-slate-300 font-medium'
+                    }`}
+                  >
+                    <span className="text-xs leading-none tabular-nums">{d.dayNum}</span>
+                    <div className="flex items-center gap-0.5 h-1.5 mt-0.5">
+                      {hasApp && (
+                        <span
+                          className={`w-1 h-1 rounded-full ${
+                            isSelected ? 'bg-white' : 'bg-[#3138A0]'
+                          }`}
+                        />
+                      )}
+                      {hasGoogle && (
+                        <span
+                          className={`w-1 h-1 rounded-full ${
+                            isSelected ? 'bg-emerald-300' : 'bg-[#0B8043]'
+                          }`}
+                        />
+                      )}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
       <UndoToast />
 
       {/* ==================== UNTEN: KOMPLETTE BEDIENUNG (PIXEL 10 PRO DAUMENZONE) ==================== */}
@@ -1069,8 +1499,20 @@ export const PlanungView: React.FC = () => {
             </div>
           )}
 
-          {/* 7-Tage-Schnellwahl (Mo–So) mit App- & Google-Indikatorpunkten */}
-          <div className="grid grid-cols-7 gap-1.5">
+          {/* ROTER BEREICH: 7-Tage-Schnellwahl (Mo–So), links & rechts wischbar für Wochenwechsel */}
+          <div
+            onTouchStart={handleWeekStripTouchStart}
+            onTouchMove={handleWeekStripTouchMove}
+            onTouchEnd={handleWeekStripTouchEnd}
+            onPointerDown={handleWeekStripPointerDown}
+            onPointerUp={handleWeekStripPointerUp}
+            style={
+              swipeOffsetX !== 0
+                ? { transform: `translateX(${swipeOffsetX}px)` }
+                : undefined
+            }
+            className="grid grid-cols-7 gap-1.5 touch-pan-y select-none transition-transform duration-75"
+          >
             {weekDays.map((wd) => {
               const isSelected = selectedDate === wd.date;
               const isToday = wd.date === todayIso;
@@ -1082,6 +1524,7 @@ export const PlanungView: React.FC = () => {
                   key={wd.date}
                   type="button"
                   onClick={() => {
+                    if (didSwipeRef.current) return;
                     setSelectedDate(wd.date);
                     if (activeTab === 'woche') {
                       setActiveTab('tag');
@@ -1120,51 +1563,27 @@ export const PlanungView: React.FC = () => {
             })}
           </div>
 
-          {/* Datumsnavigation + Quellenfilter */}
-          <div className="flex items-center justify-between gap-1.5">
-            {/* Datum Vor / Kalender / Heute / Zurück */}
-            <div className="flex items-center gap-0.5 bg-slate-100 rounded-xl p-0.5 shrink-0">
-              <button
-                type="button"
-                onClick={handlePrev}
-                className="w-9 h-9 flex items-center justify-center text-slate-800 hover:bg-white rounded-lg transition-colors"
-                aria-label="Zurück"
-              >
-                <ChevronLeft size={19} />
-              </button>
-
-              <label className="relative cursor-pointer h-9 px-2.5 flex items-center gap-1.5 text-xs font-bold text-slate-900 hover:bg-white rounded-lg transition-colors">
-                <Calendar size={14} className="text-[#3138A0]" />
-                <span>{formatShortDayDE(selectedDate)}</span>
-                <input
-                  type="date"
-                  value={selectedDate}
-                  onChange={(e) => {
-                    if (e.target.value) setSelectedDate(e.target.value);
-                  }}
-                  className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
-                />
-              </label>
-
-              {selectedDate !== todayIso && (
-                <button
-                  type="button"
-                  onClick={() => setSelectedDate(todayIso)}
-                  className="h-9 px-2.5 text-xs font-bold text-[#3138A0] bg-white rounded-lg shadow-2xs"
-                >
-                  Heute
-                </button>
-              )}
-
-              <button
-                type="button"
-                onClick={handleNext}
-                className="w-9 h-9 flex items-center justify-center text-slate-800 hover:bg-white rounded-lg transition-colors"
-                aria-label="Weiter"
-              >
-                <ChevronRight size={19} />
-              </button>
-            </div>
+          {/* SCHWARZER BEREICH (VERKLEINERT, ÖFFNET NUR KALENDERANZEIGE ZUR SCHNELLEN WAHL) + QUELLENFILTER */}
+          <div className="flex items-center justify-between gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setCalendarViewMonthIso(`${selectedDate.slice(0, 7)}-01`);
+                setIsCalendarPickerOpen((prev) => !prev);
+              }}
+              className={`h-8 px-2.5 rounded-xl flex items-center gap-1.5 text-xs font-bold transition-all shrink-0 ${
+                isCalendarPickerOpen
+                  ? 'bg-[#3138A0] text-white shadow-2xs'
+                  : 'bg-slate-100 text-slate-900 hover:bg-slate-200/70'
+              }`}
+              aria-label="Kalender zur schnellen Wahl öffnen"
+            >
+              <Calendar
+                size={13}
+                className={isCalendarPickerOpen ? 'text-white' : 'text-[#3138A0]'}
+              />
+              <span>{formatShortDayDE(selectedDate)}</span>
+            </button>
 
             {/* Quellenfilter (Alle / App / Google) + Sync */}
             <div className="flex items-center gap-1 min-w-0">
@@ -1172,7 +1591,7 @@ export const PlanungView: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setSourceFilter('all')}
-                  className={`h-9 px-2.5 rounded-lg text-xs font-bold transition-all ${
+                  className={`h-8 px-2.5 rounded-lg text-xs font-bold transition-all ${
                     sourceFilter === 'all'
                       ? 'bg-white text-slate-950 shadow-2xs'
                       : 'text-slate-600'
@@ -1183,7 +1602,7 @@ export const PlanungView: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setSourceFilter('app')}
-                  className={`h-9 px-2.5 rounded-lg text-xs font-bold transition-all ${
+                  className={`h-8 px-2.5 rounded-lg text-xs font-bold transition-all ${
                     sourceFilter === 'app'
                       ? 'bg-[#3138A0] text-white shadow-2xs'
                       : 'text-[#3138A0]'
@@ -1194,7 +1613,7 @@ export const PlanungView: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setSourceFilter('google')}
-                  className={`h-9 px-2.5 rounded-lg text-xs font-bold transition-all ${
+                  className={`h-8 px-2.5 rounded-lg text-xs font-bold transition-all ${
                     sourceFilter === 'google'
                       ? 'bg-[#0B8043] text-white shadow-2xs'
                       : 'text-[#0B8043]'
@@ -1210,9 +1629,9 @@ export const PlanungView: React.FC = () => {
                   onClick={() => void loadCalendarEvents(true)}
                   disabled={isLoadingCalendar}
                   title="Google Kalender aktualisieren"
-                  className="w-10 h-10 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-[#0B8043] flex items-center justify-center shrink-0 transition-colors disabled:opacity-50"
+                  className="w-8 h-8 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-[#0B8043] flex items-center justify-center shrink-0 transition-colors disabled:opacity-50"
                 >
-                  <RefreshCw size={16} className={isLoadingCalendar ? 'animate-spin' : ''} />
+                  <RefreshCw size={14} className={isLoadingCalendar ? 'animate-spin' : ''} />
                 </button>
               )}
             </div>
