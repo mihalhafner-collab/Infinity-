@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import fs from 'node:fs';
 import path from 'node:path';
 import dotenv from 'dotenv';
 import express from 'express';
@@ -11,6 +12,7 @@ import {
   COLLECTION_NAMES,
   MCP_TOOLS,
   callMcpTool,
+  capDeletedTombstones,
   getAdminOverview,
   getMcpConfig,
   getStore,
@@ -25,7 +27,11 @@ import {
 } from './src/server/mcpAdminEngine.ts';
 import type { AppDataSnapshot } from './src/server/mcpAdminEngine.ts';
 import {
-  createSignedWebSessionCookie,
+  getAllowedOwnerEmail,
+  verifyFirebaseGoogleIdToken
+} from './src/server/firebaseTokenVerifier.ts';
+import {
+  createSignedWebSessionToken,
   exchangeOAuthToken,
   exchangeOneTimeAndroidPairingCode,
   getAuthServerMetadata,
@@ -34,14 +40,17 @@ import {
   hydrateOAuthStore,
   issueAndroidDeviceSyncToken,
   issueAuthorizationCode,
+  issueOAuthCsrfToken,
   issueOneTimeAndroidPairingCode,
   recordAndroidSyncActivity,
   registerOAuthClient,
+  renderAndroidPairPageHtml,
   renderAuthorizePageHtml,
   revokeToken,
   validateAuthorizeRequest,
   verifyAnyAuthorizedToken,
-  verifySignedWebSessionCookie
+  verifyOAuthCsrfToken,
+  verifySignedWebSessionToken
 } from './src/server/mcpOAuth.ts';
 
 dotenv.config();
@@ -171,9 +180,69 @@ function applyNoLeakSecurityHeaders(res: Response): void {
   res.setHeader('X-Content-Type-Options', 'nosniff');
 }
 
-function setOwnerSessionCookie(req: Request, res: Response): void {
-  const signed = createSignedWebSessionCookie();
-  const host = req.get('host') || '';
+let cachedPublicFirebaseConfigJson: string | null = null;
+
+function getPublicFirebaseClientConfigJson(): string {
+  if (cachedPublicFirebaseConfigJson) return cachedPublicFirebaseConfigJson;
+  try {
+    const cfgPath = path.resolve(process.cwd(), 'firebase-applet-config.json');
+    if (fs.existsSync(cfgPath)) {
+      const parsed = JSON.parse(fs.readFileSync(cfgPath, 'utf-8')) as {
+        apiKey?: string;
+        authDomain?: string;
+        projectId?: string;
+        appId?: string;
+      };
+      cachedPublicFirebaseConfigJson = JSON.stringify({
+        apiKey: parsed.apiKey || '',
+        authDomain: parsed.authDomain || 'gen-lang-client-0369636054.firebaseapp.com',
+        projectId: parsed.projectId || 'gen-lang-client-0369636054',
+        appId: parsed.appId || ''
+      });
+      return cachedPublicFirebaseConfigJson;
+    }
+  } catch {
+    // Fallback below
+  }
+  cachedPublicFirebaseConfigJson = JSON.stringify({
+    apiKey: '',
+    authDomain: 'gen-lang-client-0369636054.firebaseapp.com',
+    projectId: 'gen-lang-client-0369636054',
+    appId: ''
+  });
+  return cachedPublicFirebaseConfigJson;
+}
+
+function isTrustedInternalOrigin(origin: string): boolean {
+  const trimmed = origin.trim();
+  if (!trimmed) return false;
+  if (trimmed === 'https://hafner-gruenraum.ai.studio') return true;
+  if (trimmed === 'https://appassets.androidplatform.net') return true;
+  if (/^https:\/\/[a-z0-9-]+\.ai\.studio$/i.test(trimmed)) return true;
+  if (/^https:\/\/ais-(dev|pre|mob)-[a-z0-9.-]+\.run\.app$/i.test(trimmed)) return true;
+  if (/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(trimmed)) return true;
+  return false;
+}
+
+function extractCookieValue(cookieHeader: string | undefined, name: string): string | null {
+  if (!cookieHeader) return null;
+  const parts = cookieHeader.split(';').map((c) => c.trim());
+  const prefix = `${name}=`;
+  const entry = parts.find((p) => p.startsWith(prefix));
+  if (!entry) return null;
+  try {
+    return decodeURIComponent(entry.slice(prefix.length));
+  } catch {
+    return null;
+  }
+}
+
+function setOwnerSessionCookie(req: Request, res: Response, email: string): void {
+  const signed = createSignedWebSessionToken(email);
+  const forwardedHost = (req.headers['x-forwarded-host'] as string | undefined)
+    ?.split(',')[0]
+    ?.trim();
+  const host = forwardedHost || req.get('host') || '';
   const isHttps = !isLocalHostname(host);
   const attrs = [
     `hafner_owner_session=${encodeURIComponent(signed)}`,
@@ -185,37 +254,36 @@ function setOwnerSessionCookie(req: Request, res: Response): void {
   res.setHeader('Set-Cookie', attrs.join('; '));
 }
 
-function isTrustedOwnerBrowserContext(req: Request): boolean {
-  if (verifySignedWebSessionCookie(req.headers.cookie)) {
-    return true;
-  }
-  const { isPreviewEnvironment } = resolvePublicHttpsBaseUrl(req);
+function clearOwnerSessionCookie(req: Request, res: Response): void {
   const forwardedHost = (req.headers['x-forwarded-host'] as string | undefined)
     ?.split(',')[0]
     ?.trim();
-  const effectiveHost = forwardedHost || req.get('host') || '';
-  const secFetchSite = String(req.headers['sec-fetch-site'] || '').toLowerCase();
-  const secFetchMode = String(req.headers['sec-fetch-mode'] || '').toLowerCase();
-  const origin = String(req.headers.origin || '').toLowerCase();
-  const devHeader = String(req.headers['x-device-model'] || '').trim();
+  const host = forwardedHost || req.get('host') || '';
+  const isHttps = !isLocalHostname(host);
+  const attrs = [
+    'hafner_owner_session=',
+    'Path=/',
+    'HttpOnly',
+    'Max-Age=0',
+    isHttps ? 'SameSite=None; Secure; Partitioned' : 'SameSite=Lax'
+  ];
+  res.setHeader('Set-Cookie', attrs.join('; '));
+}
 
-  // Native Pixel 10 Pro Android App WebView or Sync Manager
-  if (origin.includes('appassets.androidplatform.net') || devHeader.length > 0) {
-    return true;
+function isOwnerWebAuthenticated(
+  req: Request
+): { authenticated: true; email: string } | { authenticated: false; email: null } {
+  const cookieVal = extractCookieValue(req.headers.cookie, 'hafner_owner_session');
+  const fromCookie = verifySignedWebSessionToken(cookieVal);
+  if (fromCookie) {
+    return { authenticated: true, email: fromCookie.email };
   }
-
-  // Same-origin Web App browser access (Preview, Published Cloud Run Web App, or localhost)
-  if (
-    secFetchSite === 'same-origin' ||
-    secFetchSite === 'same-site' ||
-    secFetchSite === 'none' ||
-    (req.method === 'GET' && secFetchMode === 'navigate') ||
-    isPreviewEnvironment ||
-    isLocalHostname(effectiveHost)
-  ) {
-    return true;
+  const bearerToken = extractTokenFromRequest(req);
+  const fromBearer = verifySignedWebSessionToken(bearerToken);
+  if (fromBearer) {
+    return { authenticated: true, email: fromBearer.email };
   }
-  return false;
+  return { authenticated: false, email: null };
 }
 
 function requireMcpAuth(req: Request, res: Response, next: NextFunction): void {
@@ -249,12 +317,6 @@ function isAndroidAppRequest(req: Request): boolean {
     (req as Request & { authKind?: string }).authKind = verified;
     return true;
   }
-  const devHeader = String(req.headers['x-device-model'] || '').trim();
-  const origin = String(req.headers.origin || '').toLowerCase();
-  if (devHeader.length > 0 || origin.includes('appassets.androidplatform.net')) {
-    (req as Request & { authKind?: string }).authKind = 'android_device';
-    return true;
-  }
   return false;
 }
 
@@ -265,7 +327,7 @@ function requireAndroidMcpAdminAuth(req: Request, res: Response, next: NextFunct
     return;
   }
   res.status(403).json({
-    error: 'MCP-Verwaltung und Schlüsselzugriff sind ausschließlich in der Google Pixel 10 Pro Android-App verfügbar.'
+    error: 'MCP-Verwaltung und Schlüsselzugriff sind ausschließlich in der Infinity Android-App verfügbar.'
   });
 }
 
@@ -275,11 +337,50 @@ function allowAppSyncAccess(req: Request, res: Response, next: NextFunction): vo
     next();
     return;
   }
-  if (isTrustedOwnerBrowserContext(req)) {
-    setOwnerSessionCookie(req, res);
+  const webAuth = isOwnerWebAuthenticated(req);
+  if (webAuth.authenticated) {
+    (req as Request & { authKind?: string }).authKind = 'web_companion';
+    next();
+    return;
   }
-  (req as Request & { authKind?: string }).authKind = 'web_companion';
-  next();
+  res.status(401).json({
+    error: 'Anmeldung erforderlich. Bitte mit Google anmelden.'
+  });
+}
+
+function mergeTombstones(
+  a?: Record<string, string>,
+  b?: Record<string, string>
+): Record<string, string> {
+  const merged: Record<string, string> = {};
+  for (const src of [a, b]) {
+    if (!src || typeof src !== 'object') continue;
+    for (const [k, v] of Object.entries(src)) {
+      if (typeof k !== 'string' || !k.includes(':') || typeof v !== 'string') continue;
+      if (!merged[k] || v > merged[k]) {
+        merged[k] = v;
+      }
+    }
+  }
+  return capDeletedTombstones(merged);
+}
+
+function filterCollectionByTombstones<T extends { id: string; updated_at?: string }>(
+  arr: T[],
+  collection: string,
+  tombstones: Record<string, string>
+): T[] {
+  return arr.filter((item) => {
+    const key = `${collection}:${item.id}`;
+    const deletedAt = tombstones[key];
+    if (!deletedAt) return true;
+    const itemUpdatedAt = item.updated_at || '';
+    if (!itemUpdatedAt || deletedAt >= itemUpdatedAt) {
+      return false;
+    }
+    delete tombstones[key];
+    return true;
+  });
 }
 
 function mergeArrayById<T extends { id: string; updated_at?: string }>(
@@ -309,19 +410,65 @@ function mergeConcurrentOfflineSnapshot(
   serverSnap: AppDataSnapshot,
   clientSnap: AppDataSnapshot
 ): AppDataSnapshot {
+  const tombstones = mergeTombstones(serverSnap.deletedIds, clientSnap.deletedIds);
   return {
-    customers: mergeArrayById(serverSnap.customers, clientSnap.customers),
-    properties: mergeArrayById(serverSnap.properties, clientSnap.properties),
-    appointments: mergeArrayById(serverSnap.appointments, clientSnap.appointments),
-    workRecords: mergeArrayById(serverSnap.workRecords, clientSnap.workRecords),
-    invoices: mergeArrayById(serverSnap.invoices, clientSnap.invoices),
-    inquiries: mergeArrayById(serverSnap.inquiries, clientSnap.inquiries),
-    offers: mergeArrayById(serverSnap.offers, clientSnap.offers),
-    orders: mergeArrayById(serverSnap.orders, clientSnap.orders),
-    equipments: mergeArrayById(serverSnap.equipments, clientSnap.equipments),
-    materials: mergeArrayById(serverSnap.materials, clientSnap.materials),
-    expenses: mergeArrayById(serverSnap.expenses, clientSnap.expenses),
-    taxSettings: clientSnap.taxSettings || serverSnap.taxSettings
+    customers: filterCollectionByTombstones(
+      mergeArrayById(serverSnap.customers, clientSnap.customers),
+      'customers',
+      tombstones
+    ),
+    properties: filterCollectionByTombstones(
+      mergeArrayById(serverSnap.properties, clientSnap.properties),
+      'properties',
+      tombstones
+    ),
+    appointments: filterCollectionByTombstones(
+      mergeArrayById(serverSnap.appointments, clientSnap.appointments),
+      'appointments',
+      tombstones
+    ),
+    workRecords: filterCollectionByTombstones(
+      mergeArrayById(serverSnap.workRecords, clientSnap.workRecords),
+      'workRecords',
+      tombstones
+    ),
+    invoices: filterCollectionByTombstones(
+      mergeArrayById(serverSnap.invoices, clientSnap.invoices),
+      'invoices',
+      tombstones
+    ),
+    inquiries: filterCollectionByTombstones(
+      mergeArrayById(serverSnap.inquiries, clientSnap.inquiries),
+      'inquiries',
+      tombstones
+    ),
+    offers: filterCollectionByTombstones(
+      mergeArrayById(serverSnap.offers, clientSnap.offers),
+      'offers',
+      tombstones
+    ),
+    orders: filterCollectionByTombstones(
+      mergeArrayById(serverSnap.orders, clientSnap.orders),
+      'orders',
+      tombstones
+    ),
+    equipments: filterCollectionByTombstones(
+      mergeArrayById(serverSnap.equipments, clientSnap.equipments),
+      'equipments',
+      tombstones
+    ),
+    materials: filterCollectionByTombstones(
+      mergeArrayById(serverSnap.materials, clientSnap.materials),
+      'materials',
+      tombstones
+    ),
+    expenses: filterCollectionByTombstones(
+      mergeArrayById(serverSnap.expenses, clientSnap.expenses),
+      'expenses',
+      tombstones
+    ),
+    taxSettings: clientSnap.taxSettings || serverSnap.taxSettings,
+    deletedIds: capDeletedTombstones(tombstones)
   };
 }
 
@@ -348,19 +495,65 @@ function mergeSnapshotsWithAndroidPrimary(
   serverSnap: AppDataSnapshot,
   androidSnap: AppDataSnapshot
 ): AppDataSnapshot {
+  const tombstones = mergeTombstones(serverSnap.deletedIds, androidSnap.deletedIds);
   return {
-    customers: mergeArrayWithAndroidPrimary(serverSnap.customers, androidSnap.customers),
-    properties: mergeArrayWithAndroidPrimary(serverSnap.properties, androidSnap.properties),
-    appointments: mergeArrayWithAndroidPrimary(serverSnap.appointments, androidSnap.appointments),
-    workRecords: mergeArrayWithAndroidPrimary(serverSnap.workRecords, androidSnap.workRecords),
-    invoices: mergeArrayWithAndroidPrimary(serverSnap.invoices, androidSnap.invoices),
-    inquiries: mergeArrayWithAndroidPrimary(serverSnap.inquiries, androidSnap.inquiries),
-    offers: mergeArrayWithAndroidPrimary(serverSnap.offers, androidSnap.offers),
-    orders: mergeArrayWithAndroidPrimary(serverSnap.orders, androidSnap.orders),
-    equipments: mergeArrayWithAndroidPrimary(serverSnap.equipments, androidSnap.equipments),
-    materials: mergeArrayWithAndroidPrimary(serverSnap.materials, androidSnap.materials),
-    expenses: mergeArrayWithAndroidPrimary(serverSnap.expenses, androidSnap.expenses),
-    taxSettings: androidSnap.taxSettings || serverSnap.taxSettings
+    customers: filterCollectionByTombstones(
+      mergeArrayWithAndroidPrimary(serverSnap.customers, androidSnap.customers),
+      'customers',
+      tombstones
+    ),
+    properties: filterCollectionByTombstones(
+      mergeArrayWithAndroidPrimary(serverSnap.properties, androidSnap.properties),
+      'properties',
+      tombstones
+    ),
+    appointments: filterCollectionByTombstones(
+      mergeArrayWithAndroidPrimary(serverSnap.appointments, androidSnap.appointments),
+      'appointments',
+      tombstones
+    ),
+    workRecords: filterCollectionByTombstones(
+      mergeArrayWithAndroidPrimary(serverSnap.workRecords, androidSnap.workRecords),
+      'workRecords',
+      tombstones
+    ),
+    invoices: filterCollectionByTombstones(
+      mergeArrayWithAndroidPrimary(serverSnap.invoices, androidSnap.invoices),
+      'invoices',
+      tombstones
+    ),
+    inquiries: filterCollectionByTombstones(
+      mergeArrayWithAndroidPrimary(serverSnap.inquiries, androidSnap.inquiries),
+      'inquiries',
+      tombstones
+    ),
+    offers: filterCollectionByTombstones(
+      mergeArrayWithAndroidPrimary(serverSnap.offers, androidSnap.offers),
+      'offers',
+      tombstones
+    ),
+    orders: filterCollectionByTombstones(
+      mergeArrayWithAndroidPrimary(serverSnap.orders, androidSnap.orders),
+      'orders',
+      tombstones
+    ),
+    equipments: filterCollectionByTombstones(
+      mergeArrayWithAndroidPrimary(serverSnap.equipments, androidSnap.equipments),
+      'equipments',
+      tombstones
+    ),
+    materials: filterCollectionByTombstones(
+      mergeArrayWithAndroidPrimary(serverSnap.materials, androidSnap.materials),
+      'materials',
+      tombstones
+    ),
+    expenses: filterCollectionByTombstones(
+      mergeArrayWithAndroidPrimary(serverSnap.expenses, androidSnap.expenses),
+      'expenses',
+      tombstones
+    ),
+    taxSettings: androidSnap.taxSettings || serverSnap.taxSettings,
+    deletedIds: capDeletedTombstones(tombstones)
   };
 }
 
@@ -595,22 +788,42 @@ function handleSingleJsonRpc(payload: JsonRpcRequest): Record<string, unknown> |
 }
 
 async function startServer() {
-  await hydrateAdminEngineStores();
-  await hydrateOAuthStore();
+  let hydrationSettled = false;
+  const hydrationPromise = Promise.all([hydrateAdminEngineStores(), hydrateOAuthStore()])
+    .catch(() => undefined)
+    .finally(() => {
+      hydrationSettled = true;
+    });
+
+  const ensureHydratedMiddleware = async (_req: Request, _res: Response, next: NextFunction) => {
+    if (!hydrationSettled) {
+      await Promise.race([
+        hydrationPromise,
+        new Promise<void>((resolve) => setTimeout(resolve, 2000))
+      ]);
+    }
+    next();
+  };
 
   const app = express();
   app.disable('x-powered-by');
   app.set('trust proxy', true);
 
+  app.get('/healthz', (_req, res) => {
+    res.status(200).json({ ok: true });
+  });
+
+  app.use(['/api', '/mcp', '/oauth', '/.well-known', '/android-connect'], ensureHydratedMiddleware);
+
   app.use((req, res, next) => {
-    const isCorsRoute =
+    const isPublicMcpCors =
       req.path.startsWith('/mcp') ||
       req.path.startsWith('/oauth/') ||
-      req.path.startsWith('/.well-known/') ||
-      req.path.startsWith('/api/pair/') ||
-      req.path.startsWith('/api/internal/');
+      req.path.startsWith('/.well-known/');
+    const isInternalCors =
+      req.path.startsWith('/api/pair/') || req.path.startsWith('/api/internal/');
 
-    if (isCorsRoute) {
+    if (isPublicMcpCors) {
       res.setHeader('Access-Control-Allow-Origin', '*');
       res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
       res.setHeader(
@@ -620,6 +833,22 @@ async function startServer() {
       res.setHeader(
         'Access-Control-Expose-Headers',
         'Mcp-Session-Id, MCP-Protocol-Version, WWW-Authenticate'
+      );
+      if (req.method === 'OPTIONS') {
+        res.status(204).end();
+        return;
+      }
+    } else if (isInternalCors) {
+      const origin = String(req.headers.origin || '').trim();
+      if (isTrustedInternalOrigin(origin)) {
+        res.setHeader('Access-Control-Allow-Origin', origin);
+        res.setHeader('Access-Control-Allow-Credentials', 'true');
+        res.setHeader('Vary', 'Origin');
+      }
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+      res.setHeader(
+        'Access-Control-Allow-Headers',
+        'Content-Type, Authorization, X-MCP-Token, X-Admin-Token, X-Device-Model, Last-Event-ID, Accept'
       );
       if (req.method === 'OPTIONS') {
         res.status(204).end();
@@ -733,6 +962,7 @@ async function startServer() {
       return;
     }
 
+    const webAuth = isOwnerWebAuthenticated(req);
     res
       .status(200)
       .type('html')
@@ -744,12 +974,16 @@ async function startServer() {
           state,
           code_challenge: codeChallenge,
           code_challenge_method: codeChallengeMethod,
-          scope
+          scope,
+          hasOwnerSession: webAuth.authenticated,
+          ownerEmail: webAuth.email || getAllowedOwnerEmail(),
+          csrfToken: issueOAuthCsrfToken(clientId),
+          firebaseClientConfigJson: getPublicFirebaseClientConfigJson()
         })
       );
   });
 
-  app.post('/oauth/authorize', (req, res) => {
+  app.post('/oauth/authorize', async (req, res) => {
     applyNoLeakSecurityHeaders(res);
     const body = (req.body || {}) as Record<string, string>;
     const clientId = String(body.client_id || '').trim();
@@ -759,6 +993,8 @@ async function startServer() {
     const codeChallengeMethod = String(body.code_challenge_method || 'S256').trim();
     const scope = String(body.scope || 'mcp:admin').trim();
     const submittedToken = String(body.admin_token || '').trim();
+    const firebaseIdToken = String(body.firebase_id_token || '').trim();
+    const csrfToken = String(body.csrf_token || '').trim();
 
     const check = validateAuthorizeRequest({
       client_id: clientId,
@@ -772,8 +1008,25 @@ async function startServer() {
       return;
     }
 
-    const oneClickApprove = String(body.one_click_approve || '') === 'true';
-    if (!oneClickApprove && !isValidAdminToken(submittedToken)) {
+    const webAuth = isOwnerWebAuthenticated(req);
+    let authorized = false;
+    let errorMessage = 'Bitte mit Ihrem Google-Konto anmelden, um die MCP-Verbindung freizugeben.';
+
+    if (firebaseIdToken) {
+      const verified = await verifyFirebaseGoogleIdToken(firebaseIdToken);
+      if (verified.ok) {
+        authorized = true;
+        setOwnerSessionCookie(req, res, verified.email);
+      } else {
+        errorMessage = verified.error;
+      }
+    } else if (webAuth.authenticated && verifyOAuthCsrfToken(csrfToken, clientId)) {
+      authorized = true;
+    } else if (submittedToken && isValidAdminToken(submittedToken)) {
+      authorized = true;
+    }
+
+    if (!authorized) {
       res
         .status(401)
         .type('html')
@@ -786,7 +1039,11 @@ async function startServer() {
             code_challenge: codeChallenge,
             code_challenge_method: codeChallengeMethod,
             scope,
-            errorMessage: 'Freigabe fehlgeschlagen. Bitte erneut bestätigen.'
+            hasOwnerSession: webAuth.authenticated,
+            ownerEmail: webAuth.email || getAllowedOwnerEmail(),
+            csrfToken: issueOAuthCsrfToken(clientId),
+            firebaseClientConfigJson: getPublicFirebaseClientConfigJson(),
+            errorMessage
           })
         );
       return;
@@ -844,7 +1101,36 @@ async function startServer() {
     res.status(200).json({ revoked: true });
   });
 
-  // ==================== INTERNAL APP SYNC & MCP SETTINGS ROUTES ====================
+  // ==================== GOOGLE OWNER AUTH & INTERNAL APP SYNC ROUTES ====================
+
+  app.get('/api/internal/auth/session', (req, res) => {
+    applyNoLeakSecurityHeaders(res);
+    const webAuth = isOwnerWebAuthenticated(req);
+    res.json({
+      authenticated: webAuth.authenticated,
+      email: webAuth.email,
+      allowedEmail: getAllowedOwnerEmail()
+    });
+  });
+
+  app.post('/api/internal/auth/google', async (req, res) => {
+    applyNoLeakSecurityHeaders(res);
+    const body = (req.body || {}) as { idToken?: string };
+    const result = await verifyFirebaseGoogleIdToken(body.idToken);
+    if (!result.ok) {
+      res.status(401).json({ ok: false, error: result.error });
+      return;
+    }
+    setOwnerSessionCookie(req, res, result.email);
+    const sessionToken = createSignedWebSessionToken(result.email);
+    res.json({ ok: true, email: result.email, sessionToken });
+  });
+
+  app.post('/api/internal/auth/logout', (req, res) => {
+    applyNoLeakSecurityHeaders(res);
+    clearOwnerSessionCookie(req, res);
+    res.json({ ok: true });
+  });
 
   app.post('/api/internal/session', (req, res) => {
     applyNoLeakSecurityHeaders(res);
@@ -853,7 +1139,7 @@ async function startServer() {
       res.status(401).json({ error: 'Ungültiger Zugangsschlüssel.' });
       return;
     }
-    setOwnerSessionCookie(req, res);
+    setOwnerSessionCookie(req, res, getAllowedOwnerEmail());
     res.json({ ok: true });
   });
 
@@ -915,7 +1201,10 @@ async function startServer() {
     }
 
     let shouldMerge = false;
-    let nextSnapshot: AppDataSnapshot = body.data;
+    let nextSnapshot: AppDataSnapshot = {
+      ...body.data,
+      deletedIds: mergeTombstones(current.data.deletedIds, body.data.deletedIds)
+    };
 
     if (isAndroidPrimary) {
       // Die Android-App auf dem Google Pixel 10 Pro ist die primäre Datenbank.
@@ -1096,10 +1385,113 @@ async function startServer() {
     });
   });
 
-  // Automatische Verbindung ohne Einmal-Code für das Google Pixel 10 Pro (+ 1-Klick-Reset)
-  app.post('/api/pair/auto', (req, res) => {
+  // ==================== ANDROID GOOGLE PAIRING & EINMALCODE ====================
+
+  app.get('/android-connect', (req, res) => {
     applyNoLeakSecurityHeaders(res);
-    const body = (req.body || {}) as { deviceModel?: string };
+    const { baseUrl } = resolvePublicHttpsBaseUrl(req);
+    const webAuth = isOwnerWebAuthenticated(req);
+    if (webAuth.authenticated) {
+      const issued = issueOneTimeAndroidPairingCode('Google Pixel 10 Pro');
+      const deepLink = `hafnermcp://pair?url=${encodeURIComponent(baseUrl)}&code=${encodeURIComponent(issued.pairingCode)}`;
+      res
+        .status(200)
+        .type('html')
+        .send(
+          renderAndroidPairPageHtml({
+            hasOwnerSession: true,
+            ownerEmail: webAuth.email,
+            pairingCode: issued.pairingCode,
+            deepLink,
+            baseUrl,
+            csrfToken: issueOAuthCsrfToken('android-pair'),
+            firebaseClientConfigJson: getPublicFirebaseClientConfigJson()
+          })
+        );
+      return;
+    }
+
+    res
+      .status(200)
+      .type('html')
+      .send(
+        renderAndroidPairPageHtml({
+          hasOwnerSession: false,
+          ownerEmail: getAllowedOwnerEmail(),
+          baseUrl,
+          csrfToken: issueOAuthCsrfToken('android-pair'),
+          firebaseClientConfigJson: getPublicFirebaseClientConfigJson()
+        })
+      );
+  });
+
+  app.post('/android-connect', async (req, res) => {
+    applyNoLeakSecurityHeaders(res);
+    const { baseUrl } = resolvePublicHttpsBaseUrl(req);
+    const body = (req.body || {}) as Record<string, string>;
+    const firebaseIdToken = String(body.firebase_id_token || '').trim();
+    const csrfToken = String(body.csrf_token || '').trim();
+    const webAuth = isOwnerWebAuthenticated(req);
+
+    let verifiedEmail: string | null = null;
+    let errorMessage = 'Bitte mit Ihrem Google-Konto anmelden, um Ihr Pixel 10 Pro zu verbinden.';
+
+    if (firebaseIdToken) {
+      const verified = await verifyFirebaseGoogleIdToken(firebaseIdToken);
+      if (verified.ok) {
+        verifiedEmail = verified.email;
+        setOwnerSessionCookie(req, res, verified.email);
+      } else {
+        errorMessage = verified.error;
+      }
+    } else if (webAuth.authenticated && verifyOAuthCsrfToken(csrfToken, 'android-pair')) {
+      verifiedEmail = webAuth.email;
+    }
+
+    if (!verifiedEmail) {
+      res
+        .status(401)
+        .type('html')
+        .send(
+          renderAndroidPairPageHtml({
+            hasOwnerSession: webAuth.authenticated,
+            ownerEmail: webAuth.email || getAllowedOwnerEmail(),
+            baseUrl,
+            csrfToken: issueOAuthCsrfToken('android-pair'),
+            firebaseClientConfigJson: getPublicFirebaseClientConfigJson(),
+            errorMessage
+          })
+        );
+      return;
+    }
+
+    const issued = issueOneTimeAndroidPairingCode('Google Pixel 10 Pro');
+    const deepLink = `hafnermcp://pair?url=${encodeURIComponent(baseUrl)}&code=${encodeURIComponent(issued.pairingCode)}`;
+    recordMcpAccess('pair:pixel_10_pro_google_web');
+    res
+      .status(200)
+      .type('html')
+      .send(
+        renderAndroidPairPageHtml({
+          hasOwnerSession: true,
+          ownerEmail: verifiedEmail,
+          pairingCode: issued.pairingCode,
+          deepLink,
+          baseUrl,
+          csrfToken: issueOAuthCsrfToken('android-pair'),
+          firebaseClientConfigJson: getPublicFirebaseClientConfigJson()
+        })
+      );
+  });
+
+  app.post('/api/pair/google-complete', async (req, res) => {
+    applyNoLeakSecurityHeaders(res);
+    const body = (req.body || {}) as { idToken?: string; deviceModel?: string };
+    const result = await verifyFirebaseGoogleIdToken(body.idToken);
+    if (!result.ok) {
+      res.status(401).json({ ok: false, error: result.error });
+      return;
+    }
     const devHeader =
       typeof req.headers['x-device-model'] === 'string'
         ? req.headers['x-device-model']
@@ -1108,13 +1500,21 @@ async function startServer() {
     const issued = issueAndroidDeviceSyncToken(label);
     recordAndroidSyncActivity('pull', label);
     const { baseUrl } = resolvePublicHttpsBaseUrl(req);
-    recordMcpAccess('pair:pixel_10_pro_auto');
+    recordMcpAccess('pair:pixel_10_pro_google');
     res.status(200).json({
       ok: true,
       baseUrl,
       deviceToken: issued.token,
       createdAt: issued.createdAt,
       revision: getStore().revision
+    });
+  });
+
+  app.post('/api/pair/auto', (_req, res) => {
+    applyNoLeakSecurityHeaders(res);
+    res.status(403).json({
+      ok: false,
+      error: 'Direktkopplung ohne Anmeldung deaktiviert. Bitte mit Google verbinden.'
     });
   });
 
@@ -1128,18 +1528,10 @@ async function startServer() {
     const label = (body.deviceModel || devHeader || 'Google Pixel 10 Pro').trim();
     const rawCode = String(body.code || '').trim();
 
-    // Unterstützt sowohl automatische 1-Klick-Verbindung ohne Code ("AUTO" / leer) als auch 6-stellige Einmalcodes
     if (!rawCode || rawCode.toUpperCase() === 'AUTO') {
-      const issued = issueAndroidDeviceSyncToken(label);
-      recordAndroidSyncActivity('pull', label);
-      const { baseUrl } = resolvePublicHttpsBaseUrl(req);
-      recordMcpAccess('pair:pixel_10_pro_auto');
-      res.status(200).json({
-        ok: true,
-        baseUrl,
-        deviceToken: issued.token,
-        createdAt: issued.createdAt,
-        revision: getStore().revision
+      res.status(400).json({
+        ok: false,
+        error: 'Bitte gültigen 6-stelligen Einmalcode verwenden oder mit Google anmelden.'
       });
       return;
     }
@@ -1147,16 +1539,9 @@ async function startServer() {
     const outcome = exchangeOneTimeAndroidPairingCode(rawCode, label);
     const { baseUrl } = resolvePublicHttpsBaseUrl(req);
     if (!outcome.ok) {
-      // Fallback auf automatische Kopplung ohne Fehlermeldung (gem. Wahl: Automatische Verbindung ohne Einmal-Code)
-      const issued = issueAndroidDeviceSyncToken(label);
-      recordAndroidSyncActivity('pull', label);
-      recordMcpAccess('pair:pixel_10_pro_auto_fallback');
-      res.status(200).json({
-        ok: true,
-        baseUrl,
-        deviceToken: issued.token,
-        createdAt: issued.createdAt,
-        revision: getStore().revision
+      res.status(401).json({
+        ok: false,
+        error: outcome.message
       });
       return;
     }
@@ -1197,7 +1582,7 @@ async function startServer() {
     const token = extractTokenFromRequest(req);
     const isAuthorized =
       Boolean(verifyAnyAuthorizedToken(token, { allowDeviceToken: true })) ||
-      isTrustedOwnerBrowserContext(req);
+      isOwnerWebAuthenticated(req).authenticated;
     const overview = getAdminOverview(false);
     const cfg = getMcpConfig();
     const oauthSummary = getOAuthAndDeviceSummary();
@@ -1209,7 +1594,7 @@ async function startServer() {
       authEnforced: true,
       supportedAuthMethods: ['oauth2_pkce_s256', 'bearer_token'],
       tokenSource: cfg.tokenSource,
-      accessMode: 'DIRECT_MCP_READ_WRITE',
+      accessMode: 'ANDROID_ONLY_DIRECT_MCP',
       toolCount: MCP_TOOLS.length,
       ...(isAuthorized
         ? {
@@ -1340,7 +1725,16 @@ async function startServer() {
 
   // ==================== VITE DEV MIDDLEWARE / PRODUCTION STATIC ====================
 
-  if (process.env.NODE_ENV !== 'production') {
+  const distPath = path.resolve(process.cwd(), 'dist');
+  const hasDistBuild = fs.existsSync(path.join(distPath, 'index.html'));
+  const isPublishedCloudRun =
+    Boolean(process.env.K_SERVICE) && !String(process.env.K_SERVICE).startsWith('ais-dev-');
+  const useViteDevMiddleware =
+    process.env.NODE_ENV !== 'production' &&
+    !isPublishedCloudRun &&
+    (process.env.npm_lifecycle_event === 'dev' || !hasDistBuild);
+
+  if (useViteDevMiddleware) {
     process.env.DISABLE_HMR = 'true';
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
@@ -1348,13 +1742,9 @@ async function startServer() {
       appType: 'spa'
     });
     app.use((req, res, next) => {
-      if (req.method === 'GET' && req.path === '/' && isTrustedOwnerBrowserContext(req)) {
-        setOwnerSessionCookie(req, res);
-      }
       vite.middlewares(req, res, next);
     });
   } else {
-    const distPath = path.resolve(process.cwd(), 'dist');
     app.use(
       express.static(distPath, {
         setHeaders: (res, filePath) => {
@@ -1374,13 +1764,10 @@ async function startServer() {
         }
       })
     );
-    app.get('*', (req, res) => {
+    app.get('*', (_req, res) => {
       res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
       res.setHeader('Pragma', 'no-cache');
       res.setHeader('Expires', '0');
-      if (isTrustedOwnerBrowserContext(req)) {
-        setOwnerSessionCookie(req, res);
-      }
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }

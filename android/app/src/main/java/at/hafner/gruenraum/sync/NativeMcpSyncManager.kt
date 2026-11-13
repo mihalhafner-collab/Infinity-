@@ -125,7 +125,7 @@ class NativeMcpSyncManager(
         }
         syncExecutor.scheduleWithFixedDelay({
             try {
-                if (!isDestroyed.get() && !syncInFlight && !pairingInFlight) {
+                if (!isDestroyed.get() && !syncInFlight && !pairingInFlight && connectionState != "auth_error") {
                     if (isForeground.get() || pendingLocalChanges) {
                         performSyncCycle("periodic_tunnel_keepalive")
                     }
@@ -217,8 +217,11 @@ class NativeMcpSyncManager(
         }
         credentialStore.updateBaseUrlOnly(cleanUrl)
 
-        val effectiveCode = cleanCode.replace(Regex("[^0-9]"), "").let { digits ->
-            if (digits.length == 6) cleanCode else "AUTO"
+        val digits = cleanCode.replace(Regex("[^0-9]"), "")
+        if (digits.length != 6) {
+            lastError = "Bitte gültigen 6-stelligen Kopplungscode eingeben oder mit Google verbinden."
+            refreshStatusState()
+            return getStatusJson()
         }
 
         pairingInFlight = true
@@ -229,7 +232,7 @@ class NativeMcpSyncManager(
         syncExecutor.execute {
             try {
                 val exchangeBody = JSONObject().apply {
-                    put("code", effectiveCode)
+                    put("code", digits)
                     put("deviceModel", "Google Pixel 10 Pro")
                 }.toString().toByteArray(Charsets.UTF_8)
 
@@ -256,7 +259,9 @@ class NativeMcpSyncManager(
                     val json = if (respText.startsWith("{")) JSONObject(respText) else JSONObject()
 
                     if (status !in 200..299) {
-                        val msg = json.optString("message", "Einmal-Kopplung fehlgeschlagen (HTTP $status).")
+                        val msg = json.optString("error").ifBlank {
+                            json.optString("message", "Einmal-Kopplung fehlgeschlagen (HTTP $status).")
+                        }
                         throw IllegalStateException(msg)
                     }
 
@@ -317,6 +322,10 @@ class NativeMcpSyncManager(
     fun triggerManualSyncNow() {
         networkOnline = checkCurrentConnectivity()
         sseReconnectAttempt = 0
+        if (connectionState == "auth_error") {
+            connectionState = "reconnecting"
+            lastError = null
+        }
         scheduleImmediateSync("manual_check")
         if (isForeground.get()) {
             ensureSseStreamRunning()
@@ -346,7 +355,7 @@ class NativeMcpSyncManager(
             connectionState == "offline" ->
                 "Kein Internet · App arbeitet lokal weiter"
             connectionState == "auth_error" ->
-                "Kopplung abgelaufen oder widerrufen – bitte neu koppeln$pendingSuffix"
+                "Anmeldung erforderlich – bitte in Einstellungen mit Google verbinden$pendingSuffix"
             else ->
                 if (pendingSyncCount > 0) {
                     "Einmalige Kopplung offen · $pendingSyncCount lokale Änderung(en) warten"
@@ -400,49 +409,6 @@ class NativeMcpSyncManager(
         }
     }
 
-    private fun autoProvisionDeviceToken(baseUrl: String): McpCredentials? {
-        val cleanUrl = SecureMcpCredentialStore.sanitizeBaseUrl(baseUrl)
-        if (cleanUrl.isBlank()) return null
-        val exchangeBody = JSONObject().apply {
-            put("code", "AUTO")
-            put("deviceModel", "Google Pixel 10 Pro")
-        }.toString().toByteArray(Charsets.UTF_8)
-
-        for (endpointPath in listOf("/api/pair/auto", "/api/pair/exchange")) {
-            val conn = (URL("$cleanUrl$endpointPath").openConnection() as HttpURLConnection).apply {
-                requestMethod = "POST"
-                doOutput = true
-                connectTimeout = 10_000
-                readTimeout = 12_000
-                useCaches = false
-                setRequestProperty("Content-Type", "application/json; charset=utf-8")
-                setRequestProperty("Accept", "application/json")
-                setRequestProperty("X-Device-Model", "Google Pixel 10 Pro")
-                setFixedLengthStreamingMode(exchangeBody.size)
-            }
-            try {
-                conn.outputStream.use { out ->
-                    out.write(exchangeBody)
-                    out.flush()
-                }
-                val status = conn.responseCode
-                if (status in 200..299) {
-                    val respText = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
-                    val json = JSONObject(respText)
-                    val deviceToken = json.optString("deviceToken", "").trim()
-                    if (deviceToken.length >= 16) {
-                        return credentialStore.saveCredentials(cleanUrl, deviceToken)
-                    }
-                }
-            } catch (_: Exception) {
-                // Nächsten Kopplungsendpunkt versuchen
-            } finally {
-                conn.disconnect()
-            }
-        }
-        return null
-    }
-
     private fun performSyncCycle(reason: String) {
         if (!checkCurrentConnectivity()) {
             networkOnline = false
@@ -450,17 +416,14 @@ class NativeMcpSyncManager(
             return
         }
 
-        var creds = credentialStore.loadCredentials()
+        val creds = credentialStore.loadCredentials()
         if (!creds.isConfigured) {
-            connectionState = "reconnecting"
+            connectionState = "unpaired"
             emitStatus()
-            val provisioned = autoProvisionDeviceToken(creds.baseUrl)
-            if (provisioned == null || !provisioned.isConfigured) {
-                connectionState = "unpaired"
-                emitStatus()
-                return
-            }
-            creds = provisioned
+            return
+        }
+        if (connectionState == "auth_error" && reason != "manual_check" && reason != "manual_config" && reason != "one_time_pair_exchange") {
+            return
         }
 
         syncInFlight = true
@@ -553,20 +516,11 @@ class NativeMcpSyncManager(
             connectionState = "connected"
             emitStatus()
         } catch (_: AuthRejectedException) {
-            // Automatischer 1-Klick-Selbstheilungs-Reset bei abgelaufenem Geräteschlüssel
-            val reprovisioned = autoProvisionDeviceToken(creds.baseUrl)
             syncInFlight = false
-            if (reprovisioned != null && reprovisioned.isConfigured) {
-                lastError = null
-                connectionState = "connected"
-                emitStatus()
-                scheduleImmediateSync("auto_reprovisioned")
-            } else {
-                lastError = "Server unter ${creds.baseUrl} muss in AI Studio aktualisiert werden (Deploy -> Update)."
-                connectionState = "reconnecting"
-                closeActiveSseConnection()
-                emitStatus()
-            }
+            connectionState = "auth_error"
+            lastError = "Anmeldung erforderlich – bitte in Einstellungen mit Google verbinden"
+            closeActiveSseConnection()
+            emitStatus()
         } catch (e: Exception) {
             syncInFlight = false
             lastError = e.message ?: "Verbindungsfehler"
@@ -582,13 +536,13 @@ class NativeMcpSyncManager(
 
     private fun ensureSseStreamRunning() {
         val creds = credentialStore.loadCredentials()
-        if (!creds.isConfigured || isDestroyed.get()) return
+        if (!creds.isConfigured || isDestroyed.get() || connectionState == "auth_error") return
         if (sseThread?.isAlive == true) return
 
         val thread = Thread({
             while (!isDestroyed.get()) {
                 val currentCreds = credentialStore.loadCredentials()
-                if (!currentCreds.isConfigured || !checkCurrentConnectivity()) {
+                if (!currentCreds.isConfigured || !checkCurrentConnectivity() || connectionState == "auth_error") {
                     break
                 }
                 var conn: HttpURLConnection? = null
@@ -609,7 +563,7 @@ class NativeMcpSyncManager(
                     val code = conn.responseCode
                     if (code == 401 || code == 403) {
                         connectionState = "auth_error"
-                        lastError = "Geräteschlüssel vom Server abgelehnt ($code)."
+                        lastError = "Anmeldung erforderlich – bitte in Einstellungen mit Google verbinden"
                         emitStatus()
                         break
                     }
@@ -886,9 +840,7 @@ class NativeMcpSyncManager(
         private const val KEY_LAST_SYNC_ISO = "last_sync_iso"
 
         private val COMPANION_WEB_ENDPOINTS = listOf(
-            "https://hafner-gruenraum.ai.studio",
-            "https://ais-pre-usuarrctzvo6yzyghmhedg-947976408951.europe-west2.run.app",
-            "https://ais-dev-usuarrctzvo6yzyghmhedg-947976408951.europe-west2.run.app"
+            "https://hafner-gruenraum.ai.studio"
         )
     }
 }

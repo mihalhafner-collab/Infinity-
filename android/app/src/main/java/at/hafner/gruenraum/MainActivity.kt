@@ -691,7 +691,7 @@ class MainActivity : AppCompatActivity() {
             val scheme = uri.scheme?.lowercase() ?: ""
             val intent = when (scheme) {
                 "tel" -> Intent(Intent.ACTION_DIAL, uri)
-                "mailto" -> Intent(Intent.ACTION_SENDTO, uri)
+                "mailto", "sms", "smsto" -> Intent(Intent.ACTION_SENDTO, uri)
                 else -> Intent(Intent.ACTION_VIEW, uri)
             }
             startActivity(intent)

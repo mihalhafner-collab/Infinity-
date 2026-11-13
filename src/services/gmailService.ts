@@ -7,7 +7,9 @@ import {
   signInWithRedirect
 } from 'firebase/auth';
 import { auth } from './firebaseClient.ts';
-import { isNativeAndroidApp } from './nativeBridge.ts';
+import { isNativeAndroidApp, setWebSessionToken } from './nativeBridge.ts';
+
+export const OWNER_EMAIL = 'mihalhafner@gmail.com';
 
 export const SCOPES = [
   'https://www.googleapis.com/auth/gmail.send',
@@ -15,6 +17,9 @@ export const SCOPES = [
 ];
 
 const OAUTH_RETURN_SCREEN_KEY = 'hafner_oauth_return_screen';
+
+const ownerProvider = new GoogleAuthProvider();
+ownerProvider.setCustomParameters({ prompt: 'select_account' });
 
 const provider = new GoogleAuthProvider();
 for (const scope of SCOPES) {
@@ -28,12 +33,29 @@ let cachedAccessToken: string | null = null;
 let currentUser: User | null = null;
 let lastRedirectAuthError: string | null = null;
 
+export interface OwnerSessionState {
+  checking: boolean;
+  authenticated: boolean;
+  email: string | null;
+  error: string | null;
+}
+
+let ownerSessionState: OwnerSessionState = {
+  checking: !isNativeAndroidApp(),
+  authenticated: false,
+  email: null,
+  error: null
+};
+
 type GmailAuthListener = (state: {
   user: User | null;
   hasToken: boolean;
   error?: string | null;
 }) => void;
 const listeners = new Set<GmailAuthListener>();
+
+type OwnerSessionListener = (state: OwnerSessionState) => void;
+const ownerListeners = new Set<OwnerSessionListener>();
 
 function notifyListeners() {
   const snapshot = {
@@ -42,6 +64,11 @@ function notifyListeners() {
     error: lastRedirectAuthError
   };
   listeners.forEach((fn) => fn(snapshot));
+}
+
+function notifyOwnerListeners() {
+  const snap = { ...ownerSessionState };
+  ownerListeners.forEach((fn) => fn(snap));
 }
 
 function formatFirebaseAuthError(err: unknown): string {
@@ -56,21 +83,6 @@ function formatFirebaseAuthError(err: unknown): string {
     return 'Netzwerkverbindung zu Google unterbrochen. Bitte Internetverbindung prüfen und erneut versuchen.';
   }
   return raw || 'Google-Anmeldung fehlgeschlagen.';
-}
-
-function shouldUseRedirectFlow(): boolean {
-  if (typeof window === 'undefined') return false;
-  // Innerhalb eines iFrames (z. B. AI Studio Vorschau) muss zwingend Popup verwendet werden,
-  // da Google accounts.google.com nicht in iFrames einbetten lässt.
-  if (window.self !== window.top) {
-    return false;
-  }
-  const isStandalonePwa =
-    typeof window.matchMedia === 'function' &&
-    window.matchMedia('(display-mode: standalone)').matches;
-  const isAndroidMobile =
-    typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent);
-  return isStandalonePwa || isAndroidMobile;
 }
 
 export function rememberOAuthReturnScreen(screenId: string): void {
@@ -95,38 +107,177 @@ export function consumeOAuthReturnScreen(): string | null {
   }
 }
 
-// Verarbeite eventuelle Rückkehr von signInWithRedirect auf dem Pixel 10 Pro (Standalone-PWA / Chrome)
+export function getOwnerSessionState(): OwnerSessionState {
+  return { ...ownerSessionState };
+}
+
+export function subscribeOwnerSession(listener: OwnerSessionListener): () => void {
+  ownerListeners.add(listener);
+  listener({ ...ownerSessionState });
+  return () => {
+    ownerListeners.delete(listener);
+  };
+}
+
+export async function establishOwnerServerSession(user: User): Promise<boolean> {
+  const email = (user.email || '').trim().toLowerCase();
+  if (!email || email !== OWNER_EMAIL) {
+    await auth.signOut().catch(() => undefined);
+    setWebSessionToken(null);
+    cachedAccessToken = null;
+    currentUser = null;
+    ownerSessionState = {
+      checking: false,
+      authenticated: false,
+      email: null,
+      error: `Zugriff verweigert: Bitte mit dem freigegebenen Konto (${OWNER_EMAIL}) anmelden.`
+    };
+    notifyOwnerListeners();
+    notifyListeners();
+    return false;
+  }
+
+  try {
+    const idToken = await user.getIdToken();
+    const res = await fetch('/api/internal/auth/google', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ idToken })
+    });
+    const data = (await res.json().catch(() => null)) as
+      | { ok?: boolean; email?: string; sessionToken?: string; error?: string }
+      | null;
+
+    if (!res.ok || !data?.ok) {
+      ownerSessionState = {
+        checking: false,
+        authenticated: false,
+        email: null,
+        error: data?.error || 'Anmeldung am Server fehlgeschlagen.'
+      };
+      notifyOwnerListeners();
+      return false;
+    }
+
+    setWebSessionToken(typeof data.sessionToken === 'string' ? data.sessionToken : null);
+    ownerSessionState = {
+      checking: false,
+      authenticated: true,
+      email: data.email || email,
+      error: null
+    };
+    notifyOwnerListeners();
+    return true;
+  } catch {
+    ownerSessionState = {
+      checking: false,
+      authenticated: false,
+      email: null,
+      error: 'Verbindung zum Server für die Google-Anmeldung fehlgeschlagen.'
+    };
+    notifyOwnerListeners();
+    return false;
+  }
+}
+
+export async function checkOwnerServerSession(): Promise<boolean> {
+  if (isNativeAndroidApp()) {
+    ownerSessionState = { checking: false, authenticated: true, email: OWNER_EMAIL, error: null };
+    notifyOwnerListeners();
+    return true;
+  }
+  try {
+    const res = await fetch('/api/internal/auth/session', {
+      credentials: 'include'
+    });
+    if (res.ok) {
+      const data = (await res.json()) as { authenticated?: boolean; email?: string | null };
+      if (data.authenticated) {
+        ownerSessionState = {
+          checking: false,
+          authenticated: true,
+          email: data.email || OWNER_EMAIL,
+          error: null
+        };
+        notifyOwnerListeners();
+        return true;
+      }
+    }
+  } catch {
+    // Ignore offline error
+  }
+  return false;
+}
+
 if (typeof window !== 'undefined' && !isNativeAndroidApp()) {
+  let redirectChecked = false;
+  let initialAuthEventSeen = false;
+  let serverSessionChecked = false;
+
+  const finalizeBootCheckingIfReady = () => {
+    if (redirectChecked && initialAuthEventSeen && serverSessionChecked) {
+      if (ownerSessionState.checking && !ownerSessionState.authenticated) {
+        ownerSessionState = { ...ownerSessionState, checking: false };
+        notifyOwnerListeners();
+      }
+    }
+  };
+
   isSigningIn = true;
   getRedirectResult(auth)
-    .then((result) => {
-      if (result) {
+    .then(async (result) => {
+      if (result?.user) {
         const credential = GoogleAuthProvider.credentialFromResult(result);
         if (credential?.accessToken) {
           cachedAccessToken = credential.accessToken;
-          currentUser = result.user;
-          lastRedirectAuthError = null;
         }
+        currentUser = result.user;
+        lastRedirectAuthError = null;
+        await establishOwnerServerSession(result.user);
       }
     })
     .catch((err: unknown) => {
       lastRedirectAuthError = formatFirebaseAuthError(err);
+      ownerSessionState = {
+        ...ownerSessionState,
+        error: lastRedirectAuthError
+      };
     })
     .finally(() => {
       isSigningIn = false;
+      redirectChecked = true;
       notifyListeners();
+      finalizeBootCheckingIfReady();
     });
-}
 
-onAuthStateChanged(auth, (user: User | null) => {
-  currentUser = user;
-  if (!user) {
-    cachedAccessToken = null;
-  } else if (!cachedAccessToken && !isSigningIn) {
-    cachedAccessToken = null;
-  }
-  notifyListeners();
-});
+  void checkOwnerServerSession().finally(() => {
+    serverSessionChecked = true;
+    finalizeBootCheckingIfReady();
+  });
+
+  onAuthStateChanged(auth, async (user: User | null) => {
+    initialAuthEventSeen = true;
+    currentUser = user;
+    if (!user) {
+      cachedAccessToken = null;
+      notifyListeners();
+      finalizeBootCheckingIfReady();
+      return;
+    }
+
+    if (!ownerSessionState.authenticated && !isSigningIn) {
+      if ((user.email || '').trim().toLowerCase() === OWNER_EMAIL) {
+        await establishOwnerServerSession(user);
+      } else {
+        await auth.signOut().catch(() => undefined);
+        currentUser = null;
+      }
+    }
+    notifyListeners();
+    finalizeBootCheckingIfReady();
+  });
+}
 
 export const subscribeGmailAuth = (listener: GmailAuthListener): (() => void) => {
   listeners.add(listener);
@@ -159,6 +310,43 @@ export const initAuth = (
   });
 };
 
+export const ownerSignIn = async (): Promise<boolean> => {
+  if (isNativeAndroidApp()) return true;
+  lastRedirectAuthError = null;
+  ownerSessionState = { ...ownerSessionState, error: null };
+  notifyOwnerListeners();
+
+  try {
+    isSigningIn = true;
+    const result = await signInWithPopup(auth, ownerProvider);
+    currentUser = result.user;
+    const ok = await establishOwnerServerSession(result.user);
+    notifyListeners();
+    return ok;
+  } catch (err: unknown) {
+    const rawMsg = err instanceof Error ? err.message : String(err || '');
+    if (
+      typeof window !== 'undefined' &&
+      window.self === window.top &&
+      rawMsg.includes('auth/popup-blocked')
+    ) {
+      await signInWithRedirect(auth, ownerProvider);
+      return false;
+    }
+    const friendly = formatFirebaseAuthError(err);
+    ownerSessionState = {
+      checking: false,
+      authenticated: false,
+      email: null,
+      error: friendly
+    };
+    notifyOwnerListeners();
+    throw new Error(friendly);
+  } finally {
+    isSigningIn = false;
+  }
+};
+
 export const googleSignIn = async (
   returnScreenId?: string
 ): Promise<{ user: User; accessToken: string } | null> => {
@@ -169,12 +357,6 @@ export const googleSignIn = async (
   lastRedirectAuthError = null;
   if (returnScreenId) {
     rememberOAuthReturnScreen(returnScreenId);
-  }
-
-  if (shouldUseRedirectFlow()) {
-    isSigningIn = true;
-    await signInWithRedirect(auth, provider);
-    return null;
   }
 
   try {
@@ -188,15 +370,15 @@ export const googleSignIn = async (
     consumeOAuthReturnScreen();
     cachedAccessToken = credential.accessToken;
     currentUser = result.user;
+    await establishOwnerServerSession(result.user);
     notifyListeners();
     return { user: result.user, accessToken: cachedAccessToken };
   } catch (err: unknown) {
     const rawMsg = err instanceof Error ? err.message : String(err || '');
-    // Automatischer Fallback auf Redirect, falls Popup in Top-Level-Fenster blockiert wurde
     if (
       typeof window !== 'undefined' &&
       window.self === window.top &&
-      (rawMsg.includes('auth/popup-blocked') || rawMsg.includes('auth/network-request-failed'))
+      rawMsg.includes('auth/popup-blocked')
     ) {
       await signInWithRedirect(auth, provider);
       return null;
@@ -217,11 +399,23 @@ export const invalidateAccessToken = (): void => {
 };
 
 export const logoutGmail = async (): Promise<void> => {
-  await auth.signOut();
+  await auth.signOut().catch(() => undefined);
+  await fetch('/api/internal/auth/logout', {
+    method: 'POST',
+    credentials: 'include'
+  }).catch(() => undefined);
+  setWebSessionToken(null);
   cachedAccessToken = null;
   currentUser = null;
   lastRedirectAuthError = null;
+  ownerSessionState = {
+    checking: false,
+    authenticated: false,
+    email: null,
+    error: null
+  };
   notifyListeners();
+  notifyOwnerListeners();
 };
 
 function bytesToBase64(bytes: Uint8Array): string {

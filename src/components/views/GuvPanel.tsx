@@ -15,7 +15,7 @@ import {
   KU_REVENUE_LIMIT,
   KU_TOLERANCE_LIMIT
 } from '../../utils/guvCalculator.ts';
-import { formatDateDE } from '../../utils/invoicePdf.ts';
+import { formatDateDE, getTodayLocalIso } from '../../utils/invoicePdf.ts';
 import { downloadOrSaveBlob } from '../../services/nativeBridge.ts';
 import {
   Sparkles,
@@ -65,7 +65,7 @@ export const GuvPanel: React.FC = () => {
 
   // Modal Form States
   const [expTitle, setExpTitle] = useState('');
-  const [expDate, setExpDate] = useState('2026-11-10');
+  const [expDate, setExpDate] = useState(() => getTodayLocalIso());
   const [expAmountStr, setExpAmountStr] = useState('');
   const [expCategory, setExpCategory] = useState<ExpenseCategory>('werkzeug_anlage');
   const [expLifeYears, setExpLifeYears] = useState<number>(5);

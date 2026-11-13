@@ -205,10 +205,11 @@ async function writeToCloudFirestore(storeKey: string, serializedJson: string): 
         {
           method: 'PATCH',
           headers,
+          signal: AbortSignal.timeout(2200),
           body: JSON.stringify({
             fields: {
               storeKey: { stringValue: storeKey },
-              chunkIndex: { integerValue: String(idx) },
+              index: { integerValue: String(idx) },
               payload: { stringValue: chunks[idx] },
               updatedAt: { stringValue: nowIso }
             }
@@ -231,10 +232,12 @@ async function writeToCloudFirestore(storeKey: string, serializedJson: string): 
       {
         method: 'PATCH',
         headers,
+        signal: AbortSignal.timeout(2200),
         body: JSON.stringify({
           fields: {
             storeKey: { stringValue: storeKey },
             chunkCount: { integerValue: String(chunks.length) },
+            byteLength: { integerValue: String(Buffer.byteLength(serializedJson, 'utf8')) },
             sha256: { stringValue: sha256Hex(serializedJson) },
             updatedAt: { stringValue: nowIso }
           }
@@ -276,7 +279,7 @@ async function readFromCloudFirestore<T>(
   try {
     const metaRes = await fetch(
       `${baseUrl}/_mcp_server_state/${encodeURIComponent(storeKey)}`,
-      { headers }
+      { headers, signal: AbortSignal.timeout(2200) }
     );
     if (metaRes.status === 404) {
       firestoreCloudActive = true;
@@ -303,7 +306,7 @@ async function readFromCloudFirestore<T>(
       const chunkId = `${storeKey}_${idx}`;
       const chunkRes = await fetch(
         `${baseUrl}/_mcp_server_chunks/${encodeURIComponent(chunkId)}`,
-        { headers }
+        { headers, signal: AbortSignal.timeout(2200) }
       );
       if (!chunkRes.ok) {
         return { status: 'unavailable' };

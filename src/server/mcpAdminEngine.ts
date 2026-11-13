@@ -1,6 +1,5 @@
 import crypto from 'node:crypto';
 import {
-  getDeterministicServerSeed,
   hydrateStoreFromCloudOrDisk,
   persistStoreToDiskAndCloud,
   readLocalJsonSync
@@ -72,6 +71,7 @@ export interface AppDataSnapshot {
   materials: Material[];
   expenses: BusinessExpense[];
   taxSettings: TaxSettings;
+  deletedIds?: Record<string, string>;
 }
 
 export interface PersistedAppStore {
@@ -127,15 +127,6 @@ function round2(val: number): number {
   return Math.round(val * 100) / 100;
 }
 
-function generateDefaultDeterministicToken(): string {
-  const digest = crypto
-    .createHmac('sha256', getDeterministicServerSeed())
-    .update('hafner-gruenraum-default-mcp-admin-token', 'utf8')
-    .digest('hex')
-    .slice(0, 48);
-  return `hgh_mcp_${digest}`;
-}
-
 function generateRandomRotatedToken(): string {
   return `hgh_mcp_${crypto.randomBytes(24).toString('hex')}`;
 }
@@ -161,6 +152,38 @@ function assertOptionalTime(timeVal: unknown, fieldName: string): string | null 
   return s;
 }
 
+export function capDeletedTombstones(
+  raw: Record<string, string> | undefined | null
+): Record<string, string> {
+  if (!raw || typeof raw !== 'object') return {};
+  const entries = Object.entries(raw).filter(
+    ([k, v]) => typeof k === 'string' && k.includes(':') && typeof v === 'string' && v.length >= 10
+  );
+  if (entries.length <= 500) {
+    return Object.fromEntries(entries);
+  }
+  entries.sort((a, b) => b[1].localeCompare(a[1]));
+  return Object.fromEntries(entries.slice(0, 500));
+}
+
+function addTombstone(
+  snap: AppDataSnapshot,
+  collection: CollectionName,
+  id: string,
+  iso = new Date().toISOString()
+): void {
+  if (!snap.deletedIds || typeof snap.deletedIds !== 'object') {
+    snap.deletedIds = {};
+  }
+  snap.deletedIds[`${collection}:${id}`] = iso;
+  snap.deletedIds = capDeletedTombstones(snap.deletedIds);
+}
+
+function clearTombstone(snap: AppDataSnapshot, collection: CollectionName, id: string): void {
+  if (!snap.deletedIds || typeof snap.deletedIds !== 'object') return;
+  delete snap.deletedIds[`${collection}:${id}`];
+}
+
 function createEmptySnapshot(): AppDataSnapshot {
   return {
     customers: [],
@@ -174,7 +197,8 @@ function createEmptySnapshot(): AppDataSnapshot {
     equipments: [],
     materials: [],
     expenses: [],
-    taxSettings: { ...DEFAULT_TAX_SETTINGS }
+    taxSettings: { ...DEFAULT_TAX_SETTINGS },
+    deletedIds: {}
   };
 }
 
@@ -196,7 +220,8 @@ function normalizeSnapshot(input: Partial<AppDataSnapshot> | undefined | null): 
     taxSettings:
       input.taxSettings && typeof input.taxSettings === 'object'
         ? { ...DEFAULT_TAX_SETTINGS, ...input.taxSettings }
-        : { ...DEFAULT_TAX_SETTINGS }
+        : { ...DEFAULT_TAX_SETTINGS },
+    deletedIds: capDeletedTombstones(input.deletedIds)
   };
 }
 
@@ -263,7 +288,7 @@ function normalizePersistedMcpConfig(
     adminToken:
       typeof raw?.adminToken === 'string' && raw.adminToken.trim().length >= 24
         ? raw.adminToken.trim()
-        : generateDefaultDeterministicToken(),
+        : generateRandomRotatedToken(),
     requireToken: true,
     createdAt: raw?.createdAt || new Date().toISOString(),
     lastAccessAt: raw?.lastAccessAt || null,
@@ -273,11 +298,19 @@ function normalizePersistedMcpConfig(
 }
 
 export async function hydrateAdminEngineStores(): Promise<void> {
-  const hydratedStore = await hydrateStoreFromCloudOrDisk<Partial<PersistedAppStore>>(
-    STORE_KEY,
-    STORE_FILENAME,
-    true
-  );
+  const [hydratedStore, hydratedCfg] = await Promise.all([
+    hydrateStoreFromCloudOrDisk<Partial<PersistedAppStore>>(
+      STORE_KEY,
+      STORE_FILENAME,
+      true
+    ),
+    hydrateStoreFromCloudOrDisk<Partial<McpConfig>>(
+      CONFIG_KEY,
+      CONFIG_FILENAME,
+      false
+    )
+  ]);
+
   if (hydratedStore) {
     cachedStore = normalizePersistedAppStore(hydratedStore);
   } else {
@@ -285,11 +318,6 @@ export async function hydrateAdminEngineStores(): Promise<void> {
     persistStoreToDiskAndCloud(STORE_KEY, STORE_FILENAME, cachedStore);
   }
 
-  const hydratedCfg = await hydrateStoreFromCloudOrDisk<Partial<McpConfig>>(
-    CONFIG_KEY,
-    CONFIG_FILENAME,
-    false
-  );
   if (hydratedCfg) {
     cachedFileConfig = normalizePersistedMcpConfig(hydratedCfg);
   } else {
@@ -385,12 +413,7 @@ export function isValidAdminToken(candidate: string | undefined | null): boolean
   if (!trimmed) return false;
   const candidateHash = crypto.createHash('sha256').update(trimmed, 'utf8').digest();
   const expectedHash = crypto.createHash('sha256').update(cfg.adminToken, 'utf8').digest();
-  if (crypto.timingSafeEqual(candidateHash, expectedHash)) {
-    return true;
-  }
-  const deterministicDefault = generateDefaultDeterministicToken();
-  const defaultHash = crypto.createHash('sha256').update(deterministicDefault, 'utf8').digest();
-  return crypto.timingSafeEqual(candidateHash, defaultHash);
+  return crypto.timingSafeEqual(candidateHash, expectedHash);
 }
 
 export function isCollectionName(name: string): name is CollectionName {
@@ -640,6 +663,24 @@ export function queryCollection(params: {
 }
 
 function mutateUpsertOnSnapshot(
+  next: AppDataSnapshot,
+  collection: CollectionName,
+  payload: Record<string, unknown>
+): {
+  action: 'created' | 'updated';
+  summary: string;
+  record: unknown;
+  extra?: Record<string, unknown>;
+} {
+  const res = mutateUpsertOnSnapshotInner(next, collection, payload);
+  const recId = (res.record as { id?: unknown } | null | undefined)?.id;
+  if (typeof recId === 'string' && recId.trim()) {
+    clearTombstone(next, collection, recId.trim());
+  }
+  return res;
+}
+
+function mutateUpsertOnSnapshotInner(
   next: AppDataSnapshot,
   collection: CollectionName,
   payload: Record<string, unknown>
@@ -1424,6 +1465,7 @@ function mutateDeleteOnSnapshot(
   if (!target) {
     return { deleted: false, reason: `Eintrag "${id}" in "${collection}" nicht gefunden.` };
   }
+  const nowIso = new Date().toISOString();
 
   if (collection === 'workRecords') {
     const wr = target as unknown as WorkRecord;
@@ -1478,6 +1520,7 @@ function mutateDeleteOnSnapshot(
       );
     }
 
+    addTombstone(next, 'invoices', id, nowIso);
     return {
       deleted: true,
       summary: `Rechnung ${targetInv.invoice_number} gelöscht`
@@ -1485,11 +1528,31 @@ function mutateDeleteOnSnapshot(
   }
 
   (next[collection] as unknown) = arr.filter((item) => String(item.id) !== id);
+  addTombstone(next, collection, id, nowIso);
 
   if (collection === 'customers') {
     const deletedPropIds = new Set(
       next.properties.filter((p) => p.customer_id === id).map((p) => p.id)
     );
+    for (const p of next.properties) {
+      if (p.customer_id === id) addTombstone(next, 'properties', p.id, nowIso);
+    }
+    for (const a of next.appointments) {
+      if (a.customer_id === id) addTombstone(next, 'appointments', a.id, nowIso);
+    }
+    for (const w of next.workRecords) {
+      if (w.customer_id === id && !w.settlement_id) addTombstone(next, 'workRecords', w.id, nowIso);
+    }
+    for (const inq of next.inquiries) {
+      if (inq.customer_id === id) addTombstone(next, 'inquiries', inq.id, nowIso);
+    }
+    for (const off of next.offers) {
+      if (off.customer_id === id) addTombstone(next, 'offers', off.id, nowIso);
+    }
+    for (const ord of next.orders) {
+      if (ord.customer_id === id) addTombstone(next, 'orders', ord.id, nowIso);
+    }
+
     next.customers = next.customers.map((c) =>
       c.default_billing_customer_id === id
         ? { ...c, billing_mode: 'standard', default_billing_customer_id: null }

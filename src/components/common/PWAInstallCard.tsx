@@ -31,7 +31,7 @@ export const PWAInstallCard: React.FC<PWAInstallCardProps> = ({ compact = false 
           <div className="flex items-center gap-2.5">
             <img
               src="/pwa-maskable-192x192.png"
-              alt="Hafner Bildschirm-Icon"
+              alt="Infinity Bildschirm-Icon"
               className="w-7 h-7 rounded-full object-cover border border-slate-300 shrink-0"
             />
             <div>
@@ -77,12 +77,12 @@ export const PWAInstallCard: React.FC<PWAInstallCardProps> = ({ compact = false 
           <div className="w-14 h-14 rounded-full overflow-hidden shadow-sm ring-2 ring-slate-200 bg-[#02061A]">
             <img
               src="/pwa-maskable-192x192.png"
-              alt="Hafner Bildschirm-Icon Vorschau"
+              alt="Infinity Bildschirm-Icon Vorschau"
               className="w-full h-full object-cover"
             />
           </div>
           <span className="text-[10px] font-semibold text-slate-700 mt-1 leading-none">
-            Hafner
+            Infinity
           </span>
         </div>
 

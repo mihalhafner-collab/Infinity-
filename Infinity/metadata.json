@@ -1,8 +1,0 @@
-{
-  "name": "Infinity",
-  "description": "Mobiles Servicemanagement für Haus- und Gartenpflege, optimiert für Google Pixel 10 Pro.",
-  "requestFramePermissions": [],
-  "majorCapabilities": [
-    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
-  ]
-}

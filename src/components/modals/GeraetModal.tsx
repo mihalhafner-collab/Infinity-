@@ -16,6 +16,7 @@ import {
   FileText
 } from 'lucide-react';
 import { compressImageFile } from '../../utils/imageCompress.ts';
+import { getTodayLocalIso } from '../../utils/invoicePdf.ts';
 import {
   getCategoriesByType,
   getCategoryDef
@@ -23,7 +24,11 @@ import {
 
 function addMonthsIso(isoDate: string, months: number): string {
   const d = new Date(`${isoDate}T00:00:00`);
-  if (Number.isNaN(d.getTime())) return '2027-05-10';
+  if (Number.isNaN(d.getTime())) {
+    const fallback = new Date(`${getTodayLocalIso()}T00:00:00`);
+    fallback.setMonth(fallback.getMonth() + months);
+    return fallback.toISOString().slice(0, 10);
+  }
   d.setMonth(d.getMonth() + months);
   return d.toISOString().slice(0, 10);
 }
@@ -67,8 +72,8 @@ export const GeraetModal: React.FC = () => {
     'Kette schärfen, Schwertnut & Luftfilter reinigen, Kettenbremse prüfen'
   );
   const [intervalMonths, setIntervalMonths] = useState('3');
-  const [lastMaintenance, setLastMaintenance] = useState('2026-11-10');
-  const [nextMaintenance, setNextMaintenance] = useState('2027-02-10');
+  const [lastMaintenance, setLastMaintenance] = useState(() => getTodayLocalIso());
+  const [nextMaintenance, setNextMaintenance] = useState(() => addMonthsIso(getTodayLocalIso(), 3));
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
 
@@ -92,8 +97,9 @@ export const GeraetModal: React.FC = () => {
       setNotes(existingItem.notes || '');
       setMaintenancePlan(existingItem.maintenance_plan || '');
       setIntervalMonths(String(existingItem.interval_months || 6));
-      setLastMaintenance(existingItem.last_maintenance || '2026-11-10');
-      setNextMaintenance(existingItem.next_maintenance || '2027-05-10');
+      const todayIso = getTodayLocalIso();
+      setLastMaintenance(existingItem.last_maintenance || todayIso);
+      setNextMaintenance(existingItem.next_maintenance || addMonthsIso(todayIso, existingItem.interval_months || 6));
     } else if (isCreatingZubehoer) {
       setItemType('zubehoer');
       const preselectedParent = availableGeraete.find((g) => g.id === selectedEquipmentId) || null;
@@ -132,8 +138,9 @@ export const GeraetModal: React.FC = () => {
       const defMonths = catDef?.defaultIntervalMonths || 6;
       setMaintenancePlan(catDef?.defaultMaintenancePlan || 'Regelmäßige Prüfung');
       setIntervalMonths(String(defMonths));
-      setLastMaintenance('2026-11-10');
-      setNextMaintenance(addMonthsIso('2026-11-10', defMonths));
+      const todayIso = getTodayLocalIso();
+      setLastMaintenance(todayIso);
+      setNextMaintenance(addMonthsIso(todayIso, defMonths));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeModal, selectedEquipmentId]);

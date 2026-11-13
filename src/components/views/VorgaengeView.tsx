@@ -18,6 +18,7 @@ import {
   X
 } from 'lucide-react';
 import { Order } from '../../types/index.ts';
+import { getTodayLocalIso } from '../../utils/invoicePdf.ts';
 
 const QUICK_ORDER_ACTIVITIES = [
   'Rasenpflege / Mähen',
@@ -142,7 +143,7 @@ export const VorgaengeView: React.FC = () => {
         customer_id: ord.customer_id,
         property_id: ord.property_id || null,
         title: ord.title,
-        date: ord.scheduled_date || '2026-11-12',
+        date: ord.scheduled_date || getTodayLocalIso(),
         start_time: null,
         end_time: null,
         duration_minutes: null,

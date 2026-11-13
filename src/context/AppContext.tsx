@@ -16,7 +16,8 @@ import {
   UsedMaterial,
   OfferItem,
   BusinessExpense,
-  TaxSettings
+  TaxSettings,
+  DeletedTombstoneMap
 } from '../types/index.ts';
 import {
   addDaysIso,
@@ -265,7 +266,10 @@ const defaultTaxSettings: TaxSettings = {
 
 const AppContext = createContext<AppContextType | null>(null);
 
-export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+export const AppProvider: React.FC<{
+  children: React.ReactNode;
+  ownerAuthenticated?: boolean;
+}> = ({ children, ownerAuthenticated = true }) => {
   const [initialBootScreen] = useState<ScreenId>(() => {
     const returned = consumeOAuthReturnScreen();
     if (
@@ -399,6 +403,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return saved ? { ...defaultTaxSettings, ...JSON.parse(saved) } : defaultTaxSettings;
   });
 
+  const [deletedIds, setDeletedIds] = useState<DeletedTombstoneMap>(() => {
+    try {
+      const saved = localStorage.getItem(`${STORAGE_KEY}_deletedIds`);
+      return saved ? (JSON.parse(saved) as DeletedTombstoneMap) : {};
+    } catch {
+      return {};
+    }
+  });
+
   const [lastBackupDate, setLastBackupDate] = useState<string | null>(() => {
     const nativeMeta = getNativeBackupMeta();
     if (nativeMeta?.lastBackupDate) return nativeMeta.lastBackupDate;
@@ -453,6 +466,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   useEffect(() => {
     localStorage.setItem(`${STORAGE_KEY}_taxSettings`, JSON.stringify(taxSettings));
   }, [taxSettings]);
+
+  useEffect(() => {
+    localStorage.setItem(`${STORAGE_KEY}_deletedIds`, JSON.stringify(deletedIds));
+  }, [deletedIds]);
 
   // Live Bidirectional Sync mit Backend (für vollen lesenden & schreibenden MCP / ChatGPT-Plugin Zugriff)
   const serverSyncInitializedRef = useRef(false);
@@ -525,6 +542,28 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     []
   );
 
+  const capClientTombstones = (raw: DeletedTombstoneMap | undefined | null): DeletedTombstoneMap => {
+    if (!raw || typeof raw !== 'object') return {};
+    const entries = Object.entries(raw).filter(
+      ([k, v]) => typeof k === 'string' && k.includes(':') && typeof v === 'string' && v.length >= 10
+    );
+    if (entries.length <= 500) return Object.fromEntries(entries);
+    entries.sort((a, b) => b[1].localeCompare(a[1]));
+    return Object.fromEntries(entries.slice(0, 500));
+  };
+
+  const recordDeletedTombstones = (entries: Array<[string, string]>) => {
+    if (entries.length === 0) return;
+    const nowIso = new Date().toISOString();
+    setDeletedIds((prev) => {
+      const next = { ...prev };
+      for (const [collection, id] of entries) {
+        if (id) next[`${collection}:${id}`] = nowIso;
+      }
+      return capClientTombstones(next);
+    });
+  };
+
   const buildCurrentSnapshot = () => ({
     customers,
     properties,
@@ -537,7 +576,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     equipments,
     materials,
     expenses,
-    taxSettings
+    taxSettings,
+    deletedIds
   });
 
   const applyServerData = (remote: Partial<ReturnType<typeof buildCurrentSnapshot>>) => {
@@ -556,7 +596,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       taxSettings:
         remote.taxSettings && typeof remote.taxSettings === 'object'
           ? { ...defaultTaxSettings, ...remote.taxSettings }
-          : { ...defaultTaxSettings }
+          : { ...defaultTaxSettings },
+      deletedIds: capClientTombstones(remote.deletedIds)
     };
     const serialized = JSON.stringify(normalized);
     lastSyncedSnapshotJsonRef.current = serialized;
@@ -573,6 +614,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setMaterials(normalized.materials);
     setExpenses(normalized.expenses);
     setTaxSettings(normalized.taxSettings);
+    setDeletedIds(normalized.deletedIds);
   };
 
   const lastNativeSavedJsonRef = useRef<string>('');
@@ -595,7 +637,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
   };
 
-  const mergeCollectionById = <T extends { id: string }>(baseArr: T[] | undefined, primaryArr: T[] | undefined): T[] => {
+  const mergeCollectionById = <T extends { id: string; updated_at?: string }>(
+    baseArr: T[] | undefined,
+    primaryArr: T[] | undefined,
+    collectionName?: string,
+    tombstones?: DeletedTombstoneMap
+  ): T[] => {
     const map = new Map<string, T>();
     if (Array.isArray(baseArr)) {
       for (const item of baseArr) {
@@ -607,30 +654,44 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         if (item && item.id) map.set(item.id, item);
       }
     }
-    return Array.from(map.values());
+    const items = Array.from(map.values());
+    if (!collectionName || !tombstones) return items;
+    return items.filter((item) => {
+      const delAt = tombstones[`${collectionName}:${item.id}`];
+      if (!delAt) return true;
+      const upd = item.updated_at || '';
+      return Boolean(upd && upd > delAt);
+    });
   };
 
   const mergeSnapshotsClientSide = (
     base: Partial<ReturnType<typeof buildCurrentSnapshot>> | null | undefined,
     primary: Partial<ReturnType<typeof buildCurrentSnapshot>>
-  ): ReturnType<typeof buildCurrentSnapshot> => ({
-    customers: mergeCollectionById(base?.customers, primary.customers),
-    properties: mergeCollectionById(base?.properties, primary.properties),
-    appointments: mergeCollectionById(base?.appointments, primary.appointments),
-    workRecords: mergeCollectionById(base?.workRecords, primary.workRecords),
-    invoices: mergeCollectionById(base?.invoices, primary.invoices),
-    inquiries: mergeCollectionById(base?.inquiries, primary.inquiries),
-    offers: mergeCollectionById(base?.offers, primary.offers),
-    orders: mergeCollectionById(base?.orders, primary.orders),
-    equipments: mergeCollectionById(base?.equipments, primary.equipments),
-    materials: mergeCollectionById(base?.materials, primary.materials),
-    expenses: mergeCollectionById(base?.expenses, primary.expenses),
-    taxSettings: {
-      ...defaultTaxSettings,
-      ...(base?.taxSettings || {}),
-      ...(primary.taxSettings || {})
-    }
-  });
+  ): ReturnType<typeof buildCurrentSnapshot> => {
+    const mergedTombstones = capClientTombstones({
+      ...(base?.deletedIds || {}),
+      ...(primary.deletedIds || {})
+    });
+    return {
+      customers: mergeCollectionById(base?.customers, primary.customers, 'customers', mergedTombstones),
+      properties: mergeCollectionById(base?.properties, primary.properties, 'properties', mergedTombstones),
+      appointments: mergeCollectionById(base?.appointments, primary.appointments, 'appointments', mergedTombstones),
+      workRecords: mergeCollectionById(base?.workRecords, primary.workRecords, 'workRecords', mergedTombstones),
+      invoices: mergeCollectionById(base?.invoices, primary.invoices, 'invoices', mergedTombstones),
+      inquiries: mergeCollectionById(base?.inquiries, primary.inquiries, 'inquiries', mergedTombstones),
+      offers: mergeCollectionById(base?.offers, primary.offers, 'offers', mergedTombstones),
+      orders: mergeCollectionById(base?.orders, primary.orders, 'orders', mergedTombstones),
+      equipments: mergeCollectionById(base?.equipments, primary.equipments, 'equipments', mergedTombstones),
+      materials: mergeCollectionById(base?.materials, primary.materials, 'materials', mergedTombstones),
+      expenses: mergeCollectionById(base?.expenses, primary.expenses, 'expenses', mergedTombstones),
+      taxSettings: {
+        ...defaultTaxSettings,
+        ...(base?.taxSettings || {}),
+        ...(primary.taxSettings || {})
+      },
+      deletedIds: mergedTombstones
+    };
+  };
 
   // Hydrate from Kotlin atomic filesDir storage + live NativeMcpSyncManager listener on Pixel 10 Pro
   useEffect(() => {
@@ -692,41 +753,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const endpoint = resolveBackendEndpoint('/api/internal/state');
     if (!endpoint.url) return null;
 
-    let localStore: RemoteStorePayload | null = null;
-
     try {
       const res = await fetch(endpoint.url, {
         headers: endpoint.headers,
         credentials: 'include'
       });
       if (res.ok) {
-        localStore = (await res.json()) as RemoteStorePayload;
+        return (await res.json()) as RemoteStorePayload;
       }
     } catch {
-      // Ignore and try fallback
+      // Offline / network error tolerance
     }
 
-    if (
-      typeof window !== 'undefined' &&
-      window.location.hostname !== 'hafner-gruenraum.ai.studio' &&
-      (!localStore || !hasAnySnapshotRecords(localStore.data))
-    ) {
-      try {
-        const pubRes = await fetch('https://hafner-gruenraum.ai.studio/api/internal/state', {
-          credentials: 'omit'
-        });
-        if (pubRes.ok) {
-          const pubStore = (await pubRes.json()) as RemoteStorePayload;
-          if (pubStore && hasAnySnapshotRecords(pubStore.data)) {
-            return pubStore;
-          }
-        }
-      } catch {
-        // Ignore cross-origin fallback failure
-      }
-    }
-
-    return localStore;
+    return null;
   };
 
   const pushSnapshotToServer = useCallback(
@@ -766,19 +805,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           },
           body: payloadStr
         });
-
-        // Best-effort Spiegelung an den veröffentlichten Hauptserver, falls in Preview geöffnet
-        if (
-          typeof window !== 'undefined' &&
-          window.location.hostname !== 'hafner-gruenraum.ai.studio'
-        ) {
-          void fetch('https://hafner-gruenraum.ai.studio/api/internal/state', {
-            method: 'PUT',
-            credentials: 'omit',
-            headers: { 'Content-Type': 'application/json' },
-            body: payloadStr
-          }).catch(() => undefined);
-        }
 
         if (!res.ok) {
           updateSyncMeta({
@@ -894,6 +920,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   useEffect(() => {
     if (isNativeAndroidApp()) {
       serverSyncInitializedRef.current = true;
+      return;
+    }
+    if (!ownerAuthenticated) {
+      serverSyncInitializedRef.current = false;
       return;
     }
 
@@ -1069,7 +1099,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       eventSource?.close();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [ownerAuthenticated]);
 
   useEffect(() => {
     const snap = buildCurrentSnapshot();
@@ -1083,7 +1113,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return;
     }
 
-    if (!serverSyncInitializedRef.current) return;
+    if (!ownerAuthenticated || !serverSyncInitializedRef.current) return;
     if (snapJson === lastSyncedSnapshotJsonRef.current) return;
 
     if (snapJson !== lastTrackedMutationJsonRef.current) {
@@ -1100,6 +1130,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
+    ownerAuthenticated,
     customers,
     properties,
     appointments,
@@ -1111,7 +1142,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     equipments,
     materials,
     expenses,
-    taxSettings
+    taxSettings,
+    deletedIds
   ]);
 
   // Navigation handlers
@@ -1313,10 +1345,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // CRUD Implementations
   const addAppointment = (app: Partial<Appointment>): Appointment => {
+    const todayIso = getTodayLocalIso();
+    const targetDate = app.date || todayIso;
     const newApp: Appointment = {
       id: `app-${Date.now()}`,
       title: app.title?.trim() || 'Termin', // Optional title -> default 'Termin' per REQ-013
-      date: app.date || '2026-11-10',
+      date: targetDate,
       start_time: app.start_time !== undefined ? app.start_time : null,
       end_time: app.end_time !== undefined ? app.end_time : null,
       duration_minutes: app.duration_minutes || null,
@@ -1324,7 +1358,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       property_id: app.property_id || null,
       address: app.address || null,
       notes: app.notes || '',
-      tour_order: appointments.filter(a => a.date === (app.date || '2026-11-10')).length + 1
+      tour_order: appointments.filter(a => a.date === targetDate).length + 1
     };
     setAppointments(prev => [...prev, newApp]);
     return newApp;
@@ -1335,10 +1369,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const deleteAppointment = (id: string) => {
+    recordDeletedTombstones([['appointments', id]]);
     setAppointments(prev => prev.filter(a => a.id !== id));
   };
 
   const addCustomer = (cust: Partial<Customer>): Customer => {
+    const todayIso = getTodayLocalIso();
     const newCust: Customer = {
       id: cust.id || `c-${Date.now()}`,
       name: cust.name?.trim() || 'Neuer Kunde',
@@ -1351,7 +1387,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       notes: cust.notes || '',
       active: cust.active ?? true,
       electronic_invoice_consent: cust.electronic_invoice_consent ?? false,
-      electronic_invoice_consent_date: cust.electronic_invoice_consent ? (cust.electronic_invoice_consent_date || '2026-11-10') : null,
+      electronic_invoice_consent_date: cust.electronic_invoice_consent ? (cust.electronic_invoice_consent_date || todayIso) : null,
       default_billing_customer_id: cust.default_billing_customer_id || null,
       billing_mode: cust.billing_mode || 'standard',
       garden_area: cust.garden_area || null,
@@ -1416,10 +1452,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const prevInquiries = [...inquiries];
     const prevOffers = [...offers];
     const prevOrders = [...orders];
+    const prevDeletedIds = { ...deletedIds };
 
     const deletedPropIds = new Set(
       properties.filter(p => p.customer_id === id).map(p => p.id)
     );
+
+    const tombstoneList: Array<[string, string]> = [['customers', id]];
+    properties.filter(p => p.customer_id === id).forEach(p => tombstoneList.push(['properties', p.id]));
+    appointments.filter(a => a.customer_id === id).forEach(a => tombstoneList.push(['appointments', a.id]));
+    workRecords.filter(w => w.customer_id === id && !w.settlement_id).forEach(w => tombstoneList.push(['workRecords', w.id]));
+    inquiries.filter(i => i.customer_id === id).forEach(i => tombstoneList.push(['inquiries', i.id]));
+    offers.filter(o => o.customer_id === id).forEach(o => tombstoneList.push(['offers', o.id]));
+    orders.filter(o => o.customer_id === id).forEach(o => tombstoneList.push(['orders', o.id]));
+    recordDeletedTombstones(tombstoneList);
 
     setCustomers(prev =>
       prev
@@ -1474,6 +1520,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setInquiries(prevInquiries);
         setOffers(prevOffers);
         setOrders(prevOrders);
+        setDeletedIds(prevDeletedIds);
       }
     });
   };
@@ -1516,6 +1563,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const deleteOrder = (id: string) => {
+    recordDeletedTombstones([['orders', id]]);
     setOrders(prev => prev.filter(o => o.id !== id));
   };
 
@@ -1523,16 +1571,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (ids.length === 0) return;
     const idSet = new Set(ids);
     const snapshot = [...orders];
-    const removedCount = orders.filter(o => idSet.has(o.id)).length;
-    if (removedCount === 0) return;
+    const prevDeletedIds = { ...deletedIds };
+    const removed = orders.filter(o => idSet.has(o.id));
+    if (removed.length === 0) return;
 
+    recordDeletedTombstones(removed.map(o => ['orders', o.id]));
     setOrders(prev => prev.filter(o => !idSet.has(o.id)));
     setUndoToast({
       visible: true,
-      message: `${removedCount} ${removedCount === 1 ? 'Auftrag' : 'Aufträge'} gelöscht`,
+      message: `${removed.length} ${removed.length === 1 ? 'Auftrag' : 'Aufträge'} gelöscht`,
       actionLabel: 'Rückgängig',
       onUndo: () => {
         setOrders(snapshot);
+        setDeletedIds(prevDeletedIds);
       }
     });
   };
@@ -1575,7 +1626,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const prevWorks = [...workRecords];
     const prevApps = [...appointments];
     const prevOrders = [...orders];
+    const prevDeletedIds = { ...deletedIds };
 
+    recordDeletedTombstones([['properties', id]]);
     setProperties(prev => prev.filter(p => p.id !== id));
     setWorkRecords(prev => prev.map(w => (w.property_id === id ? { ...w, property_id: null } : w)));
     setAppointments(prev => prev.map(a => (a.property_id === id ? { ...a, property_id: null } : a)));
@@ -1593,6 +1646,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setWorkRecords(prevWorks);
         setAppointments(prevApps);
         setOrders(prevOrders);
+        setDeletedIds(prevDeletedIds);
       }
     });
   };
@@ -1623,7 +1677,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const newRec: WorkRecord = {
       id: work.id || `w-${Date.now()}`,
       work_record_id: work.work_record_id,
-      work_date: work.work_date || '2026-11-10',
+      work_date: work.work_date || getTodayLocalIso(),
       title: work.title?.trim() || 'Gartenarbeit',
       customer_id: resolvedCustId,
       billing_customer_id:
@@ -1712,6 +1766,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const deleteWorkRecord = (id: string) => {
+    recordDeletedTombstones([['workRecords', id]]);
     setWorkRecords(prev => prev.filter(w => w.id !== id));
     setInvoices(prev =>
       prev.map(inv =>
@@ -1730,7 +1785,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (deletableIds.length === 0) return;
     const idSet = new Set(deletableIds);
     const snapshot = [...workRecords];
+    const prevDeletedIds = { ...deletedIds };
 
+    recordDeletedTombstones(deletableIds.map(id => ['workRecords', id]));
     setWorkRecords(prev => prev.filter(w => !idSet.has(w.id)));
     setUndoToast({
       visible: true,
@@ -1738,6 +1795,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       actionLabel: 'Rückgängig',
       onUndo: () => {
         setWorkRecords(snapshot);
+        setDeletedIds(prevDeletedIds);
       }
     });
   };
@@ -1888,7 +1946,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           ...nextPayments,
           {
             id: `pay-${Date.now()}`,
-            date: patch.issue_date || existing.issue_date || '2026-11-10',
+            date: patch.issue_date || existing.issue_date || getTodayLocalIso(),
             amount: diff,
             is_reversal: false,
             reversal_of: null,
@@ -1951,10 +2009,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     const snapshotInvoices = [...invoices];
     const snapshotWorkRecords = [...workRecords];
+    const prevDeletedIds = { ...deletedIds };
 
     if (selectedInvoiceId === invoiceId) {
       setSelectedInvoiceId(null);
     }
+
+    recordDeletedTombstones([['invoices', invoiceId]]);
 
     if (target.is_storno) {
       // Wenn ein Stornobeleg gelöscht wird: Ursprüngliche Rechnung reaktivieren, falls vorhanden
@@ -2015,6 +2076,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       onUndo: () => {
         setInvoices(snapshotInvoices);
         setWorkRecords(snapshotWorkRecords);
+        setDeletedIds(prevDeletedIds);
       }
     });
   };
@@ -2026,7 +2088,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     const remaining = targetInvoice.total_amount - targetInvoice.payments.reduce((s, p) => s + p.amount, 0);
     const amountToPay = customAmount !== undefined ? customAmount : remaining;
-    const paymentDate = customDate || '2026-11-10';
+    const paymentDate = customDate || getTodayLocalIso();
 
     if (customAmount === undefined) {
       // Full payment with 5 seconds undo window
@@ -2158,7 +2220,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
         const reversalPayment: PaymentItem = {
           id: `rev-${Date.now()}`,
-          date: '2026-11-10',
+          date: getTodayLocalIso(),
           amount: -origPayment.amount,
           is_reversal: true,
           reversal_of: origPayment.id,
@@ -2193,7 +2255,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return m ? parseInt(m[1], 10) : 0;
       });
     const nextStornoSeq = (existingStornoNums.length > 0 ? Math.max(...existingStornoNums) : 0) + 1;
-    const stornoNum = `RE-S${String(nextStornoSeq).padStart(2, '0')}/2026`;
+    const stornoYear = getTodayLocalIso().slice(0, 4);
+    const stornoNum = `RE-S${String(nextStornoSeq).padStart(2, '0')}/${stornoYear}`;
 
     const stornoItems = orig.line_items?.map(li => ({
       ...li,
@@ -2201,6 +2264,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       amount: -Math.abs(li.amount)
     }));
 
+    const stornoToday = getTodayLocalIso();
     const stornoDoc: Invoice = {
       id: `storno-${Date.now()}`,
       invoice_number: stornoNum,
@@ -2211,8 +2275,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       recipient_city: orig.recipient_city,
       service_period: orig.service_period,
       line_items: stornoItems,
-      issue_date: '2026-11-11',
-      due_date: '2026-11-11',
+      issue_date: stornoToday,
+      due_date: stornoToday,
       total_amount: -orig.total_amount,
       status: 'cancelled',
       work_record_ids: orig.work_record_ids,
@@ -2243,12 +2307,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Record refund for paid cancelled invoice (ILL-009)
   const recordRefund = (invoiceId: string, amount: number, note: string) => {
+    const todayIso = getTodayLocalIso();
     setInvoices(prev => prev.map(inv => {
       if (inv.id === invoiceId || inv.storno_reference_id === invoiceId) {
         const remainingRefund = Math.max(0, inv.open_refund_amount - amount);
         const refundPayment: PaymentItem = {
           id: `ref-${Date.now()}`,
-          date: '2026-11-10',
+          date: todayIso,
           amount: -amount,
           is_reversal: false,
           reversal_of: null,
@@ -2267,6 +2332,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Equipment & Zubehör
   const addEquipment = (eq: Partial<Equipment> & { name: string }): Equipment => {
     const itemType = eq.item_type || 'geraet';
+    const intervalMonths = eq.interval_months || 6;
+    const lastMaint = eq.last_maintenance || getTodayLocalIso();
     const newEq: Equipment = {
       id: eq.id || `eq-${Date.now()}`,
       item_type: itemType,
@@ -2279,15 +2346,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       quantity: eq.quantity !== undefined ? eq.quantity : itemType === 'zubehoer' ? 1 : null,
       notes: eq.notes || '',
       status: eq.status || 'einsatzbereit',
-      last_maintenance: eq.last_maintenance || '2026-11-10',
-      next_maintenance: eq.next_maintenance || '2027-05-10',
+      last_maintenance: lastMaint,
+      next_maintenance: eq.next_maintenance || addDaysIso(lastMaint, intervalMonths * 30),
       maintenance_plan:
         eq.maintenance_plan !== undefined
           ? eq.maintenance_plan
           : itemType === 'zubehoer'
             ? ''
             : 'Regelmäßige Prüfung',
-      interval_months: eq.interval_months || 6,
+      interval_months: intervalMonths,
       history: eq.history || []
     };
     setEquipments(prev => [newEq, ...prev]);
@@ -2304,7 +2371,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const target = equipments.find(eq => eq.id === id);
     if (!target) return;
     const prevSnapshot = [...equipments];
+    const prevDeletedIds = { ...deletedIds };
 
+    recordDeletedTombstones([['equipments', id]]);
     setEquipments(prev =>
       prev
         .filter(eq => eq.id !== id)
@@ -2323,20 +2392,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       actionLabel: 'Rückgängig',
       onUndo: () => {
         setEquipments(prevSnapshot);
+        setDeletedIds(prevDeletedIds);
       }
     });
   };
 
   const recordMaintenance = (equipmentId: string, plan: string, note: string, nextDate: string) => {
+    const todayIso = getTodayLocalIso();
     setEquipments(prev => prev.map(eq => {
       if (eq.id === equipmentId) {
         return {
           ...eq,
           status: 'einsatzbereit',
-          last_maintenance: '2026-11-10',
+          last_maintenance: todayIso,
           next_maintenance: nextDate,
           maintenance_plan: plan,
-          history: [{ date: '2026-11-10', note, plan }, ...eq.history]
+          history: [{ date: todayIso, note, plan }, ...eq.history]
         };
       }
       return eq;
@@ -2369,7 +2440,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const addExpense = (exp: Omit<BusinessExpense, 'id'> & { id?: string }): BusinessExpense => {
     const newExp: BusinessExpense = {
       id: exp.id || `exp-${Date.now()}`,
-      date: exp.date || `${taxSettings.selected_year}-11-10`,
+      date: exp.date || getTodayLocalIso(),
       title: exp.title.trim() || 'Betriebsausgabe',
       amount: Math.max(0, Math.round(exp.amount * 100) / 100),
       category: exp.category || 'sonstiges',
@@ -2401,6 +2472,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const target = expenses.find(e => e.id === id);
     if (!target) return;
     const snapshot = [...expenses];
+    const prevDeletedIds = { ...deletedIds };
+    recordDeletedTombstones([['expenses', id]]);
     setExpenses(prev => prev.filter(e => e.id !== id));
 
     setUndoToast({
@@ -2409,6 +2482,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       actionLabel: 'Rückgängig',
       onUndo: () => {
         setExpenses(snapshot);
+        setDeletedIds(prevDeletedIds);
       }
     });
   };
