@@ -33,6 +33,8 @@ import {
   sanitizeIntroTextSalutation
 } from '../utils/invoicePdf.ts';
 import {
+  DEFAULT_INFINITY_CLOUD_URL,
+  configureNativeMcpSync,
   getNativeBackupMeta,
   isNativeAndroidApp,
   loadNativeStoreJson,
@@ -47,7 +49,11 @@ import {
   triggerNativeMcpSyncNow
 } from '../services/nativeBridge.ts';
 import { validateFirestoreBootConnection } from '../services/firebaseClient.ts';
-import { consumeOAuthReturnScreen, isGoogleConnected } from '../services/gmailService.ts';
+import {
+  consumeOAuthReturnScreen,
+  isGoogleConnected,
+  refreshOwnerServerSessionIfPossible
+} from '../services/gmailService.ts';
 import {
   attachGoogleEventIdToNotes,
   cleanGoogleEventNotes,
@@ -798,14 +804,26 @@ export const AppProvider: React.FC<{
   };
 
   const fetchBestRemoteStoreForWeb = async (): Promise<RemoteStorePayload | null> => {
-    const endpoint = resolveBackendEndpoint('/api/internal/state');
+    let endpoint = resolveBackendEndpoint('/api/internal/state');
     if (!endpoint.url) return null;
 
     try {
-      const res = await fetch(endpoint.url, {
+      let res = await fetch(endpoint.url, {
         headers: endpoint.headers,
         credentials: 'include'
       });
+      if (res.status === 401) {
+        const refreshed = await refreshOwnerServerSessionIfPossible();
+        if (refreshed) {
+          endpoint = resolveBackendEndpoint('/api/internal/state');
+          if (endpoint.url) {
+            res = await fetch(endpoint.url, {
+              headers: endpoint.headers,
+              credentials: 'include'
+            });
+          }
+        }
+      }
       if (res.ok) {
         return (await res.json()) as RemoteStorePayload;
       }
@@ -822,7 +840,7 @@ export const AppProvider: React.FC<{
       snapJson: string,
       summary: string
     ): Promise<boolean> => {
-      const endpoint = resolveBackendEndpoint('/api/internal/state');
+      let endpoint = resolveBackendEndpoint('/api/internal/state');
       if (!endpoint.url) return false;
       if (typeof navigator !== 'undefined' && !navigator.onLine) {
         updateSyncMeta({
@@ -839,12 +857,13 @@ export const AppProvider: React.FC<{
       const payloadStr = JSON.stringify({
         data: snap,
         baseRevision: lastKnownRevisionRef.current,
+        clientRevision: lastKnownRevisionRef.current,
         summary,
         source: 'web'
       });
 
       try {
-        const res = await fetch(endpoint.url, {
+        let res = await fetch(endpoint.url, {
           method: 'PUT',
           credentials: 'include',
           headers: {
@@ -853,6 +872,24 @@ export const AppProvider: React.FC<{
           },
           body: payloadStr
         });
+
+        if (res.status === 401) {
+          const refreshed = await refreshOwnerServerSessionIfPossible();
+          if (refreshed) {
+            endpoint = resolveBackendEndpoint('/api/internal/state');
+            if (endpoint.url) {
+              res = await fetch(endpoint.url, {
+                method: 'PUT',
+                credentials: 'include',
+                headers: {
+                  'Content-Type': 'application/json',
+                  ...endpoint.headers
+                },
+                body: payloadStr
+              });
+            }
+          }
+        }
 
         if (!res.ok) {
           updateSyncMeta({
@@ -906,6 +943,7 @@ export const AppProvider: React.FC<{
 
   const flushPendingAppSync = useCallback(async () => {
     if (isNativeAndroidApp()) {
+      configureNativeMcpSync(DEFAULT_INFINITY_CLOUD_URL, '');
       triggerNativeMcpSyncNow();
       return;
     }
@@ -931,6 +969,7 @@ export const AppProvider: React.FC<{
 
   const refreshFromServer = useCallback(async () => {
     if (isNativeAndroidApp()) {
+      configureNativeMcpSync(DEFAULT_INFINITY_CLOUD_URL, '');
       triggerNativeMcpSyncNow();
       return;
     }

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useRef, useState } from 'react';
 import { useApp } from '../../context/AppContext.tsx';
 import {
   X,
@@ -37,6 +37,11 @@ export const PlusMenuModal: React.FC = () => {
     performBackup
   } = useApp();
 
+  const [dragOffsetY, setDragOffsetY] = useState(0);
+  const [isDragging, setIsDragging] = useState(false);
+  const dragStartYRef = useRef<number | null>(null);
+  const listScrollRef = useRef<HTMLDivElement | null>(null);
+
   if (!isPlusMenuOpen) return null;
 
   const currentCust = customers.find((c) => c.id === selectedCustomerId);
@@ -44,13 +49,77 @@ export const PlusMenuModal: React.FC = () => {
     ? properties.filter((p) => p.customer_id === currentCust.id)
     : [];
 
-  const handleTileClick = (screen: ScreenId) => {
+  const closeSheet = () => {
+    setDragOffsetY(0);
+    setIsDragging(false);
+    dragStartYRef.current = null;
     setIsPlusMenuOpen(false);
+  };
+
+  const handleTouchStart = (e: React.TouchEvent, fromScrollableList = false) => {
+    if (fromScrollableList && listScrollRef.current && listScrollRef.current.scrollTop > 2) {
+      dragStartYRef.current = null;
+      return;
+    }
+    dragStartYRef.current = e.touches[0].clientY;
+    setIsDragging(true);
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (dragStartYRef.current === null) return;
+    const deltaY = e.touches[0].clientY - dragStartYRef.current;
+    if (deltaY > 0) {
+      setDragOffsetY(deltaY);
+    } else {
+      setDragOffsetY(0);
+    }
+  };
+
+  const handleTouchEnd = () => {
+    if (dragStartYRef.current === null) return;
+    if (dragOffsetY > 60) {
+      closeSheet();
+      return;
+    }
+    setDragOffsetY(0);
+    setIsDragging(false);
+    dragStartYRef.current = null;
+  };
+
+  const handlePointerDown = (e: React.PointerEvent) => {
+    if (e.pointerType === 'touch') return;
+    dragStartYRef.current = e.clientY;
+    setIsDragging(true);
+  };
+
+  const handlePointerMove = (e: React.PointerEvent) => {
+    if (e.pointerType === 'touch' || dragStartYRef.current === null) return;
+    const deltaY = e.clientY - dragStartYRef.current;
+    if (deltaY > 0) {
+      setDragOffsetY(deltaY);
+    } else {
+      setDragOffsetY(0);
+    }
+  };
+
+  const handlePointerUp = (e: React.PointerEvent) => {
+    if (e.pointerType === 'touch' || dragStartYRef.current === null) return;
+    if (dragOffsetY > 60) {
+      closeSheet();
+      return;
+    }
+    setDragOffsetY(0);
+    setIsDragging(false);
+    dragStartYRef.current = null;
+  };
+
+  const handleTileClick = (screen: ScreenId) => {
+    closeSheet();
     navigate(screen);
   };
 
   const handleAction = (actionKey: string) => {
-    setIsPlusMenuOpen(false);
+    closeSheet();
     switch (actionKey) {
       case 'geraet_anlegen':
         setSelectedEquipmentId(null);
@@ -288,120 +357,150 @@ export const PlusMenuModal: React.FC = () => {
   return (
     <div className="absolute inset-0 z-50 bg-black/45 backdrop-blur-2xs flex flex-col justify-end animate-fade-in">
       {/* Background touch dismiss */}
-      <div className="flex-1" onClick={() => setIsPlusMenuOpen(false)} />
+      <div className="flex-1" onClick={closeSheet} />
 
-      {/* Sheet Content */}
-      <div className="bg-white rounded-t-3xl border-t border-slate-200 shadow-2xl px-4 pt-3 pb-5 max-h-[88%] flex flex-col animate-slide-up">
-        <div className="w-11 h-1.5 bg-slate-300 rounded-full mx-auto mb-2.5 shrink-0" />
-
-        {/* Header */}
-        <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-          <div>
-            <h2 className="text-lg font-bold text-slate-950 leading-tight">
-              {contextInfo.title}
-            </h2>
-            <p className="text-xs text-slate-600 mt-0.5">{contextInfo.subtitle}</p>
+      {/* Sheet Content (~25% niedrigere Höhe + Nach-unten-ziehen zum Schließen) */}
+      <div
+        style={{
+          transform: dragOffsetY > 0 ? `translateY(${dragOffsetY}px)` : undefined,
+          transition: isDragging ? 'none' : 'transform 180ms ease-out'
+        }}
+        className="bg-white rounded-t-3xl border-t border-slate-200 shadow-2xl px-4 pt-2 pb-3.5 max-h-[64%] flex flex-col animate-slide-up"
+      >
+        {/* Zieh-Bereich oben (Handle + Header + Direktkacheln) */}
+        <div
+          onTouchStart={(e) => handleTouchStart(e, false)}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+          className="shrink-0 touch-pan-x select-none cursor-grab active:cursor-grabbing"
+        >
+          <div className="py-1 flex justify-center">
+            <div className="w-11 h-1.5 bg-slate-300 rounded-full" />
           </div>
-          <button
-            onClick={() => setIsPlusMenuOpen(false)}
-            className="w-11 h-11 flex items-center justify-center text-slate-600 hover:text-slate-900 rounded-full hover:bg-slate-100 active:scale-95 transition-all"
-            aria-label="Schließen"
-          >
-            <X size={22} />
-          </button>
-        </div>
 
-        {/* 3 Direktkacheln (Page 22, ILL-004) */}
-        <div className="pt-3 pb-3.5 border-b border-slate-100">
-          <span className="text-xs font-semibold text-slate-500 tracking-wide block mb-2">
-            Direkt öffnen
-          </span>
-          <div className="grid grid-cols-3 gap-2.5">
+          {/* Header */}
+          <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+            <div>
+              <h2 className="text-base font-bold text-slate-950 leading-tight">
+                {contextInfo.title}
+              </h2>
+              <p className="text-[11px] text-slate-600">{contextInfo.subtitle}</p>
+            </div>
             <button
-              onClick={() => handleTileClick('M08_ARBEITEN')}
-              className={`p-3 rounded-2xl flex flex-col items-center text-center transition-all active:scale-97 group border ${
-                currentScreen === 'M08_ARBEITEN'
-                  ? 'bg-indigo-50/90 border-[#3138A0]/50'
-                  : 'bg-slate-50 hover:bg-indigo-50/50 border-slate-200'
-              }`}
+              type="button"
+              onClick={closeSheet}
+              className="w-9 h-9 flex items-center justify-center text-slate-600 hover:text-slate-900 rounded-full hover:bg-slate-100 active:scale-95 transition-all"
+              aria-label="Schließen"
             >
-              <div className="w-10 h-10 rounded-full bg-white shadow-2xs border border-slate-200 flex items-center justify-center text-[#3138A0] mb-1.5">
-                <Briefcase size={19} />
-              </div>
-              <span className="text-sm font-bold text-slate-900 leading-tight">Arbeiten</span>
-              <span className="text-[11px] text-slate-500 mt-0.5">Aufzeichnung</span>
+              <X size={20} />
             </button>
+          </div>
 
-            <button
-              onClick={() => handleTileClick('M09_LCR')}
-              className={`p-3 rounded-2xl flex flex-col items-center text-center transition-all active:scale-97 group border ${
-                currentScreen === 'M09_LCR'
-                  ? 'bg-indigo-50/90 border-[#3138A0]/50'
-                  : 'bg-slate-50 hover:bg-indigo-50/50 border-slate-200'
-              }`}
-            >
-              <div className="w-10 h-10 rounded-full bg-white shadow-2xs border border-slate-200 flex items-center justify-center text-[#3138A0] mb-1.5">
-                <Bookmark size={19} />
-              </div>
-              <span className="text-sm font-bold text-slate-900 leading-tight">L.C.R.</span>
-              <span className="text-[11px] text-slate-500 mt-0.5">Kennzeichnung</span>
-            </button>
+          {/* 3 Direktkacheln (kompakt) */}
+          <div className="pt-2 pb-2.5 border-b border-slate-100">
+            <span className="text-[11px] font-semibold text-slate-500 tracking-wide block mb-1.5">
+              Direkt öffnen
+            </span>
+            <div className="grid grid-cols-3 gap-2">
+              <button
+                type="button"
+                onClick={() => handleTileClick('M08_ARBEITEN')}
+                className={`p-2 rounded-2xl flex flex-col items-center text-center transition-all active:scale-97 group border ${
+                  currentScreen === 'M08_ARBEITEN'
+                    ? 'bg-indigo-50/90 border-[#3138A0]/50'
+                    : 'bg-slate-50 hover:bg-indigo-50/50 border-slate-200'
+                }`}
+              >
+                <div className="w-8 h-8 rounded-full bg-white shadow-2xs border border-slate-200 flex items-center justify-center text-[#3138A0] mb-1">
+                  <Briefcase size={16} />
+                </div>
+                <span className="text-xs font-bold text-slate-900 leading-tight">Arbeiten</span>
+                <span className="text-[10px] text-slate-500">Aufzeichnung</span>
+              </button>
 
-            <button
-              onClick={() => handleTileClick('M10_GERAETE')}
-              className={`p-3 rounded-2xl flex flex-col items-center text-center transition-all active:scale-97 group border ${
-                currentScreen === 'M10_GERAETE'
-                  ? 'bg-indigo-50/90 border-[#3138A0]/50'
-                  : 'bg-slate-50 hover:bg-indigo-50/50 border-slate-200'
-              }`}
-            >
-              <div className="w-10 h-10 rounded-full bg-white shadow-2xs border border-slate-200 flex items-center justify-center text-[#3138A0] mb-1.5">
-                <Wrench size={19} />
-              </div>
-              <span className="text-sm font-bold text-slate-900 leading-tight">Geräte</span>
-              <span className="text-[11px] text-slate-500 mt-0.5">Wartung</span>
-            </button>
+              <button
+                type="button"
+                onClick={() => handleTileClick('M09_LCR')}
+                className={`p-2 rounded-2xl flex flex-col items-center text-center transition-all active:scale-97 group border ${
+                  currentScreen === 'M09_LCR'
+                    ? 'bg-indigo-50/90 border-[#3138A0]/50'
+                    : 'bg-slate-50 hover:bg-indigo-50/50 border-slate-200'
+                }`}
+              >
+                <div className="w-8 h-8 rounded-full bg-white shadow-2xs border border-slate-200 flex items-center justify-center text-[#3138A0] mb-1">
+                  <Bookmark size={16} />
+                </div>
+                <span className="text-xs font-bold text-slate-900 leading-tight">L.C.R.</span>
+                <span className="text-[10px] text-slate-500">Kennzeichnung</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleTileClick('M10_GERAETE')}
+                className={`p-2 rounded-2xl flex flex-col items-center text-center transition-all active:scale-97 group border ${
+                  currentScreen === 'M10_GERAETE'
+                    ? 'bg-indigo-50/90 border-[#3138A0]/50'
+                    : 'bg-slate-50 hover:bg-indigo-50/50 border-slate-200'
+                }`}
+              >
+                <div className="w-8 h-8 rounded-full bg-white shadow-2xs border border-slate-200 flex items-center justify-center text-[#3138A0] mb-1">
+                  <Wrench size={16} />
+                </div>
+                <span className="text-xs font-bold text-slate-900 leading-tight">Geräte</span>
+                <span className="text-[10px] text-slate-500">Wartung</span>
+              </button>
+            </div>
           </div>
         </div>
 
         {/* Schnellaktionen Liste - Contextual */}
-        <div className="flex-1 overflow-y-auto pt-3 pb-2">
-          <div className="flex items-center justify-between mb-2 px-1">
-            <span className="text-xs font-semibold text-slate-500 tracking-wide block">
+        <div
+          ref={listScrollRef}
+          onTouchStart={(e) => handleTouchStart(e, true)}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
+          className="flex-1 min-h-0 overflow-y-auto pt-2 pb-1.5 overscroll-contain"
+        >
+          <div className="flex items-center justify-between mb-1.5 px-1">
+            <span className="text-[11px] font-semibold text-slate-500 tracking-wide block">
               Passende Aktionen
             </span>
-            <span className="text-xs text-[#3138A0] font-semibold flex items-center gap-1">
-              <Sparkles size={13} />
+            <span className="text-[11px] text-[#3138A0] font-semibold flex items-center gap-1">
+              <Sparkles size={12} />
               <span>Kontextbezogen</span>
             </span>
           </div>
 
-          <div className="space-y-2">
+          <div className="space-y-1.5">
             {actions.map((act) => {
               const Icon = act.icon;
               return (
                 <button
                   key={act.key}
+                  type="button"
                   onClick={() => handleAction(act.key)}
-                  className={`w-full min-h-[54px] py-2.5 px-3.5 flex items-center justify-between text-left rounded-2xl transition-all active:scale-99 ${
+                  className={`w-full min-h-[42px] py-1.5 px-3 flex items-center justify-between text-left rounded-2xl transition-all active:scale-99 ${
                     act.isPrimary
                       ? 'bg-indigo-50/80 border border-indigo-200 text-slate-950 shadow-2xs hover:bg-indigo-100/70'
                       : 'hover:bg-slate-50 active:bg-slate-100 border border-slate-100 text-slate-800'
                   }`}
                 >
-                  <div className="flex items-center gap-3 min-w-0 pr-2">
+                  <div className="flex items-center gap-2.5 min-w-0 pr-2">
                     <div
-                      className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${
+                      className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${
                         act.isPrimary
                           ? 'bg-[#3138A0] text-white shadow-2xs'
                           : 'bg-slate-100 text-[#3138A0]'
                       }`}
                     >
-                      <Icon size={19} />
+                      <Icon size={16} />
                     </div>
                     <div className="min-w-0">
                       <span
-                        className={`text-sm block leading-snug ${
+                        className={`text-xs block leading-snug ${
                           act.isPrimary ? 'font-bold text-[#3138A0]' : 'font-semibold text-slate-900'
                         }`}
                       >
@@ -411,7 +510,7 @@ export const PlusMenuModal: React.FC = () => {
                   </div>
 
                   {act.isPrimary && (
-                    <span className="text-xs font-bold text-[#3138A0] bg-white px-2.5 py-1 rounded-full border border-indigo-100 shrink-0">
+                    <span className="text-[11px] font-bold text-[#3138A0] bg-white px-2 py-0.5 rounded-full border border-indigo-100 shrink-0">
                       Empfohlen
                     </span>
                   )}
@@ -422,9 +521,9 @@ export const PlusMenuModal: React.FC = () => {
         </div>
 
         {/* Footer info note */}
-        <div className="pt-2.5 border-t border-slate-100 text-center">
-          <p className="text-xs text-slate-500">
-            Öffnen allein speichert nichts · Keine Datennebenwirkungen
+        <div className="pt-1.5 border-t border-slate-100 text-center shrink-0">
+          <p className="text-[11px] text-slate-400">
+            Nach unten ziehen zum Schließen · Öffnen allein speichert nichts
           </p>
         </div>
       </div>

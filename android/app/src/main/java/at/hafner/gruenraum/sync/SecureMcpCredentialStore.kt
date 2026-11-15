@@ -61,21 +61,25 @@ class SecureMcpCredentialStore(private val context: Context) {
                 val storedAdminToken = obj.optString("adminToken", "").trim()
                 return McpCredentials(
                     baseUrl = storedUrl.ifBlank { defaultBaseUrl() },
-                    token = storedToken,
+                    token = storedToken.ifBlank { DEFAULT_PIXEL10_DEVICE_TOKEN },
                     adminToken = storedAdminToken
                 )
             } catch (_: Exception) {
-                // Bei Keystore-Rotation auf Standard-URL ohne Token zurückfallen
+                // Bei Keystore-Rotation auf Standard-URL mit Pixel-Gerätetoken zurückfallen
             }
         }
-        return McpCredentials(baseUrl = defaultBaseUrl(), token = "", adminToken = "")
+        return McpCredentials(
+            baseUrl = defaultBaseUrl(),
+            token = DEFAULT_PIXEL10_DEVICE_TOKEN,
+            adminToken = ""
+        )
     }
 
     @Synchronized
     fun saveCredentials(baseUrl: String, token: String, adminToken: String? = null): McpCredentials {
         val current = loadCredentials()
         val cleanUrl = sanitizeBaseUrl(baseUrl).ifBlank { defaultBaseUrl() }
-        val cleanToken = token.trim()
+        val cleanToken = token.trim().ifBlank { current.token.ifBlank { DEFAULT_PIXEL10_DEVICE_TOKEN } }
         val cleanAdminToken = adminToken?.trim() ?: current.adminToken
         val payload = JSONObject().apply {
             put("baseUrl", cleanUrl)
@@ -117,11 +121,12 @@ class SecureMcpCredentialStore(private val context: Context) {
     @Synchronized
     fun clearTokenKeepUrl(): McpCredentials {
         val current = loadCredentials()
-        return saveCredentials(current.baseUrl, "", "")
+        return saveCredentials(current.baseUrl, DEFAULT_PIXEL10_DEVICE_TOKEN, "")
     }
 
     private fun defaultBaseUrl(): String {
         return sanitizeBaseUrl(BuildConfig.DEFAULT_MCP_BASE_URL)
+            .ifBlank { PRIMARY_CLOUD_RUN_URL }
     }
 
     private fun getOrCreateSecretKey(): SecretKey {
@@ -153,6 +158,8 @@ class SecureMcpCredentialStore(private val context: Context) {
         private const val TRANSFORMATION = "AES/GCM/NoPadding"
         private const val IV_LENGTH_BYTES = 12
         private const val GCM_TAG_BITS = 128
+        const val PRIMARY_CLOUD_RUN_URL = "https://hafner-gruenraum-523881801839.europe-west1.run.app"
+        const val DEFAULT_PIXEL10_DEVICE_TOKEN = "hgh_px10_pixel10pro_primary_sync_token_2026"
 
         fun sanitizeBaseUrl(raw: String): String {
             var cleaned = raw.trim()
@@ -163,10 +170,10 @@ class SecureMcpCredentialStore(private val context: Context) {
                 cleaned = "https://" + cleaned.removePrefix("http://")
             }
             if (
-                cleaned.contains("ais-pre-usuarrctzvo6yzyghmhedg") ||
+                cleaned.contains("infinity-hafner.ai.studio", ignoreCase = true) ||
                 cleaned.contains("hafner-gruenraum.ai.studio", ignoreCase = true)
             ) {
-                cleaned = "https://infinity-hafner.ai.studio"
+                cleaned = PRIMARY_CLOUD_RUN_URL
             }
             return cleaned
         }

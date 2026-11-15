@@ -1514,7 +1514,7 @@ export const RechnungModal: React.FC = () => {
                     </p>
                   </div>
                 ) : (
-                  <div className="space-y-2">
+                  <div className="max-h-72 overflow-y-auto overscroll-contain space-y-2 pr-0.5">
                     {availableRecords.map((rec) => {
                       const isSelected = selectedRecordIds.includes(rec.id);
                       const isEditingThis = editingWorkId === rec.id;

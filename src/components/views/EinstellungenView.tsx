@@ -151,7 +151,9 @@ export const EinstellungenView: React.FC = () => {
     setSyncInProgress(true);
     try {
       if (isNativeAndroid) {
+        configureNativeMcpSync(DEFAULT_INFINITY_CLOUD_URL, '');
         triggerNativeMcpSyncNow();
+        setNativeSyncStatus(getNativeMcpSyncStatus());
       }
       await refreshFromServer();
     } finally {
@@ -398,9 +400,38 @@ export const EinstellungenView: React.FC = () => {
               )}
 
             {isNativeAndroid && nativeSyncStatus?.lastError && (
-              <div className="p-2 bg-red-50 border border-red-200 rounded-lg text-[10px] text-red-800 flex items-center gap-1.5">
-                <AlertCircle size={13} className="shrink-0" />
-                <span>{nativeSyncStatus.lastError}</span>
+              <div className="p-2 bg-red-50 border border-red-200 rounded-lg text-[10px] text-red-800 flex items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <AlertCircle size={13} className="shrink-0" />
+                  <span className="leading-snug">{nativeSyncStatus.lastError}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    configureNativeMcpSync(DEFAULT_INFINITY_CLOUD_URL, '');
+                    triggerNativeMcpSyncNow();
+                    setNativeSyncStatus(getNativeMcpSyncStatus());
+                  }}
+                  className="h-7 px-2.5 bg-red-700 text-white font-semibold rounded-md shrink-0"
+                >
+                  Jetzt verbinden
+                </button>
+              </div>
+            )}
+
+            {!isNativeAndroid && appSyncStatus.lastSyncError && (
+              <div className="p-2 bg-red-50 border border-red-200 rounded-lg text-[10px] text-red-800 flex items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <AlertCircle size={13} className="shrink-0" />
+                  <span className="leading-snug">{appSyncStatus.lastSyncError}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void flushPendingAppSync()}
+                  className="h-7 px-2.5 bg-red-700 text-white font-semibold rounded-md shrink-0"
+                >
+                  Erneut senden
+                </button>
               </div>
             )}
           </div>

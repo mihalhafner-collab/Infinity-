@@ -110,9 +110,22 @@ export const GeraetModal: React.FC = () => {
       if (preselectedParent?.category === 'freischneider') {
         initCat = 'zub_faden_messer';
       } else if (
-        preselectedParent?.category === 'rasenmaeher' ||
-        preselectedParent?.category === 'heckenschere' ||
-        preselectedParent?.category === 'blaeser_sonstige'
+        preselectedParent?.category === 'bewaesserung_spritze' ||
+        preselectedParent?.category === 'handwerkzeuge_garten'
+      ) {
+        initCat = 'zub_bewaesserung_gardena';
+      } else if (preselectedParent?.category === 'felco_silky_schnitt') {
+        initCat = 'zub_feilen_schaerfen';
+      } else if (preselectedParent?.category === 'milwaukee_geraete') {
+        initCat = 'zub_akku_ladung';
+      } else if (
+        preselectedParent?.category === 'elektrowerkzeuge_allgemein' ||
+        preselectedParent?.category === 'bau_pflaster_geraete'
+      ) {
+        initCat = 'zub_bohrer_trennscheiben';
+      } else if (
+        preselectedParent?.category &&
+        preselectedParent.category !== 'motorsaegen'
       ) {
         initCat = 'zub_filter_psa_sonstiges';
       }
@@ -148,6 +161,8 @@ export const GeraetModal: React.FC = () => {
   if (!isOpen) return null;
 
   const typeCategories = getCategoriesByType(itemType);
+  const gartenCategories = typeCategories.filter((c) => c.group === 'garten');
+  const allgemeinCategories = typeCategories.filter((c) => c.group === 'allgemein');
   const currentCatDef = getCategoryDef(category) || typeCategories[0];
 
   const handleSwitchType = (nextType: 'geraet' | 'zubehoer') => {
@@ -412,30 +427,114 @@ export const GeraetModal: React.FC = () => {
             </div>
           </div>
 
-          {/* Kategorie Auswahl */}
-          <div>
-            <label className="font-semibold text-slate-700 block mb-1.5">
-              Kategorie
-            </label>
-            <div className="flex flex-wrap gap-1.5">
-              {typeCategories.map((cat) => {
-                const active = currentCatDef?.id === cat.id;
-                return (
-                  <button
-                    key={cat.id}
-                    type="button"
-                    onClick={() => handleSelectCategory(cat.id)}
-                    className={`min-h-[36px] px-2.5 py-1.5 rounded-xl text-[11px] font-semibold border transition-all ${
-                      active
-                        ? 'bg-[#3138A0] text-white border-[#3138A0] shadow-2xs'
-                        : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
-                    }`}
-                  >
-                    {cat.label}
-                  </button>
-                );
-              })}
-            </div>
+          {/* Kategorie- & Werkzeugauswahl (Gartengeräte + Allgemeine Geräte) */}
+          <div className="space-y-3">
+            {itemType === 'geraet' ? (
+              <>
+                <div>
+                  <label className="text-[11px] font-bold text-[#2C7738] uppercase tracking-wider block mb-1.5">
+                    Gartengeräte & Forst
+                  </label>
+                  <div className="flex flex-wrap gap-1.5">
+                    {gartenCategories.map((cat) => {
+                      const active = currentCatDef?.id === cat.id;
+                      return (
+                        <button
+                          key={cat.id}
+                          type="button"
+                          onClick={() => handleSelectCategory(cat.id)}
+                          className={`min-h-[36px] px-2.5 py-1.5 rounded-xl text-[11px] font-semibold border transition-all ${
+                            active
+                              ? 'bg-[#3138A0] text-white border-[#3138A0] shadow-2xs'
+                              : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                          }`}
+                        >
+                          {cat.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-1.5">
+                    Allgemeine Geräte & Werkzeuge
+                  </label>
+                  <div className="flex flex-wrap gap-1.5">
+                    {allgemeinCategories.map((cat) => {
+                      const active = currentCatDef?.id === cat.id;
+                      return (
+                        <button
+                          key={cat.id}
+                          type="button"
+                          onClick={() => handleSelectCategory(cat.id)}
+                          className={`min-h-[36px] px-2.5 py-1.5 rounded-xl text-[11px] font-semibold border transition-all ${
+                            active
+                              ? 'bg-[#3138A0] text-white border-[#3138A0] shadow-2xs'
+                              : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                          }`}
+                        >
+                          {cat.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div>
+                <label className="font-semibold text-slate-700 block mb-1.5">
+                  Zubehör-Kategorie
+                </label>
+                <div className="flex flex-wrap gap-1.5">
+                  {typeCategories.map((cat) => {
+                    const active = currentCatDef?.id === cat.id;
+                    return (
+                      <button
+                        key={cat.id}
+                        type="button"
+                        onClick={() => handleSelectCategory(cat.id)}
+                        className={`min-h-[36px] px-2.5 py-1.5 rounded-xl text-[11px] font-semibold border transition-all ${
+                          active
+                            ? 'bg-[#3138A0] text-white border-[#3138A0] shadow-2xs'
+                            : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                        }`}
+                      >
+                        {cat.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* 1-Tipp Schnellauswahl gängiger Geräte / Zubehörteile der gewählten Kategorie */}
+            {currentCatDef?.presetNames && currentCatDef.presetNames.length > 0 && (
+              <div className="p-2.5 bg-indigo-50/40 border border-indigo-100 rounded-2xl space-y-1.5">
+                <span className="text-[10px] font-bold text-[#3138A0] uppercase tracking-wider block">
+                  Schnellauswahl {currentCatDef.label} (1 Tipp)
+                </span>
+                <div className="flex flex-wrap gap-1.5">
+                  {currentCatDef.presetNames.map((presetName) => {
+                    const isSelected = name.trim() === presetName;
+                    return (
+                      <button
+                        key={presetName}
+                        type="button"
+                        onClick={() => setName(isSelected ? '' : presetName)}
+                        className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition-colors ${
+                          isSelected
+                            ? 'bg-[#3138A0] text-white border-[#3138A0]'
+                            : 'bg-white text-slate-700 border-slate-200 hover:border-[#3138A0]/40'
+                        }`}
+                      >
+                        {presetName}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Bei Zubehör: Zuordnung zu Hauptgerät & Bestand */}

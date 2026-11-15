@@ -7,7 +7,7 @@ import {
   signInWithRedirect
 } from 'firebase/auth';
 import { auth } from './firebaseClient.ts';
-import { isNativeAndroidApp, setWebSessionToken } from './nativeBridge.ts';
+import { isNativeAndroidApp, getWebSessionToken, setWebSessionToken } from './nativeBridge.ts';
 
 export const OWNER_EMAIL = 'mihalhafner@gmail.com';
 
@@ -193,8 +193,15 @@ export async function checkOwnerServerSession(): Promise<boolean> {
       credentials: 'include'
     });
     if (res.ok) {
-      const data = (await res.json()) as { authenticated?: boolean; email?: string | null };
+      const data = (await res.json()) as {
+        authenticated?: boolean;
+        email?: string | null;
+        sessionToken?: string;
+      };
       if (data.authenticated) {
+        if (typeof data.sessionToken === 'string' && data.sessionToken) {
+          setWebSessionToken(data.sessionToken);
+        }
         ownerSessionState = {
           checking: false,
           authenticated: true,
@@ -209,6 +216,15 @@ export async function checkOwnerServerSession(): Promise<boolean> {
     // Ignore offline error
   }
   return false;
+}
+
+export async function refreshOwnerServerSessionIfPossible(): Promise<boolean> {
+  if (isNativeAndroidApp()) return true;
+  const user = auth.currentUser || currentUser;
+  if (user && (user.email || '').trim().toLowerCase() === OWNER_EMAIL) {
+    return establishOwnerServerSession(user);
+  }
+  return checkOwnerServerSession();
 }
 
 if (typeof window !== 'undefined' && !isNativeAndroidApp()) {
@@ -267,7 +283,7 @@ if (typeof window !== 'undefined' && !isNativeAndroidApp()) {
       return;
     }
 
-    if (!ownerSessionState.authenticated && !isSigningIn) {
+    if ((!ownerSessionState.authenticated || !getWebSessionToken()) && !isSigningIn) {
       if ((user.email || '').trim().toLowerCase() === OWNER_EMAIL) {
         await establishOwnerServerSession(user);
       } else {

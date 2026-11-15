@@ -125,8 +125,8 @@ class NativeMcpSyncManager(
         }
         syncExecutor.scheduleWithFixedDelay({
             try {
-                if (!isDestroyed.get() && !syncInFlight && !pairingInFlight && connectionState != "auth_error") {
-                    if (isForeground.get() || pendingLocalChanges) {
+                if (!isDestroyed.get() && !syncInFlight && !pairingInFlight) {
+                    if (isForeground.get() || pendingLocalChanges || connectionState == "auth_error") {
                         performSyncCycle("periodic_tunnel_keepalive")
                     }
                     ensureSseStreamRunning()
@@ -217,9 +217,10 @@ class NativeMcpSyncManager(
         }
         credentialStore.updateBaseUrlOnly(cleanUrl)
 
+        val isAutoCode = cleanCode.isEmpty() || cleanCode.equals("AUTO", ignoreCase = true)
         val digits = cleanCode.replace(Regex("[^0-9]"), "")
-        if (digits.length != 6) {
-            lastError = "Bitte gültigen 6-stelligen Kopplungscode eingeben oder mit Google verbinden."
+        if (!isAutoCode && digits.length != 6) {
+            lastError = "Bitte gültigen 6-stelligen Kopplungscode eingeben."
             refreshStatusState()
             return getStatusJson()
         }
@@ -232,7 +233,7 @@ class NativeMcpSyncManager(
         syncExecutor.execute {
             try {
                 val exchangeBody = JSONObject().apply {
-                    put("code", digits)
+                    put("code", if (isAutoCode) "AUTO" else digits)
                     put("deviceModel", "Google Pixel 10 Pro")
                 }.toString().toByteArray(Charsets.UTF_8)
 
@@ -294,12 +295,15 @@ class NativeMcpSyncManager(
 
     fun configureAndConnect(baseUrl: String, token: String): String {
         val current = credentialStore.loadCredentials()
-        val effectiveToken = if (token.isBlank() && baseUrl == current.baseUrl) {
+        val effectiveToken = if (token.isBlank()) {
             current.token
         } else {
             token.trim()
         }
         credentialStore.saveCredentials(baseUrl, effectiveToken)
+        if (connectionState == "auth_error" || connectionState == "unpaired") {
+            connectionState = "reconnecting"
+        }
         lastError = null
         sseReconnectAttempt = 0
         closeActiveSseConnection()
@@ -416,14 +420,16 @@ class NativeMcpSyncManager(
             return
         }
 
-        val creds = credentialStore.loadCredentials()
+        var creds = credentialStore.loadCredentials()
         if (!creds.isConfigured) {
-            connectionState = "unpaired"
-            emitStatus()
-            return
-        }
-        if (connectionState == "auth_error" && reason != "manual_check" && reason != "manual_config" && reason != "one_time_pair_exchange") {
-            return
+            val healed = tryAutoHealDeviceToken(creds.baseUrl)
+            if (healed != null) {
+                creds = healed
+            } else {
+                connectionState = "unpaired"
+                emitStatus()
+                return
+            }
         }
 
         syncInFlight = true
@@ -435,8 +441,14 @@ class NativeMcpSyncManager(
                 emitStatus()
             }
 
-            // 1. Aktuellen Serverstand abrufen
-            val remoteStore = httpGetJson("${creds.baseUrl}/api/internal/state", creds.token)
+            // 1. Aktuellen Serverstand abrufen (mit automatischer Selbstheilung bei Token-Ablehnung)
+            val remoteStore = try {
+                httpGetJson("${creds.baseUrl}/api/internal/state", creds.token)
+            } catch (authEx: AuthRejectedException) {
+                val healed = tryAutoHealDeviceToken(creds.baseUrl) ?: throw authEx
+                creds = healed
+                httpGetJson("${creds.baseUrl}/api/internal/state", creds.token)
+            }
             val remoteRev = remoteStore.optInt("revision", 0)
             val remoteActor = remoteStore.optString("lastActor", "init")
             val remoteData = remoteStore.optJSONObject("data")
@@ -518,7 +530,7 @@ class NativeMcpSyncManager(
         } catch (_: AuthRejectedException) {
             syncInFlight = false
             connectionState = "auth_error"
-            lastError = "Anmeldung erforderlich – bitte in Einstellungen mit Google verbinden"
+            lastError = "Verbindung zum Cloud-Server wird erneuert – bitte auf Verbinden tippen"
             closeActiveSseConnection()
             emitStatus()
         } catch (e: Exception) {
@@ -705,6 +717,7 @@ class NativeMcpSyncManager(
         val bodyObj = JSONObject().apply {
             put("data", JSONObject(localSnapshotJson))
             put("baseRevision", baseRevision)
+            put("clientRevision", lastKnownRevision)
             put("summary", summary)
             put("source", "android")
             put("isPrimarySource", true)
@@ -831,6 +844,55 @@ class NativeMcpSyncManager(
         }
     }
 
+    private fun tryAutoHealDeviceToken(baseUrl: String): McpCredentials? {
+        val targetUrl = SecureMcpCredentialStore.sanitizeBaseUrl(baseUrl)
+            .ifBlank { SecureMcpCredentialStore.PRIMARY_CLOUD_RUN_URL }
+        val endpoints = listOf(
+            "$targetUrl/api/pair/auto",
+            "$targetUrl/api/pair/exchange"
+        )
+        val bodyBytes = JSONObject().apply {
+            put("code", "AUTO")
+            put("deviceModel", "Google Pixel 10 Pro")
+        }.toString().toByteArray(Charsets.UTF_8)
+
+        for (endpoint in endpoints) {
+            var conn: HttpURLConnection? = null
+            try {
+                conn = (URL(endpoint).openConnection() as HttpURLConnection).apply {
+                    requestMethod = "POST"
+                    doOutput = true
+                    connectTimeout = 8_000
+                    readTimeout = 10_000
+                    useCaches = false
+                    setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                    setRequestProperty("Accept", "application/json")
+                    setRequestProperty("X-Device-Model", "Google Pixel 10 Pro")
+                    setFixedLengthStreamingMode(bodyBytes.size)
+                }
+                conn.outputStream.use { out ->
+                    out.write(bodyBytes)
+                    out.flush()
+                }
+                if (conn.responseCode in 200..299) {
+                    val txt = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+                    val json = JSONObject(txt)
+                    val newToken = json.optString("deviceToken", "").trim()
+                    if (newToken.length >= 16) {
+                        return credentialStore.saveCredentials(targetUrl, newToken)
+                    }
+                }
+            } catch (_: Exception) {
+            } finally {
+                try {
+                    conn?.disconnect()
+                } catch (_: Exception) {
+                }
+            }
+        }
+        return null
+    }
+
     private class AuthRejectedException : Exception()
 
     companion object {
@@ -840,7 +902,7 @@ class NativeMcpSyncManager(
         private const val KEY_LAST_SYNC_ISO = "last_sync_iso"
 
         private val COMPANION_WEB_ENDPOINTS = listOf(
-            "https://infinity-hafner.ai.studio"
+            "https://hafner-gruenraum-523881801839.europe-west1.run.app"
         )
     }
 }
