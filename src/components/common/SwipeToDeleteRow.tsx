@@ -6,6 +6,7 @@ interface SwipeToDeleteRowProps {
   onDelete: () => void;
   deleteLabel?: string;
   className?: string;
+  disabled?: boolean;
 }
 
 /**
@@ -25,7 +26,8 @@ export const SwipeToDeleteRow: React.FC<SwipeToDeleteRowProps> = ({
   children,
   onDelete,
   deleteLabel = 'Eintrag löschen',
-  className = ''
+  className = '',
+  disabled = false
 }) => {
   const scrollRef = useRef<HTMLDivElement>(null);
   const isTouchingRef = useRef(false);
@@ -120,6 +122,10 @@ export const SwipeToDeleteRow: React.FC<SwipeToDeleteRowProps> = ({
     }
     finalizeSwipePosition();
   };
+
+  if (disabled) {
+    return <div className={className}>{children}</div>;
+  }
 
   return (
     <div

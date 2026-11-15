@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useApp } from '../../context/AppContext.tsx';
 import {
   Search,
@@ -13,7 +13,8 @@ import {
   CheckSquare,
   FileText,
   MessageSquare,
-  Home
+  Home,
+  Wallet
 } from 'lucide-react';
 import { ScreenId } from '../../types/index.ts';
 import { getCategoryLabel } from '../../utils/equipmentConfig.ts';
@@ -58,6 +59,7 @@ interface SpeechRecognitionInstanceLike {
 
 export const SucheModal: React.FC = () => {
   const {
+    currentScreen,
     isSearchOpen,
     setIsSearchOpen,
     customers,
@@ -70,9 +72,11 @@ export const SucheModal: React.FC = () => {
     inquiries,
     equipments,
     materials,
+    expenses,
     setSelectedCustomerId,
     setSelectedInvoiceId,
     setSelectedWorkRecordId,
+    setSelectedPlanungDate,
     setActiveModal,
     navigate
   } = useApp();
@@ -81,6 +85,29 @@ export const SucheModal: React.FC = () => {
   const [filterType, setFilterType] = useState<SearchFilterTab>('all');
   const [isListening, setIsListening] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const resultsScrollRef = useRef<HTMLDivElement>(null);
+
+  // Bei jedem Öffnen/Schließen der Suche oder Wechsel in ein anderes Menü auf neue Suche zurücksetzen
+  useEffect(() => {
+    setSearchQuery('');
+    setFilterType('all');
+    if (resultsScrollRef.current) {
+      resultsScrollRef.current.scrollTop = 0;
+    }
+    if (isSearchOpen) {
+      const t = setTimeout(() => {
+        inputRef.current?.focus();
+      }, 40);
+      return () => clearTimeout(t);
+    }
+  }, [isSearchOpen, currentScreen]);
+
+  // Bei Filter- oder Suchtextänderung Liste nach oben scrollen
+  useEffect(() => {
+    if (resultsScrollRef.current) {
+      resultsScrollRef.current.scrollTop = 0;
+    }
+  }, [filterType, searchQuery]);
 
   const query = searchQuery.trim();
   const parsedQuery = useMemo(() => parseSearchQuery(query), [query]);
@@ -242,7 +269,7 @@ export const SucheModal: React.FC = () => {
       .map((entry) => entry.item);
   }, [indexedWork, workRecords, parsedQuery, query]);
 
-  // 4. Vorberechneter Suchindex: Rechnungen, Aufträge, Angebote & Anfragen
+  // 4. Vorberechneter Suchindex: Rechnungen, Ausgaben, Aufträge, Angebote & Anfragen
   const indexedInvoices = useMemo(() => {
     return invoices.map((inv) => {
       const cust = customerMap.get(inv.customer_id);
@@ -290,6 +317,33 @@ export const SucheModal: React.FC = () => {
       })
       .map((entry) => entry.item);
   }, [indexedInvoices, invoices, parsedQuery, query]);
+
+  const indexedExpenses = useMemo(() => {
+    return expenses.map((exp) => ({
+      item: exp,
+      index: buildSearchIndexEntry({
+        exactKeys: [exp.date],
+        primary: [exp.title, exp.category],
+        secondary: [formatIsoToDeSearchable(exp.date), formatAmountSearchable(exp.amount)],
+        keywords: [exp.notes, 'ausgabe betriebsausgabe guv']
+      })
+    }));
+  }, [expenses]);
+
+  const matchingExpenses = useMemo(() => {
+    if (!query) return expenses;
+    return indexedExpenses
+      .map(({ item, index }) => ({
+        item,
+        score: scoreSearchIndex(parsedQuery, index)
+      }))
+      .filter((entry) => entry.score > 0)
+      .sort((a, b) => {
+        if (b.score !== a.score) return b.score - a.score;
+        return b.item.date.localeCompare(a.item.date);
+      })
+      .map((entry) => entry.item);
+  }, [indexedExpenses, expenses, parsedQuery, query]);
 
   const indexedOrders = useMemo(() => {
     return orders.map((o) => {
@@ -432,6 +486,7 @@ export const SucheModal: React.FC = () => {
 
   const totalInvoicesAndVorgaenge =
     matchingInvoices.length +
+    matchingExpenses.length +
     matchingOrders.length +
     matchingOffers.length +
     matchingInquiries.length;
@@ -446,32 +501,45 @@ export const SucheModal: React.FC = () => {
     totalInvoicesAndVorgaenge +
     totalEquipmentAndMaterial;
 
-  const handleOpenCustomer = (id: string) => {
-    setSelectedCustomerId(id);
+  const resetAndCloseSearch = () => {
+    setSearchQuery('');
+    setFilterType('all');
     setIsSearchOpen(false);
+  };
+
+  const handleOpenCustomer = (id: string) => {
+    resetAndCloseSearch();
+    setSelectedCustomerId(id);
     navigate('M03_KUNDEN');
   };
 
   const handleOpenInvoice = (id: string) => {
+    resetAndCloseSearch();
     setSelectedInvoiceId(id);
-    setIsSearchOpen(false);
+    navigate('M04_ABRECHNUNG');
+  };
+
+  const handleOpenExpense = () => {
+    resetAndCloseSearch();
+    setSelectedInvoiceId(null);
     navigate('M04_ABRECHNUNG');
   };
 
   const handleOpenWorkRecord = (id: string) => {
+    resetAndCloseSearch();
     setSelectedWorkRecordId(id);
-    setIsSearchOpen(false);
     navigate('M08_ARBEITEN');
     setActiveModal('ARBEIT_BEARBEITEN');
   };
 
-  const handleOpenAppointment = () => {
-    setIsSearchOpen(false);
+  const handleOpenAppointment = (dateIso: string) => {
+    resetAndCloseSearch();
+    setSelectedPlanungDate(dateIso);
     navigate('M02_PLANUNG');
   };
 
   const handleOpenNav = (screen: ScreenId) => {
-    setIsSearchOpen(false);
+    resetAndCloseSearch();
     navigate(screen);
   };
 
@@ -561,7 +629,7 @@ export const SucheModal: React.FC = () => {
 
         <button
           type="button"
-          onClick={() => setIsSearchOpen(false)}
+          onClick={resetAndCloseSearch}
           className="px-3 h-12 flex items-center justify-center text-xs font-bold text-[#3138A0] hover:bg-indigo-50 rounded-xl active:scale-95 transition-all shrink-0"
         >
           Fertig
@@ -602,7 +670,10 @@ export const SucheModal: React.FC = () => {
       </div>
 
       {/* Results Feed */}
-      <div className="flex-1 overflow-y-auto p-3.5 space-y-4 overscroll-contain">
+      <div
+        ref={resultsScrollRef}
+        className="flex-1 overflow-y-auto p-3.5 space-y-4 overscroll-contain"
+      >
         {totalResults === 0 && (
           <div className="p-8 bg-white border border-slate-200 rounded-2xl text-center space-y-2 shadow-2xs">
             <Search size={24} className="text-slate-400 mx-auto" />
@@ -684,7 +755,7 @@ export const SucheModal: React.FC = () => {
                     <button
                       key={a.id}
                       type="button"
-                      onClick={() => handleOpenAppointment()}
+                      onClick={() => handleOpenAppointment(a.date)}
                       className="w-full p-3 bg-white border border-slate-200 rounded-2xl flex items-center justify-between hover:border-[#3138A0] active:bg-slate-50 transition-colors text-left shadow-2xs"
                     >
                       <div className="flex items-center gap-3 min-w-0">
@@ -765,7 +836,7 @@ export const SucheModal: React.FC = () => {
           </div>
         )}
 
-        {/* 4. Rechnungen, Aufträge, Angebote & Anfragen */}
+        {/* 4. Rechnungen, Ausgaben, Aufträge, Angebote & Anfragen */}
         {(filterType === 'all' || filterType === 'invoices_orders') &&
           totalInvoicesAndVorgaenge > 0 && (
             <div className="space-y-3">
@@ -802,6 +873,41 @@ export const SucheModal: React.FC = () => {
                         </div>
                         <span className="font-bold text-sm text-slate-900 tabular-nums shrink-0 pl-2">
                           {inv.total_amount.toFixed(2)} €
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {matchingExpenses.length > 0 && (
+                <div>
+                  <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-2 px-0.5">
+                    Betriebsausgaben ({matchingExpenses.length})
+                  </span>
+                  <div className="space-y-2">
+                    {matchingExpenses.slice(0, 15).map((exp) => (
+                      <button
+                        key={exp.id}
+                        type="button"
+                        onClick={() => handleOpenExpense()}
+                        className="w-full p-3 bg-white border border-slate-200 rounded-2xl flex items-center justify-between hover:border-[#3138A0] active:bg-slate-50 transition-colors text-left shadow-2xs"
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className="w-9 h-9 rounded-xl bg-slate-100 text-slate-700 flex items-center justify-center shrink-0">
+                            <Wallet size={18} />
+                          </div>
+                          <div className="min-w-0">
+                            <span className="font-bold text-slate-950 text-sm block truncate">
+                              {exp.title}
+                            </span>
+                            <span className="text-xs text-slate-600 block truncate">
+                              Ausgabe · {exp.date}
+                            </span>
+                          </div>
+                        </div>
+                        <span className="font-bold text-sm text-[#B42318] tabular-nums shrink-0 pl-2">
+                          −{exp.amount.toFixed(2)} €
                         </span>
                       </button>
                     ))}

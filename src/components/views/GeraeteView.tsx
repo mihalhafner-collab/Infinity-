@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useApp, usePixelBackLayer } from '../../context/AppContext.tsx';
 import { Header } from '../common/Header.tsx';
 import { BottomActionBar } from '../common/BottomActionBar.tsx';
@@ -40,6 +40,13 @@ export const GeraeteView: React.FC = () => {
     title: string;
   } | null>(null);
   const [photoSourceEq, setPhotoSourceEq] = useState<Equipment | null>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = 0;
+    }
+  }, [activeTab, selectedCategoryFilter]);
 
   usePixelBackLayer(Boolean(previewPhoto), () => setPreviewPhoto(null));
   usePixelBackLayer(Boolean(photoSourceEq), () => setPhotoSourceEq(null));
@@ -150,7 +157,10 @@ export const GeraeteView: React.FC = () => {
       {/* Ansicht oben, Bedienelemente unten */}
 
       {/* Content List */}
-      <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-3 overscroll-contain">
+      <div
+        ref={scrollRef}
+        className="flex-1 min-h-0 overflow-y-auto p-4 space-y-3 overscroll-contain"
+      >
         {visibleItems.length === 0 ? (
           <div className="p-7 bg-white border border-slate-200 rounded-2xl text-center space-y-3 shadow-2xs">
             <div className="w-12 h-12 rounded-2xl bg-indigo-50 text-[#3138A0] flex items-center justify-center mx-auto">

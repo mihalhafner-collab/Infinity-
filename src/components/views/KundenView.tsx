@@ -126,10 +126,10 @@ export const KundenView: React.FC = () => {
   const [appointmentFilter, setAppointmentFilter] = useState<'all' | 'upcoming' | 'past'>('all');
 
   // Kundenliste Schnellsuche & Filter
-  const [customerSearchQuery, setCustomerSearchQuery] = useState('');
   const [customerListFilter, setCustomerListFilter] = useState<'all' | 'open_work' | 'sub'>('all');
 
   const contentScrollRef = useRef<HTMLDivElement>(null);
+  const listScrollRef = useRef<HTMLDivElement>(null);
 
   usePixelBackLayer(confirmDeleteCustomer, () => setConfirmDeleteCustomer(false));
   usePixelBackLayer(Boolean(previewPhoto), () => setPreviewPhoto(null));
@@ -148,7 +148,13 @@ export const KundenView: React.FC = () => {
     if (contentScrollRef.current) {
       contentScrollRef.current.scrollTop = 0;
     }
-  }, [customerWorkViewOpen, customerTermineViewOpen]);
+  }, [customerWorkViewOpen, customerTermineViewOpen, activeTab, workStatusFilter, appointmentFilter]);
+
+  useEffect(() => {
+    if (listScrollRef.current) {
+      listScrollRef.current.scrollTop = 0;
+    }
+  }, [customerListFilter]);
 
   // Offene Stunden & Betrag pro Kunde für übersichtliche Kundenliste berechnen
   const openSummaryByCustomer = useMemo(() => {
@@ -179,38 +185,8 @@ export const KundenView: React.FC = () => {
     [sortedCustomers, customers]
   );
 
-  const indexedCustomersMap = useMemo(() => {
-    const map = new Map<string, ReturnType<typeof buildSearchIndexEntry>>();
-    for (const c of sortedCustomers) {
-      const custProps = properties.filter((p) => p.customer_id === c.id);
-      const custNum = c.customer_number?.trim() || resolveCustomerNumber(c.id, customers);
-      const divRecip = getCustomerBillingRecipient(c, customers);
-      map.set(
-        c.id,
-        buildSearchIndexEntry({
-          exactKeys: [custNum, c.zip],
-          primary: [c.name, custNum],
-          secondary: [
-            c.city,
-            c.street,
-            c.phone,
-            c.email,
-            divRecip?.name,
-            ...custProps.map((p) => p.name)
-          ],
-          keywords: [
-            c.notes,
-            divRecip ? 'sub subauftrag abweichend' : '',
-            ...custProps.flatMap((p) => [p.address, p.notes, p.access_info])
-          ]
-        })
-      );
-    }
-    return map;
-  }, [sortedCustomers, properties, customers]);
-
   const filteredCustomerList = useMemo(() => {
-    const baseList = sortedCustomers.filter((c) => {
+    return sortedCustomers.filter((c) => {
       const openInfo = openSummaryByCustomer.get(c.id);
       const divRecip = getCustomerBillingRecipient(c, customers);
 
@@ -222,33 +198,7 @@ export const KundenView: React.FC = () => {
       }
       return true;
     });
-
-    const trimmedQuery = customerSearchQuery.trim();
-    if (!trimmedQuery) return baseList;
-
-    const parsed = parseSearchQuery(trimmedQuery);
-    return baseList
-      .map((c) => {
-        const idx = indexedCustomersMap.get(c.id);
-        return {
-          customer: c,
-          score: idx ? scoreSearchIndex(parsed, idx) : 0
-        };
-      })
-      .filter((entry) => entry.score > 0)
-      .sort((a, b) => {
-        if (b.score !== a.score) return b.score - a.score;
-        return a.customer.name.localeCompare(b.customer.name, 'de');
-      })
-      .map((entry) => entry.customer);
-  }, [
-    sortedCustomers,
-    openSummaryByCustomer,
-    customers,
-    customerListFilter,
-    customerSearchQuery,
-    indexedCustomersMap
-  ]);
+  }, [sortedCustomers, openSummaryByCustomer, customers, customerListFilter]);
 
   // If a customer is selected, show Kundenakte
   const currentCustomer = customers.find((c) => c.id === selectedCustomerId);
@@ -268,7 +218,10 @@ export const KundenView: React.FC = () => {
 
         <UndoToast />
 
-        <div className="flex-1 min-h-0 overflow-y-auto px-3.5 py-3 space-y-2 overscroll-contain">
+        <div
+          ref={listScrollRef}
+          className="flex-1 min-h-0 overflow-y-auto px-3.5 py-2.5 space-y-2 overscroll-contain"
+        >
           {customers.length === 0 ? (
             <div className="p-8 bg-white border border-slate-200 rounded-2xl text-center space-y-2">
               <div className="w-12 h-12 rounded-full bg-indigo-50 text-[#3138A0] flex items-center justify-center mx-auto">
@@ -281,17 +234,14 @@ export const KundenView: React.FC = () => {
             </div>
           ) : filteredCustomerList.length === 0 ? (
             <div className="p-7 bg-white border border-slate-200 rounded-2xl text-center space-y-2 shadow-2xs">
-              <Search size={22} className="text-slate-400 mx-auto" />
-              <p className="text-sm font-bold text-slate-900">Keine passenden Kunden gefunden</p>
+              <User size={22} className="text-slate-400 mx-auto" />
+              <p className="text-sm font-bold text-slate-900">Keine passenden Kunden für diesen Filter</p>
               <button
                 type="button"
-                onClick={() => {
-                  setCustomerSearchQuery('');
-                  setCustomerListFilter('all');
-                }}
+                onClick={() => setCustomerListFilter('all')}
                 className="text-xs font-bold text-[#3138A0] hover:underline"
               >
-                Filter zurücksetzen
+                Alle Kunden anzeigen ({customers.length})
               </button>
             </div>
           ) : (
@@ -438,69 +388,54 @@ export const KundenView: React.FC = () => {
           )}
         </div>
 
-        {/* Untere Leiste fixiert (Pixel 10 Pro Daumenzone: Schnellfilter + Inline-Suche + Kunde anlegen) */}
+        {/* Untere Leiste fixiert (Pixel 10 Pro Daumenzone: Schnellfilter direkt links neben Lupe & Plus) */}
         <div className="shrink-0 w-full mt-auto bg-white border-t border-slate-200/80 z-20 shadow-md">
-          {customers.length > 0 && (
-            <div className="px-3.5 pt-2.5 pb-1.5 border-b border-slate-100 space-y-2">
-              {/* Filter-Pills + Inline-Kundensuche */}
-              <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
-                {(
-                  [
-                    { id: 'all', label: `Alle (${customers.length})` },
-                    {
-                      id: 'open_work',
-                      label: `Offene Std. (${customersWithOpenWorkCount})`
-                    },
-                    { id: 'sub', label: `Sub-Abrechnung (${subCustomersCount})` }
-                  ] as const
-                ).map((flt) => (
+          <BottomActionBar>
+            <div className="w-full grid grid-cols-3 gap-0.5 p-1 bg-slate-100 rounded-2xl">
+              {(
+                [
+                  {
+                    id: 'all',
+                    label: 'Alle',
+                    count: customers.length,
+                    activeClass: 'bg-white text-slate-900 shadow-2xs'
+                  },
+                  {
+                    id: 'open_work',
+                    label: 'Offene Std.',
+                    count: customersWithOpenWorkCount,
+                    activeClass: 'bg-white text-[#B4470B] shadow-2xs'
+                  },
+                  {
+                    id: 'sub',
+                    label: 'Sub',
+                    count: subCustomersCount,
+                    activeClass: 'bg-white text-[#3138A0] shadow-2xs'
+                  }
+                ] as const
+              ).map((flt) => {
+                const isActive = customerListFilter === flt.id;
+                return (
                   <button
                     key={flt.id}
                     type="button"
                     onClick={() => setCustomerListFilter(flt.id)}
-                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold whitespace-nowrap transition-colors ${
-                      customerListFilter === flt.id
-                        ? 'bg-[#3138A0] text-white shadow-2xs'
-                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200/70'
+                    className={`py-2 px-1 rounded-xl text-[10px] font-bold flex items-center justify-center gap-0.5 transition-all min-w-0 ${
+                      isActive ? flt.activeClass : 'text-slate-600 hover:text-slate-900'
                     }`}
                   >
-                    {flt.label}
+                    <span className="truncate">{flt.label}</span>
+                    <span
+                      className={`text-[9px] px-1 rounded shrink-0 ${
+                        isActive ? 'bg-slate-100 font-extrabold' : 'text-slate-400 font-semibold'
+                      }`}
+                    >
+                      {flt.count}
+                    </span>
                   </button>
-                ))}
-              </div>
-
-              <div className="h-9 bg-slate-100 border border-slate-200/90 rounded-xl px-2.5 flex items-center gap-2 focus-within:bg-white focus-within:border-[#3138A0] transition-colors">
-                <Search size={15} className="text-slate-400 shrink-0" />
-                <input
-                  type="search"
-                  value={customerSearchQuery}
-                  onChange={(e) => setCustomerSearchQuery(e.target.value)}
-                  placeholder="Kunde, Ort, Adresse oder Telefon filtern…"
-                  className="flex-1 min-w-0 bg-transparent border-none outline-hidden text-xs font-medium text-slate-900 placeholder:text-slate-400"
-                />
-                {customerSearchQuery && (
-                  <button
-                    type="button"
-                    onClick={() => setCustomerSearchQuery('')}
-                    className="text-slate-400 hover:text-slate-700"
-                    aria-label="Suchtext löschen"
-                  >
-                    <X size={14} />
-                  </button>
-                )}
-              </div>
+                );
+              })}
             </div>
-          )}
-
-          <BottomActionBar>
-            <button
-              type="button"
-              onClick={() => setActiveModal('KUNDE_ANLEGEN')}
-              className="h-10 px-4 bg-[#3138A0] hover:bg-[#272d82] active:scale-97 text-white text-xs font-bold rounded-2xl flex items-center justify-center gap-1.5 shadow-xs transition-all whitespace-nowrap"
-            >
-              <Plus size={16} strokeWidth={2.5} />
-              <span>Kunde anlegen</span>
-            </button>
           </BottomActionBar>
           <BottomNav />
         </div>

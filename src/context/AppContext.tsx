@@ -126,6 +126,8 @@ interface AppContextType {
   setPreselectedWorkRecordIds: (ids: string[]) => void;
   prefilledWorkTitle: string | null;
   setPrefilledWorkTitle: (title: string | null) => void;
+  selectedPlanungDate: string | null;
+  setSelectedPlanungDate: (date: string | null) => void;
 
   // Modals & Panels
   isPlusMenuOpen: boolean;
@@ -219,6 +221,8 @@ interface AppContextType {
   updateOrdersStatusBatch: (ids: string[], status: Order['status']) => void;
   deleteOrder: (id: string) => void;
   deleteOrdersBatch: (ids: string[]) => void;
+  deleteInquiry: (id: string) => void;
+  deleteOffer: (id: string) => void;
 
   addEquipment: (eq: Partial<Equipment> & { name: string }) => Equipment;
   updateEquipment: (id: string, eq: Partial<Equipment>) => void;
@@ -226,6 +230,7 @@ interface AppContextType {
   recordMaintenance: (equipmentId: string, plan: string, note: string, nextDate: string) => void;
   addMaterial: (mat: Partial<Material>) => Material;
   updateMaterial: (id: string, mat: Partial<Material>) => void;
+  deleteMaterial: (id: string) => void;
 
   // Gewinn- & Verlustrechnung / Pauschalierung
   addExpense: (exp: Omit<BusinessExpense, 'id'> & { id?: string }) => BusinessExpense;
@@ -346,6 +351,7 @@ export const AppProvider: React.FC<{
   const [sendingInvoiceId, setSendingInvoiceId] = useState<string | null>(null);
   const [preselectedWorkRecordIds, setPreselectedWorkRecordIds] = useState<string[]>([]);
   const [prefilledWorkTitle, setPrefilledWorkTitle] = useState<string | null>(null);
+  const [selectedPlanungDate, setSelectedPlanungDate] = useState<string | null>(null);
 
   const [isPlusMenuOpen, setIsPlusMenuOpen] = useState(false);
   const [isThreeDotsMenuOpen, setIsThreeDotsMenuOpen] = useState(false);
@@ -1202,6 +1208,7 @@ export const AppProvider: React.FC<{
     setCurrentScreen(screen);
     setIsPlusMenuOpen(false);
     setIsThreeDotsMenuOpen(false);
+    setIsSearchOpen(false);
   };
 
   const navigate = (screen: ScreenId) => {
@@ -1222,6 +1229,7 @@ export const AppProvider: React.FC<{
     setCurrentScreen(screen);
     setIsPlusMenuOpen(false);
     setIsThreeDotsMenuOpen(false);
+    setIsSearchOpen(false);
   };
 
   const goBack = () => {
@@ -1914,8 +1922,57 @@ export const AppProvider: React.FC<{
   };
 
   const deleteOrder = (id: string) => {
+    const target = orders.find(o => o.id === id);
+    if (!target) return;
+    const snapshot = [...orders];
+    const prevDeletedIds = { ...deletedIds };
     recordDeletedTombstones([['orders', id]]);
     setOrders(prev => prev.filter(o => o.id !== id));
+    setUndoToast({
+      visible: true,
+      message: `Auftrag „${target.title}“ gelöscht`,
+      actionLabel: 'Rückgängig',
+      onUndo: () => {
+        setOrders(snapshot);
+        setDeletedIds(prevDeletedIds);
+      }
+    });
+  };
+
+  const deleteInquiry = (id: string) => {
+    const target = inquiries.find(i => i.id === id);
+    if (!target) return;
+    const snapshot = [...inquiries];
+    const prevDeletedIds = { ...deletedIds };
+    recordDeletedTombstones([['inquiries', id]]);
+    setInquiries(prev => prev.filter(i => i.id !== id));
+    setUndoToast({
+      visible: true,
+      message: `Anfrage „${target.title}“ gelöscht`,
+      actionLabel: 'Rückgängig',
+      onUndo: () => {
+        setInquiries(snapshot);
+        setDeletedIds(prevDeletedIds);
+      }
+    });
+  };
+
+  const deleteOffer = (id: string) => {
+    const target = offers.find(o => o.id === id);
+    if (!target) return;
+    const snapshot = [...offers];
+    const prevDeletedIds = { ...deletedIds };
+    recordDeletedTombstones([['offers', id]]);
+    setOffers(prev => prev.filter(o => o.id !== id));
+    setUndoToast({
+      visible: true,
+      message: `Angebot „${target.title}“ gelöscht`,
+      actionLabel: 'Rückgängig',
+      onUndo: () => {
+        setOffers(snapshot);
+        setDeletedIds(prevDeletedIds);
+      }
+    });
   };
 
   const deleteOrdersBatch = (ids: string[]) => {
@@ -2195,22 +2252,22 @@ export const AppProvider: React.FC<{
           boundRecords.reduce((s, r) => s + (r.accounting_amount || 0), 0) * 100
         ) / 100;
 
-        // Freie Zusatzpositionen (nicht li-<workId> und nicht pauschal-main) beibehalten
-        const extraItemsSum = !inv.is_pauschal
-          ? Math.round(
-              nextLineItems
-                .filter(li => !li.id.startsWith('li-') && li.id !== 'pauschal-main')
-                .reduce((s, li) => s + li.amount, 0) * 100
-            ) / 100
-          : 0;
-
+        // Freie Zusatzpositionen (z. B. li-extra-*, li-discount-* oder manuelle Positionen) beibehalten:
+        // Bei Regierechnungen (!inv.is_pauschal) enthält nextLineItems bereits die aktualisierte Arbeitsposition (li-<workId>)
+        // sowie alle Zusatzpositionen. Bei Pauschalrechnungen bleibt der vereinbarte Pauschalbetrag erhalten.
         const nextTotal = inv.is_pauschal
-          ? boundSum > 0
-            ? boundSum
-            : inv.total_amount
-          : Math.round((boundSum + extraItemsSum) * 100) / 100;
+          ? inv.total_amount > 0
+            ? inv.total_amount
+            : boundSum
+          : nextLineItems.length > 0
+            ? Math.round(nextLineItems.reduce((s, li) => s + li.amount, 0) * 100) / 100
+            : boundSum;
 
-        if (inv.is_pauschal && nextLineItems.length === 1 && nextLineItems[0].id === 'pauschal-main') {
+        if (
+          inv.is_pauschal &&
+          nextLineItems.length === 1 &&
+          (nextLineItems[0].id === 'li-pauschal-main' || nextLineItems[0].id === 'pauschal-main')
+        ) {
           nextLineItems = [
             {
               ...nextLineItems[0],
@@ -2692,37 +2749,36 @@ export const AppProvider: React.FC<{
     });
   };
 
-  // Pay invoice with 5-second undo (REQ-018, ILL-007, CONS-10)
+  // Pay invoice immediately with instant undo protection (REQ-018, ILL-007, CONS-10)
   const payInvoice = (invoiceId: string, customAmount?: number, customDate?: string) => {
     const targetInvoice = invoices.find(i => i.id === invoiceId);
     if (!targetInvoice) return;
 
-    const remaining = targetInvoice.total_amount - targetInvoice.payments.reduce((s, p) => s + p.amount, 0);
-    const amountToPay = customAmount !== undefined ? customAmount : remaining;
+    const remaining =
+      Math.round(
+        (targetInvoice.total_amount -
+          targetInvoice.payments.reduce((s, p) => s + p.amount, 0)) *
+          100
+      ) / 100;
+    const amountToPay =
+      customAmount !== undefined ? Math.round(customAmount * 100) / 100 : remaining;
+    if (amountToPay <= 0) return;
     const paymentDate = customDate || getTodayLocalIso();
+    const snapshotInvoices = [...invoices];
 
-    if (customAmount === undefined) {
-      // Full payment with 5 seconds undo window
-      let cancelled = false;
-      const timeoutId = setTimeout(() => {
-        if (!cancelled) {
-          executePayment(invoiceId, amountToPay, paymentDate, 'Vollständige Zahlung verbucht');
-        }
-      }, 5000);
+    const note =
+      customAmount === undefined ? 'Vollständige Zahlung verbucht' : 'Teilzahlung gebucht';
+    executePayment(invoiceId, amountToPay, paymentDate, note);
 
-      setUndoToast({
-        visible: true,
-        message: `Zahlung von ${amountToPay.toFixed(2)} € wird vorgemerkt...`,
-        actionLabel: 'Rückgängig (5s)',
-        onUndo: () => {
-          cancelled = true;
-          clearTimeout(timeoutId);
-          setUndoToast(null);
-        }
-      });
-    } else {
-      executePayment(invoiceId, amountToPay, paymentDate, 'Teilzahlung gebucht');
-    }
+    setUndoToast({
+      visible: true,
+      message: `Zahlung von ${amountToPay.toFixed(2).replace('.', ',')} € verbucht`,
+      actionLabel: 'Rückgängig',
+      onUndo: () => {
+        setInvoices(snapshotInvoices);
+        setUndoToast(null);
+      }
+    });
   };
 
   const executePayment = (invoiceId: string, amount: number, date: string, note: string) => {
@@ -2917,27 +2973,47 @@ export const AppProvider: React.FC<{
   };
 
   // Record refund for paid cancelled invoice (ILL-009)
+  // Wichtig: Die negative Rückzahlungsbuchung darf nur 1x (auf der Originalrechnung) verbucht werden,
+  // damit sie in der Einnahmen-Ausgaben-Rechnung (GuV) nicht doppelt abgezogen wird.
   const recordRefund = (invoiceId: string, amount: number, note: string) => {
     const todayIso = getTodayLocalIso();
-    setInvoices(prev => prev.map(inv => {
-      if (inv.id === invoiceId || inv.storno_reference_id === invoiceId) {
-        const remainingRefund = Math.max(0, inv.open_refund_amount - amount);
-        const refundPayment: PaymentItem = {
-          id: `ref-${Date.now()}`,
-          date: todayIso,
-          amount: -amount,
-          is_reversal: false,
-          reversal_of: null,
-          note: `Tatsächliche Rückzahlung: ${note}`
-        };
-        return {
-          ...inv,
-          open_refund_amount: remainingRefund,
-          payments: [...inv.payments, refundPayment]
-        };
-      }
-      return inv;
-    }));
+    const cleanAmount = Math.max(0, Math.round(amount * 100) / 100);
+    if (cleanAmount <= 0) return;
+
+    setInvoices(prev =>
+      prev.map(inv => {
+        if (inv.id === invoiceId) {
+          const remainingRefund = Math.max(
+            0,
+            Math.round((inv.open_refund_amount - cleanAmount) * 100) / 100
+          );
+          const refundPayment: PaymentItem = {
+            id: `ref-${Date.now()}`,
+            date: todayIso,
+            amount: -cleanAmount,
+            is_reversal: false,
+            reversal_of: null,
+            note: `Tatsächliche Rückzahlung: ${note}`
+          };
+          return {
+            ...inv,
+            open_refund_amount: remainingRefund,
+            payments: [...inv.payments, refundPayment]
+          };
+        }
+        if (inv.storno_reference_id === invoiceId) {
+          const remainingRefund = Math.max(
+            0,
+            Math.round((inv.open_refund_amount - cleanAmount) * 100) / 100
+          );
+          return {
+            ...inv,
+            open_refund_amount: remainingRefund
+          };
+        }
+        return inv;
+      })
+    );
   };
 
   // Equipment & Zubehör
@@ -3048,6 +3124,24 @@ export const AppProvider: React.FC<{
     setMaterials(prev => prev.map(m => m.id === id ? { ...m, ...mat, updated_at: new Date().toISOString() } : m));
   };
 
+  const deleteMaterial = (id: string) => {
+    const target = materials.find(m => m.id === id);
+    if (!target) return;
+    const snapshot = [...materials];
+    const prevDeletedIds = { ...deletedIds };
+    recordDeletedTombstones([['materials', id]]);
+    setMaterials(prev => prev.filter(m => m.id !== id));
+    setUndoToast({
+      visible: true,
+      message: `Material „${target.name}“ gelöscht`,
+      actionLabel: 'Rückgängig',
+      onUndo: () => {
+        setMaterials(snapshot);
+        setDeletedIds(prevDeletedIds);
+      }
+    });
+  };
+
   const addExpense = (exp: Omit<BusinessExpense, 'id'> & { id?: string }): BusinessExpense => {
     const newExp: BusinessExpense = {
       id: exp.id || `exp-${Date.now()}`,
@@ -3106,7 +3200,7 @@ export const AppProvider: React.FC<{
   const performBackup = async (forcePickTarget = false): Promise<boolean> => {
     const nowIso = new Date().toISOString();
     const backupData = {
-      version: '1.0.2',
+      version: '1.0.3',
       date: nowIso,
       customers,
       properties,
@@ -3119,7 +3213,8 @@ export const AppProvider: React.FC<{
       offers,
       orders,
       expenses,
-      taxSettings
+      taxSettings,
+      deletedIds
     };
     const jsonPayload = JSON.stringify(backupData);
     localStorage.setItem('hausgarten_backup_file', jsonPayload);
@@ -3127,10 +3222,11 @@ export const AppProvider: React.FC<{
     if (isNativeAndroidApp()) {
       try {
         const res = await runNativeVerifiedBackup(jsonPayload, forcePickTarget);
+        if (!res.ok) return false;
         const verifiedTime = res.isoTimestamp || nowIso;
         setLastBackupDate(verifiedTime);
         localStorage.setItem(`${STORAGE_KEY}_lastBackupDate`, verifiedTime);
-        return Boolean(res.ok);
+        return true;
       } catch {
         return false;
       }
@@ -3152,18 +3248,63 @@ export const AppProvider: React.FC<{
       if (!rawBackup) return false;
 
       const data = JSON.parse(rawBackup);
-      if (data.customers) setCustomers(data.customers);
-      if (data.properties) setProperties(data.properties);
-      if (data.appointments) setAppointments(data.appointments);
-      if (data.workRecords) setWorkRecords(data.workRecords);
-      if (data.invoices) setInvoices(data.invoices);
-      if (data.equipments) setEquipments(data.equipments);
-      if (data.materials) setMaterials(data.materials);
-      if (data.inquiries) setInquiries(data.inquiries);
-      if (data.offers) setOffers(data.offers);
-      if (data.orders) setOrders(data.orders);
-      if (data.expenses) setExpenses(data.expenses);
-      if (data.taxSettings) setTaxSettings({ ...defaultTaxSettings, ...data.taxSettings });
+      if (!data || typeof data !== 'object') return false;
+
+      const prevSnapshot = {
+        customers: [...customers],
+        properties: [...properties],
+        appointments: [...appointments],
+        workRecords: [...workRecords],
+        invoices: [...invoices],
+        equipments: [...equipments],
+        materials: [...materials],
+        inquiries: [...inquiries],
+        offers: [...offers],
+        orders: [...orders],
+        expenses: [...expenses],
+        taxSettings: { ...taxSettings },
+        deletedIds: { ...deletedIds }
+      };
+
+      if (Array.isArray(data.customers)) setCustomers(data.customers);
+      if (Array.isArray(data.properties)) setProperties(data.properties);
+      if (Array.isArray(data.appointments)) setAppointments(data.appointments);
+      if (Array.isArray(data.workRecords)) setWorkRecords(data.workRecords);
+      if (Array.isArray(data.invoices)) setInvoices(data.invoices);
+      if (Array.isArray(data.equipments)) setEquipments(data.equipments);
+      if (Array.isArray(data.materials)) setMaterials(data.materials);
+      if (Array.isArray(data.inquiries)) setInquiries(data.inquiries);
+      if (Array.isArray(data.offers)) setOffers(data.offers);
+      if (Array.isArray(data.orders)) setOrders(data.orders);
+      if (Array.isArray(data.expenses)) setExpenses(data.expenses);
+      if (data.taxSettings && typeof data.taxSettings === 'object') {
+        setTaxSettings({ ...defaultTaxSettings, ...data.taxSettings });
+      }
+      if (data.deletedIds && typeof data.deletedIds === 'object') {
+        setDeletedIds(capClientTombstones(data.deletedIds));
+      }
+
+      setUndoToast({
+        visible: true,
+        message: 'Sicherung erfolgreich wiederhergestellt',
+        actionLabel: 'Rückgängig',
+        onUndo: () => {
+          setCustomers(prevSnapshot.customers);
+          setProperties(prevSnapshot.properties);
+          setAppointments(prevSnapshot.appointments);
+          setWorkRecords(prevSnapshot.workRecords);
+          setInvoices(prevSnapshot.invoices);
+          setEquipments(prevSnapshot.equipments);
+          setMaterials(prevSnapshot.materials);
+          setInquiries(prevSnapshot.inquiries);
+          setOffers(prevSnapshot.offers);
+          setOrders(prevSnapshot.orders);
+          setExpenses(prevSnapshot.expenses);
+          setTaxSettings(prevSnapshot.taxSettings);
+          setDeletedIds(prevSnapshot.deletedIds);
+        }
+      });
+
       return true;
     } catch {
       return false;
@@ -3205,6 +3346,8 @@ export const AppProvider: React.FC<{
         setPreselectedWorkRecordIds,
         prefilledWorkTitle,
         setPrefilledWorkTitle,
+        selectedPlanungDate,
+        setSelectedPlanungDate,
         isPlusMenuOpen,
         setIsPlusMenuOpen,
         isThreeDotsMenuOpen,
@@ -3256,12 +3399,15 @@ export const AppProvider: React.FC<{
         updateOrdersStatusBatch,
         deleteOrder,
         deleteOrdersBatch,
+        deleteInquiry,
+        deleteOffer,
         addEquipment,
         updateEquipment,
         deleteEquipment,
         recordMaintenance,
         addMaterial,
         updateMaterial,
+        deleteMaterial,
         addExpense,
         updateExpense,
         deleteExpense,
