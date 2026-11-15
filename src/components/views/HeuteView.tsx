@@ -59,6 +59,7 @@ export const HeuteView: React.FC = () => {
     navigate,
     setSelectedCustomerId,
     setSelectedWorkRecordId,
+    setSelectedEquipmentId,
     setPreselectedWorkRecordIds,
     setActiveModal,
     setIsThreeDotsMenuOpen,
@@ -463,7 +464,11 @@ export const HeuteView: React.FC = () => {
                   <button
                     key={eq.id}
                     type="button"
-                    onClick={() => navigate('M10_GERAETE')}
+                    onClick={() => {
+                      setSelectedEquipmentId(eq.id);
+                      navigate('M10_GERAETE');
+                      setActiveModal('GERAET_BEARBEITEN');
+                    }}
                     className="w-full px-3.5 py-2.5 flex items-center justify-between gap-2 text-left hover:bg-slate-100/70 transition-colors"
                   >
                     <div className="flex items-center gap-2.5 min-w-0">

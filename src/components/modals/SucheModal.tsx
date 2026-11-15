@@ -76,6 +76,7 @@ export const SucheModal: React.FC = () => {
     setSelectedCustomerId,
     setSelectedInvoiceId,
     setSelectedWorkRecordId,
+    setSelectedEquipmentId,
     setSelectedPlanungDate,
     setActiveModal,
     navigate
@@ -541,6 +542,13 @@ export const SucheModal: React.FC = () => {
   const handleOpenNav = (screen: ScreenId) => {
     resetAndCloseSearch();
     navigate(screen);
+  };
+
+  const handleOpenEquipment = (id: string) => {
+    resetAndCloseSearch();
+    setSelectedEquipmentId(id);
+    navigate('M10_GERAETE');
+    setActiveModal('GERAET_BEARBEITEN');
   };
 
   const handleStartSpeechRecognition = () => {
@@ -1023,7 +1031,7 @@ export const SucheModal: React.FC = () => {
                         <button
                           key={e.id}
                           type="button"
-                          onClick={() => handleOpenNav('M10_GERAETE')}
+                          onClick={() => handleOpenEquipment(e.id)}
                           className="w-full p-3 bg-white border border-slate-200 rounded-2xl flex items-center justify-between hover:border-[#3138A0] transition-colors text-left shadow-2xs"
                         >
                           <div className="flex items-center gap-3 min-w-0">
