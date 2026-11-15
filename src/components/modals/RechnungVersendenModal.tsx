@@ -14,6 +14,7 @@ import {
   ISSUER_PHONE,
   ISSUER_STREET,
   buildInvoiceFilename,
+  detectRecipientSalutation,
   formatEuro,
   generateInvoicePdfAsync,
   resolveInvoiceDisplayData
@@ -160,10 +161,15 @@ export const RechnungVersendenModal: React.FC = () => {
         setChannel('gmail');
       }
 
+      const detectedSalutation = detectRecipientSalutation(
+        resolvedData.recipientName,
+        customer
+      ).salutationLine;
+
       setEmailSubject(`${docTitle} – ${ISSUER_COMPANY}`);
       setEmailBody(
         [
-          'Sehr geehrte Damen und Herren,',
+          detectedSalutation,
           '',
           `vielen Dank für Ihren Auftrag und das damit verbundene Vertrauen! Anbei erhalten Sie die ${docTitle} vom ${resolvedData.issueDateFormatted} als PDF-Dokument.`,
           '',
