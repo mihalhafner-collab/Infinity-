@@ -17,6 +17,7 @@ import {
   PAYMENT_TERMS_CLAUSE,
   ResolvedInvoiceData,
   TAX_EXEMPTION_CLAUSE,
+  detectRecipientSalutation,
   formatEuro
 } from '../../utils/invoicePdf.ts';
 
@@ -31,6 +32,7 @@ export const InvoicePaperPreview: React.FC<InvoicePaperPreviewProps> = ({
 }) => {
   const cityLine = [data.recipientZip.trim(), data.recipientCity.trim()].filter(Boolean).join(' ');
   const displayInvNo = data.invoiceNumber?.trim() || (isDraft ? 'RE-Entwurf' : '');
+  const recipientSalutationLine = detectRecipientSalutation(data.recipientName).salutationLine;
 
   return (
     <div className="invoice-a4-sheet relative bg-white text-neutral-900 border border-neutral-300 rounded-lg shadow-xs px-4 pt-3 pb-4 font-sans text-[10px] leading-snug select-text overflow-hidden">
@@ -98,11 +100,11 @@ export const InvoicePaperPreview: React.FC<InvoicePaperPreviewProps> = ({
         </h3>
       </div>
 
-      {/* Einleitungstext */}
+      {/* Einleitungstext mit direkter Ansprache */}
       <div className="mt-2.5 space-y-1.5 text-[9.5px] text-neutral-900">
         {data.isStorno ? (
           <>
-            <p>Sehr geehrte Damen und Herren,</p>
+            <p>{recipientSalutationLine}</p>
             <p>
               hiermit stornieren wir die betreffende Abrechnung ({data.stornoReason || 'Korrektur'}):
             </p>
@@ -111,7 +113,7 @@ export const InvoicePaperPreview: React.FC<InvoicePaperPreviewProps> = ({
           <p className="whitespace-pre-line">{data.introText.trim()}</p>
         ) : (
           <>
-            <p>Sehr geehrte Damen und Herren,</p>
+            <p>{recipientSalutationLine}</p>
             <p>
               vielen Dank für Ihren Auftrag und das damit verbundene Vertrauen!
               <br />

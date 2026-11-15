@@ -81,6 +81,8 @@ interface HafnerNativeInterface {
     recipientEmail: string
   ) => boolean;
   readDeviceCalendar: (requestId: string, startDateIso: string, endDateIso: string) => void;
+  upsertDeviceCalendarEvent?: (requestId: string, payloadJson: string) => void;
+  deleteDeviceCalendarEvent?: (requestId: string, googleEventId: string) => void;
   readDeviceLocation?: (requestId: string) => void;
   runVerifiedZipBackup: (
     requestId: string,
@@ -462,6 +464,41 @@ export async function readNativeDeviceCalendar(
     window.HafnerNative?.readDeviceCalendar(reqId, startDateIso, endDateIso);
   });
   return JSON.parse(rawJson) as GoogleCalendarNormalizedItem[];
+}
+
+export async function upsertNativeDeviceCalendarEvent(payload: {
+  googleEventId?: string | null;
+  title: string;
+  date: string;
+  start_time?: string | null;
+  end_time?: string | null;
+  duration_minutes?: number | null;
+  address?: string | null;
+  notes?: string | null;
+}): Promise<string | null> {
+  if (!isNativeAndroidApp() || !window.HafnerNative?.upsertDeviceCalendarEvent) {
+    return null;
+  }
+  const reqId = nextRequestId('cal_write');
+  const rawJson = await new Promise<string>((resolve, reject) => {
+    pendingCallbacks.set(reqId, { resolve, reject });
+    window.HafnerNative?.upsertDeviceCalendarEvent?.(reqId, JSON.stringify(payload));
+  });
+  const parsed = JSON.parse(rawJson) as { googleEventId?: string };
+  return parsed.googleEventId || null;
+}
+
+export async function deleteNativeDeviceCalendarEvent(googleEventId: string): Promise<boolean> {
+  if (!isNativeAndroidApp() || !window.HafnerNative?.deleteDeviceCalendarEvent) {
+    return false;
+  }
+  const reqId = nextRequestId('cal_del');
+  const rawJson = await new Promise<string>((resolve, reject) => {
+    pendingCallbacks.set(reqId, { resolve, reject });
+    window.HafnerNative?.deleteDeviceCalendarEvent?.(reqId, googleEventId);
+  });
+  const parsed = JSON.parse(rawJson) as { deleted?: boolean };
+  return Boolean(parsed.deleted);
 }
 
 export async function readNativeDeviceLocation(): Promise<{

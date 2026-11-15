@@ -9,9 +9,11 @@ import { InvoicePaperPreview } from '../common/InvoicePaperPreview.tsx';
 import { CollapsibleCard } from '../common/CollapsibleCard.tsx';
 import { GuvPanel } from './GuvPanel.tsx';
 import {
+  detectRecipientSalutation,
   formatDateDE,
   generateInvoicePdfAsync,
   getEffectiveBillingCustomerId,
+  replaceIntroSalutation,
   resolveInvoiceDisplayData
 } from '../../utils/invoicePdf.ts';
 import { downloadOrSaveBlob } from '../../services/nativeBridge.ts';
@@ -47,7 +49,9 @@ export const AbrechnungView: React.FC = () => {
     selectedInvoiceId,
     setSelectedInvoiceId,
     setSelectedCustomerId,
+    setSelectedWorkRecordId,
     setSendingInvoiceId,
+    updateWorkRecord,
     updateInvoice,
     deleteInvoice,
     payInvoice,
@@ -420,6 +424,141 @@ export const AbrechnungView: React.FC = () => {
                       </button>
                     </div>
                   )}
+                </div>
+              );
+            })()}
+
+          {/* Verknüpfte Arbeitsaufzeichnungen (Stunden ändern oder für Offene Stunden freigeben) */}
+          {!selectedInvoice.is_storno &&
+            (() => {
+              const boundWorkRecords = workRecords.filter(
+                (w) =>
+                  w.settlement_id === selectedInvoice.id ||
+                  selectedInvoice.work_record_ids.includes(w.id)
+              );
+              const customerOpenCandidateRecords = workRecords.filter(
+                (w) =>
+                  !w.settlement_id &&
+                  !w.is_lcr &&
+                  !selectedInvoice.work_record_ids.includes(w.id) &&
+                  getEffectiveBillingCustomerId(w, customers) === selectedInvoice.customer_id
+              );
+
+              return (
+                <div className="p-3.5 bg-white border border-slate-200 rounded-2xl shadow-2xs space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+                      Arbeitsaufzeichnungen ({boundWorkRecords.length})
+                    </span>
+                    <span className="text-[10px] text-slate-400">
+                      Tippen zum Bearbeiten · Freigeben = zurück in Offene Std.
+                    </span>
+                  </div>
+
+                  {boundWorkRecords.length === 0 ? (
+                    <p className="text-xs text-slate-400 italic">
+                      Keine Arbeitsaufzeichnungen an diese Rechnung gebunden.
+                    </p>
+                  ) : (
+                    <div className="space-y-2">
+                      {boundWorkRecords.map((w) => (
+                        <div
+                          key={w.id}
+                          className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between gap-2 text-xs"
+                        >
+                          <div
+                            onClick={() => {
+                              setSelectedWorkRecordId(w.id);
+                              setActiveModal('ARBEIT_BEARBEITEN');
+                            }}
+                            className="min-w-0 flex-1 cursor-pointer"
+                          >
+                            <span className="font-bold text-slate-900 block truncate">
+                              {w.title}
+                            </span>
+                            <span className="text-[11px] text-slate-500">
+                              {formatDateDE(w.work_date)} ·{' '}
+                              {(w.hours ?? 0).toLocaleString('de-DE', {
+                                maximumFractionDigits: 2
+                              })}{' '}
+                              Std.
+                              {w.hourly_rate ? ` × ${w.hourly_rate} €` : ''}
+                            </span>
+                          </div>
+
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <span className="font-bold text-[#B4470B] tabular-nums">
+                              {(w.accounting_amount || 0).toLocaleString('de-DE', {
+                                minimumFractionDigits: 2,
+                                maximumFractionDigits: 2
+                              })}{' '}
+                              €
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedWorkRecordId(w.id);
+                                setActiveModal('ARBEIT_BEARBEITEN');
+                              }}
+                              className="w-8 h-8 flex items-center justify-center rounded-lg bg-white border border-slate-200 text-[#3138A0] hover:bg-slate-100"
+                              title="Arbeitsaufzeichnung bearbeiten"
+                            >
+                              <Pencil size={12} />
+                            </button>
+                            {selectedInvoice.status !== 'cancelled' && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  updateWorkRecord(w.id, { settlement_id: null });
+                                }}
+                                className="px-2 h-8 text-[10px] font-bold text-amber-800 bg-amber-50 border border-amber-200 hover:bg-amber-100 rounded-lg transition-colors"
+                                title="Aus Rechnung lösen und zurück in Offene Stunden verschieben"
+                              >
+                                Freigeben
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {selectedInvoice.status !== 'cancelled' &&
+                    customerOpenCandidateRecords.length > 0 && (
+                      <div className="pt-2 border-t border-slate-100 space-y-1.5">
+                        <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
+                          Offene Stunden dieses Kunden ({customerOpenCandidateRecords.length})
+                        </span>
+                        {customerOpenCandidateRecords.map((w) => (
+                          <div
+                            key={w.id}
+                            className="p-2 bg-amber-50/50 border border-amber-200/80 rounded-xl flex items-center justify-between gap-2 text-xs"
+                          >
+                            <div className="min-w-0 flex-1">
+                              <span className="font-semibold text-slate-800 block truncate">
+                                {w.title}
+                              </span>
+                              <span className="text-[10px] text-slate-500">
+                                {formatDateDE(w.work_date)} · {w.hours} Std. ·{' '}
+                                {(w.accounting_amount || 0).toFixed(2)} €
+                              </span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                updateWorkRecord(w.id, {
+                                  settlement_id: selectedInvoice.id,
+                                  is_lcr: false
+                                });
+                              }}
+                              className="px-2.5 h-7 bg-[#3138A0] text-white text-[10px] font-bold rounded-lg shrink-0"
+                            >
+                              + Zur Rechnung
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                 </div>
               );
             })()}
@@ -889,6 +1028,8 @@ export const AbrechnungView: React.FC = () => {
                         if (found.customer_number) {
                           setEditCustomerNumber(found.customer_number);
                         }
+                        const nextSalutation = detectRecipientSalutation(found.name).salutationLine;
+                        setEditIntroText((prev) => replaceIntroSalutation(prev, nextSalutation));
                       }
                     }}
                     className="w-full h-11 px-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-[#3138A0] outline-hidden text-xs font-medium text-slate-900"
@@ -906,7 +1047,12 @@ export const AbrechnungView: React.FC = () => {
                   <input
                     type="text"
                     value={editBillingName}
-                    onChange={(e) => setEditBillingName(e.target.value)}
+                    onChange={(e) => {
+                      const nextName = e.target.value;
+                      setEditBillingName(nextName);
+                      const nextSalutation = detectRecipientSalutation(nextName).salutationLine;
+                      setEditIntroText((prev) => replaceIntroSalutation(prev, nextSalutation));
+                    }}
                     className="w-full h-11 px-3 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-[#3138A0] outline-hidden text-xs font-medium text-slate-900"
                   />
                 </div>
@@ -972,6 +1118,241 @@ export const AbrechnungView: React.FC = () => {
                   </div>
                 )}
               </div>
+
+              {!editingInvoice.is_storno && (
+                <div className="pt-2 border-t border-slate-100 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                      Arbeitsaufzeichnungen in Rechnung
+                    </span>
+                    <span className="text-[10px] text-slate-400">
+                      Abwählen = zurück in Offene Std.
+                    </span>
+                  </div>
+
+                  {(() => {
+                    const liveInv =
+                      invoices.find((i) => i.id === editingInvoice.id) || editingInvoice;
+                    const candidateRecords = workRecords.filter(
+                      (w) =>
+                        w.settlement_id === liveInv.id ||
+                        liveInv.work_record_ids.includes(w.id) ||
+                        (!w.settlement_id &&
+                          !w.is_lcr &&
+                          getEffectiveBillingCustomerId(w, customers) ===
+                            (editCustomerId || liveInv.customer_id))
+                    );
+
+                    if (candidateRecords.length === 0) {
+                      return (
+                        <p className="text-[11px] text-slate-400 italic">
+                          Keine Arbeitsaufzeichnungen für diesen Kunden vorhanden.
+                        </p>
+                      );
+                    }
+
+                    return (
+                      <div className="space-y-2">
+                        {candidateRecords.map((w) => {
+                          const isBound =
+                            w.settlement_id === liveInv.id ||
+                            liveInv.work_record_ids.includes(w.id);
+
+                          return (
+                            <div
+                              key={w.id}
+                              className={`p-2.5 rounded-xl border space-y-2 ${
+                                isBound
+                                  ? 'bg-indigo-50/40 border-indigo-200'
+                                  : 'bg-slate-50 border-slate-200 opacity-80'
+                              }`}
+                            >
+                              <div className="flex items-center justify-between gap-2">
+                                <label className="flex items-center gap-2 min-w-0 flex-1 cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    checked={isBound}
+                                    onChange={() => {
+                                      const nextSettlement = isBound ? null : liveInv.id;
+                                      updateWorkRecord(w.id, {
+                                        settlement_id: nextSettlement,
+                                        is_lcr: false
+                                      });
+                                      // Aktualisiere angezeigten Rechnungsbetrag im Formular
+                                      const otherBoundSum = workRecords
+                                        .filter(
+                                          (r) =>
+                                            r.id !== w.id &&
+                                            (r.settlement_id === liveInv.id ||
+                                              liveInv.work_record_ids.includes(r.id))
+                                        )
+                                        .reduce((s, r) => s + (r.accounting_amount || 0), 0);
+                                      const nextSum =
+                                        Math.round(
+                                          (otherBoundSum +
+                                            (nextSettlement ? w.accounting_amount || 0 : 0)) *
+                                            100
+                                        ) / 100;
+                                      setEditTotalAmountStr(String(nextSum).replace('.', ','));
+                                    }}
+                                    className="w-4 h-4 accent-[#3138A0] rounded shrink-0"
+                                  />
+                                  <div className="min-w-0 flex-1">
+                                    <span className="font-bold text-slate-900 block truncate">
+                                      {w.title}
+                                    </span>
+                                    <span className="text-[10px] text-slate-500">
+                                      {formatDateDE(w.work_date)} ·{' '}
+                                      {isBound ? 'In Rechnung' : 'Offene Stunden'}
+                                    </span>
+                                  </div>
+                                </label>
+
+                                <span className="font-bold text-xs text-[#B4470B] tabular-nums">
+                                  {(w.accounting_amount || 0).toFixed(2)} €
+                                </span>
+                              </div>
+
+                              <div className="grid grid-cols-3 gap-2">
+                                <div>
+                                  <label className="text-[10px] font-semibold text-slate-500 block mb-0.5">
+                                    Stunden
+                                  </label>
+                                  <input
+                                    type="number"
+                                    step="0.25"
+                                    min="0"
+                                    value={w.hours ?? 0}
+                                    onChange={(e) => {
+                                      const nextH = Math.max(
+                                        0,
+                                        parseFloat(e.target.value.replace(',', '.')) || 0
+                                      );
+                                      const rate =
+                                        w.hourly_rate && w.hourly_rate > 0 ? w.hourly_rate : 50;
+                                      const nextAmt =
+                                        Math.round(
+                                          (nextH * rate + (w.material_cost || 0)) * 100
+                                        ) / 100;
+                                      updateWorkRecord(w.id, {
+                                        hours: nextH,
+                                        hourly_rate: rate,
+                                        accounting_amount: nextAmt
+                                      });
+                                      if (isBound) {
+                                        const otherBoundSum = workRecords
+                                          .filter(
+                                            (r) =>
+                                              r.id !== w.id &&
+                                              (r.settlement_id === liveInv.id ||
+                                                liveInv.work_record_ids.includes(r.id))
+                                          )
+                                          .reduce((s, r) => s + (r.accounting_amount || 0), 0);
+                                        const nextTotal =
+                                          Math.round((otherBoundSum + nextAmt) * 100) / 100;
+                                        setEditTotalAmountStr(
+                                          String(nextTotal).replace('.', ',')
+                                        );
+                                      }
+                                    }}
+                                    className="w-full h-8 px-2 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-900 outline-hidden focus:border-[#3138A0]"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="text-[10px] font-semibold text-slate-500 block mb-0.5">
+                                    Satz (€/h)
+                                  </label>
+                                  <input
+                                    type="number"
+                                    step="1"
+                                    min="0"
+                                    value={w.hourly_rate ?? 50}
+                                    onChange={(e) => {
+                                      const nextR = Math.max(
+                                        0,
+                                        parseFloat(e.target.value.replace(',', '.')) || 0
+                                      );
+                                      const h = w.hours ?? 0;
+                                      const nextAmt =
+                                        Math.round(
+                                          (h * nextR + (w.material_cost || 0)) * 100
+                                        ) / 100;
+                                      updateWorkRecord(w.id, {
+                                        hourly_rate: nextR,
+                                        accounting_amount: nextAmt
+                                      });
+                                      if (isBound) {
+                                        const otherBoundSum = workRecords
+                                          .filter(
+                                            (r) =>
+                                              r.id !== w.id &&
+                                              (r.settlement_id === liveInv.id ||
+                                                liveInv.work_record_ids.includes(r.id))
+                                          )
+                                          .reduce((s, r) => s + (r.accounting_amount || 0), 0);
+                                        const nextTotal =
+                                          Math.round((otherBoundSum + nextAmt) * 100) / 100;
+                                        setEditTotalAmountStr(
+                                          String(nextTotal).replace('.', ',')
+                                        );
+                                      }
+                                    }}
+                                    className="w-full h-8 px-2 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-900 outline-hidden focus:border-[#3138A0]"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="text-[10px] font-semibold text-slate-500 block mb-0.5">
+                                    Betrag (€)
+                                  </label>
+                                  <input
+                                    type="number"
+                                    step="1"
+                                    min="0"
+                                    value={w.accounting_amount ?? 0}
+                                    onChange={(e) => {
+                                      const nextAmt = Math.max(
+                                        0,
+                                        parseFloat(e.target.value.replace(',', '.')) || 0
+                                      );
+                                      const rate =
+                                        w.hourly_rate && w.hourly_rate > 0 ? w.hourly_rate : 50;
+                                      const nextH =
+                                        rate > 0 && (!w.material_cost || w.material_cost === 0)
+                                          ? Math.round((nextAmt / rate) * 100) / 100
+                                          : w.hours;
+                                      updateWorkRecord(w.id, {
+                                        hours: nextH,
+                                        hourly_rate: rate,
+                                        accounting_amount: nextAmt
+                                      });
+                                      if (isBound) {
+                                        const otherBoundSum = workRecords
+                                          .filter(
+                                            (r) =>
+                                              r.id !== w.id &&
+                                              (r.settlement_id === liveInv.id ||
+                                                liveInv.work_record_ids.includes(r.id))
+                                          )
+                                          .reduce((s, r) => s + (r.accounting_amount || 0), 0);
+                                        const nextTotal =
+                                          Math.round((otherBoundSum + nextAmt) * 100) / 100;
+                                        setEditTotalAmountStr(
+                                          String(nextTotal).replace('.', ',')
+                                        );
+                                      }
+                                    }}
+                                    className="w-full h-8 px-2 bg-white border border-indigo-200 rounded-lg text-xs font-bold text-[#B4470B] outline-hidden focus:border-[#3138A0]"
+                                  />
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
+                </div>
+              )}
 
               {!editingInvoice.is_storno && (
                 <div className="pt-2 border-t border-slate-100 space-y-2.5">
@@ -1325,7 +1706,7 @@ export const AbrechnungView: React.FC = () => {
           <>
             {/* Schlanke untere Bedienzeile */}
             <BottomActionBar>
-              <div className="w-full max-w-[260px] flex items-center p-1 bg-slate-100 rounded-2xl">
+              <div className="w-full flex items-center p-1 bg-slate-100 rounded-2xl">
                 <button
                   type="button"
                   onClick={() => setMainTab('rechnungen')}

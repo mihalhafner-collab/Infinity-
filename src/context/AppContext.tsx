@@ -23,9 +23,11 @@ import {
   addDaysIso,
   buildLineItemsFromRecords,
   buildPaymentTermsClause,
+  buildPersonalizedIntroText,
   computeNextCustomerNumber,
   computeNextInvoiceNumber,
   computeServicePeriod,
+  getCustomerBillingRecipient,
   getTodayLocalIso,
   resolveCustomerNumber
 } from '../utils/invoicePdf.ts';
@@ -44,7 +46,15 @@ import {
   triggerNativeMcpSyncNow
 } from '../services/nativeBridge.ts';
 import { validateFirestoreBootConnection } from '../services/firebaseClient.ts';
-import { consumeOAuthReturnScreen } from '../services/gmailService.ts';
+import { consumeOAuthReturnScreen, isGoogleConnected } from '../services/gmailService.ts';
+import {
+  attachGoogleEventIdToNotes,
+  cleanGoogleEventNotes,
+  deleteAppointmentFromGoogleCalendar,
+  extractGoogleEventId,
+  fetchGoogleCalendarEvents,
+  syncAppointmentToGoogleCalendar
+} from '../services/googleCalendarService.ts';
 
 // Re-export canonical data contracts (DATA-02, DATA-04, DATA-09, DATA-10, M11) directly from AppContext
 export type {
@@ -245,6 +255,15 @@ interface AppContextType {
   };
   flushPendingAppSync: () => Promise<void>;
   refreshFromServer: () => Promise<void>;
+
+  // Google Kalender 2-Wege-Sync
+  calendarSyncState: {
+    syncing: boolean;
+    connected: boolean;
+    lastSyncedAt: string | null;
+    error: string | null;
+  };
+  syncCalendarNow: (forceRefresh?: boolean) => Promise<void>;
 }
 
 const STORAGE_KEY = 'eisbaer_app_clean_v1';
@@ -1362,12 +1381,263 @@ export const AppProvider: React.FC<{
     };
   }, []);
 
+  // Google Kalender 2-Wege-Synchronisation (Pixel 10 Pro Gerätekonto + Google Calendar API)
+  const [calendarSyncState, setCalendarSyncState] = useState<{
+    syncing: boolean;
+    connected: boolean;
+    lastSyncedAt: string | null;
+    error: string | null;
+  }>({
+    syncing: false,
+    connected: isNativeAndroidApp() || isGoogleConnected(),
+    lastSyncedAt: null,
+    error: null
+  });
+  const calendarSyncLockRef = useRef(false);
+  const appointmentsRef = useRef(appointments);
+  appointmentsRef.current = appointments;
+  const customersRef = useRef(customers);
+  customersRef.current = customers;
+  const deletedIdsRef = useRef(deletedIds);
+  deletedIdsRef.current = deletedIds;
+
+  const syncCalendarNow = useCallback(async (forceRefresh = false) => {
+    if (calendarSyncLockRef.current) return;
+    const isConnected = isNativeAndroidApp() || isGoogleConnected();
+    if (!isConnected) {
+      setCalendarSyncState((prev) => ({ ...prev, connected: false }));
+      return;
+    }
+
+    calendarSyncLockRef.current = true;
+    setCalendarSyncState((prev) => ({ ...prev, syncing: true, connected: true, error: null }));
+
+    try {
+      const todayIso = getTodayLocalIso();
+      const startIso = addDaysIso(todayIso, -14);
+      const endIso = addDaysIso(todayIso, 60);
+
+      // 1. Lokale Termine ohne Google-Event-ID in den Google Kalender pushen
+      const currentApps = appointmentsRef.current;
+      const unsyncedApps = currentApps.filter(
+        (a) => !extractGoogleEventId(a.notes) && a.date >= startIso && a.date <= endIso
+      );
+      const pushedIdMap = new Map<string, string>();
+      for (const app of unsyncedApps) {
+        const custName = customersRef.current.find((c) => c.id === app.customer_id)?.name || null;
+        const pushedEventId = await syncAppointmentToGoogleCalendar(app, custName);
+        if (pushedEventId) {
+          pushedIdMap.set(app.id, pushedEventId);
+        }
+      }
+
+      // 2. Google Kalender Termine abrufen und mit App-Terminen zusammenführen
+      const gEvents = await fetchGoogleCalendarEvents(startIso, endIso, forceRefresh);
+      const tombstones = deletedIdsRef.current || {};
+
+      setAppointments((prev) => {
+        let changed = false;
+        const next = prev.map((a) => {
+          const newlyPushedId = pushedIdMap.get(a.id);
+          if (newlyPushedId && !extractGoogleEventId(a.notes)) {
+            changed = true;
+            return {
+              ...a,
+              notes: attachGoogleEventIdToNotes(a.notes, newlyPushedId)
+            };
+          }
+          return a;
+        });
+
+        for (const ev of gEvents) {
+          const gEventId = ev.googleEventId || ev.id;
+          const gKey = `${gEventId}_${ev.date}`;
+          if (tombstones[`gcal:${gKey}`] || tombstones[`gcal:${gEventId}`]) continue;
+
+          // Prüfen, ob Termin bereits verknüpft ist
+          const existingIdx = next.findIndex((a) => {
+            const linkedId = extractGoogleEventId(a.notes);
+            if (linkedId && linkedId === gEventId) return true;
+            // Oder exakter Treffer am selben Tag + gleicher Titel (Vermeidung von Duplikaten)
+            if (
+              !linkedId &&
+              a.date === ev.date &&
+              (a.title || '').trim().toLowerCase() === ev.title.trim().toLowerCase()
+            ) {
+              return true;
+            }
+            return false;
+          });
+
+          if (existingIdx >= 0) {
+            const existing = next[existingIdx];
+            const linkedId = extractGoogleEventId(existing.notes);
+            const nextNotes =
+              linkedId === gEventId
+                ? existing.notes
+                : attachGoogleEventIdToNotes(existing.notes || ev.notes || '', gEventId);
+            const nextStartTime = ev.start_time ?? existing.start_time;
+            const nextEndTime = ev.end_time ?? existing.end_time;
+            const nextDuration = ev.duration_minutes || existing.duration_minutes;
+            const nextAddress = ev.address || existing.address;
+
+            if (
+              existing.notes !== nextNotes ||
+              existing.date !== ev.date ||
+              existing.start_time !== nextStartTime ||
+              existing.end_time !== nextEndTime ||
+              existing.duration_minutes !== nextDuration ||
+              existing.address !== nextAddress
+            ) {
+              changed = true;
+              next[existingIdx] = {
+                ...existing,
+                date: ev.date,
+                start_time: nextStartTime,
+                end_time: nextEndTime,
+                duration_minutes: nextDuration,
+                address: nextAddress,
+                notes: nextNotes
+              };
+            }
+          } else {
+            // Automatische Kundenzuordnung, falls Kundenname im Kalendertitel vorkommt
+            const lowerTitle = ev.title.toLowerCase();
+            const matchedCustomer = customersRef.current.find(
+              (c) => c.name.trim().length > 2 && lowerTitle.includes(c.name.trim().toLowerCase())
+            );
+            const matchedProp = matchedCustomer
+              ? properties.find((p) => p.customer_id === matchedCustomer.id)
+              : undefined;
+
+            changed = true;
+            next.push({
+              id: `app-gcal-${gEventId}-${ev.date}`,
+              title: ev.title || 'Kalendertermin',
+              date: ev.date,
+              start_time: ev.start_time,
+              end_time: ev.end_time,
+              duration_minutes: ev.duration_minutes || 60,
+              customer_id: matchedCustomer?.id || null,
+              property_id: matchedProp?.id || null,
+              address: ev.address || matchedProp?.address || matchedCustomer?.street || null,
+              notes: attachGoogleEventIdToNotes(cleanGoogleEventNotes(ev.notes), gEventId),
+              tour_order: next.filter((a) => a.date === ev.date).length + 1
+            });
+          }
+        }
+
+        return changed ? next : prev;
+      });
+
+      setCalendarSyncState({
+        syncing: false,
+        connected: true,
+        lastSyncedAt: new Date().toISOString(),
+        error: null
+      });
+    } catch {
+      setCalendarSyncState((prev) => ({
+        ...prev,
+        syncing: false,
+        error: 'Google Kalender Synchronisation fehlgeschlagen'
+      }));
+    } finally {
+      calendarSyncLockRef.current = false;
+    }
+  }, [properties]);
+
+  // Automatischer Kalender-Sync beim Start, bei Fokus und alle 3 Minuten
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      void syncCalendarNow(false);
+    }, 600);
+
+    const interval = setInterval(() => {
+      if (typeof document === 'undefined' || document.visibilityState === 'visible') {
+        void syncCalendarNow(false);
+      }
+    }, 180000);
+
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        void syncCalendarNow(false);
+      }
+    };
+    window.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      clearTimeout(timer);
+      clearInterval(interval);
+      window.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [syncCalendarNow]);
+
+  // Automatische Konsistenzprüfung zwischen Rechnungen und Arbeitsaufzeichnungen (Offene Stunden)
+  useEffect(() => {
+    const activeInvoices = invoices.filter((inv) => !inv.is_storno && inv.status !== 'cancelled');
+    const activeInvoiceById = new Map(activeInvoices.map((inv) => [inv.id, inv]));
+
+    // Zuordnung: workRecord.id -> aktive invoice.id
+    const recordToInvoiceMap = new Map<string, string>();
+    for (const inv of activeInvoices) {
+      for (const wid of inv.work_record_ids || []) {
+        if (wid) recordToInvoiceMap.set(wid, inv.id);
+      }
+      for (const li of inv.line_items || []) {
+        if (li.id.startsWith('li-')) {
+          const recId = li.id.slice(3);
+          if (recId && !recordToInvoiceMap.has(recId)) {
+            recordToInvoiceMap.set(recId, inv.id);
+          }
+        }
+      }
+    }
+
+    let needsWorkUpdate = false;
+    const reconciledWork = workRecords.map((w) => {
+      const targetInvoiceId = recordToInvoiceMap.get(w.id) || null;
+      if (targetInvoiceId) {
+        if (w.settlement_id !== targetInvoiceId || w.is_lcr) {
+          needsWorkUpdate = true;
+          return {
+            ...w,
+            settlement_id: targetInvoiceId,
+            is_lcr: false
+          };
+        }
+        return w;
+      }
+
+      // Falls w.settlement_id gesetzt ist, aber die Rechnung nicht mehr existiert, storniert ist
+      // oder diese Arbeit nicht mehr in der Rechnung enthalten ist -> sofort wieder für Offene Stunden freigeben!
+      if (w.settlement_id) {
+        const linkedInv = activeInvoiceById.get(w.settlement_id);
+        const invHasExplicitRecords =
+          linkedInv &&
+          ((linkedInv.work_record_ids && linkedInv.work_record_ids.length > 0) ||
+            (linkedInv.line_items && linkedInv.line_items.some((li) => li.id.startsWith('li-'))));
+        if (!linkedInv || invHasExplicitRecords) {
+          needsWorkUpdate = true;
+          return {
+            ...w,
+            settlement_id: null
+          };
+        }
+      }
+      return w;
+    });
+
+    if (needsWorkUpdate) {
+      setWorkRecords(reconciledWork);
+    }
+  }, [invoices, workRecords]);
+
   // CRUD Implementations
   const addAppointment = (app: Partial<Appointment>): Appointment => {
     const todayIso = getTodayLocalIso();
     const targetDate = app.date || todayIso;
     const newApp: Appointment = {
-      id: `app-${Date.now()}`,
+      id: app.id || `app-${Date.now()}`,
       title: app.title?.trim() || 'Termin', // Optional title -> default 'Termin' per REQ-013
       date: targetDate,
       start_time: app.start_time !== undefined ? app.start_time : null,
@@ -1380,15 +1650,59 @@ export const AppProvider: React.FC<{
       tour_order: appointments.filter(a => a.date === targetDate).length + 1
     };
     setAppointments(prev => [...prev, newApp]);
+
+    // Sofort mit Google Kalender synchronisieren, falls noch keine Google-Event-ID vorhanden
+    const existingGId = extractGoogleEventId(newApp.notes);
+    if (!existingGId) {
+      const custName = customers.find((c) => c.id === newApp.customer_id)?.name || null;
+      void syncAppointmentToGoogleCalendar(newApp, custName).then((googleEventId) => {
+        if (googleEventId) {
+          setAppointments((prev) =>
+            prev.map((a) =>
+              a.id === newApp.id
+                ? { ...a, notes: attachGoogleEventIdToNotes(a.notes, googleEventId) }
+                : a
+            )
+          );
+        }
+      });
+    }
+
     return newApp;
   };
 
   const updateAppointment = (id: string, updated: Partial<Appointment>) => {
+    const existing = appointments.find((a) => a.id === id);
+    const merged: Appointment | null = existing ? { ...existing, ...updated } : null;
     setAppointments(prev => prev.map(a => a.id === id ? { ...a, ...updated } : a));
+
+    if (merged) {
+      const gEventId = extractGoogleEventId(merged.notes);
+      const custName = customers.find((c) => c.id === merged.customer_id)?.name || null;
+      void syncAppointmentToGoogleCalendar(merged, custName).then((newGoogleEventId) => {
+        if (newGoogleEventId && newGoogleEventId !== gEventId) {
+          setAppointments((prev) =>
+            prev.map((a) =>
+              a.id === id
+                ? { ...a, notes: attachGoogleEventIdToNotes(a.notes, newGoogleEventId) }
+                : a
+            )
+          );
+        }
+      });
+    }
   };
 
   const deleteAppointment = (id: string) => {
-    recordDeletedTombstones([['appointments', id]]);
+    const target = appointments.find((a) => a.id === id);
+    const tombstones: Array<[string, string]> = [['appointments', id]];
+    const gEventId = target ? extractGoogleEventId(target.notes) : null;
+    if (gEventId && target) {
+      tombstones.push(['gcal', `${gEventId}_${target.date}`]);
+      tombstones.push(['gcal', gEventId]);
+      void deleteAppointmentFromGoogleCalendar(gEventId);
+    }
+    recordDeletedTombstones(tombstones);
     setAppointments(prev => prev.filter(a => a.id !== id));
   };
 
@@ -1746,10 +2060,17 @@ export const AppProvider: React.FC<{
   };
 
   const updateWorkRecord = (id: string, work: Partial<WorkRecord>) => {
+    const prevRecord = workRecords.find((w) => w.id === id);
     const nextRecords = workRecords.map(w => {
       if (w.id === id) {
-        const hours = work.hours !== undefined ? work.hours : w.hours;
-        const rate = work.hourly_rate !== undefined ? work.hourly_rate : w.hourly_rate;
+        const rate =
+          work.hourly_rate !== undefined
+            ? work.hourly_rate
+            : w.hourly_rate !== null && w.hourly_rate > 0
+              ? w.hourly_rate
+              : w.hours && w.hours > 0 && w.accounting_amount
+                ? Math.round((w.accounting_amount / w.hours) * 100) / 100
+                : 50;
         const mats = work.materials !== undefined ? work.materials : w.materials;
         const matCost =
           work.material_cost !== undefined
@@ -1757,15 +2078,32 @@ export const AppProvider: React.FC<{
             : mats && mats.some((m) => m.total !== null)
               ? Math.round(mats.reduce((s, m) => s + (m.total || 0), 0) * 100) / 100
               : null;
-        const accounting_amount =
-          work.accounting_amount !== undefined
-            ? work.accounting_amount
-            : hours !== null && rate !== null
-              ? Math.round((hours * rate + (matCost || 0)) * 100) / 100
-              : w.accounting_amount;
+
+        let hours = work.hours !== undefined ? work.hours : w.hours;
+        let accounting_amount: number | null;
+
+        if (work.accounting_amount !== undefined) {
+          accounting_amount = work.accounting_amount;
+          // Wenn nur der Betrag geändert wurde (ohne explizite Stundenänderung), Stunden passend nachführen
+          if (
+            work.hours === undefined &&
+            accounting_amount !== null &&
+            rate !== null &&
+            rate > 0 &&
+            (!matCost || matCost === 0)
+          ) {
+            hours = Math.round((accounting_amount / rate) * 100) / 100;
+          }
+        } else if (hours !== null && rate !== null) {
+          accounting_amount = Math.round((hours * rate + (matCost || 0)) * 100) / 100;
+        } else {
+          accounting_amount = w.accounting_amount;
+        }
+
         return {
           ...w,
           ...work,
+          hours,
           materials: mats,
           material_cost: matCost,
           hourly_rate: rate,
@@ -1779,40 +2117,165 @@ export const AppProvider: React.FC<{
     setWorkRecords(nextRecords);
 
     const edited = nextRecords.find(w => w.id === id);
-    if (edited?.settlement_id) {
-      const sid = edited.settlement_id;
-      setInvoices(prev =>
-        prev.map(inv => {
-          if (inv.id !== sid || inv.is_storno) return inv;
-          const boundSum = Math.round(
-            nextRecords
-              .filter(r => r.settlement_id === sid)
-              .reduce((s, r) => s + (r.accounting_amount || 0), 0) * 100
-          ) / 100;
+    if (!edited) return;
+
+    const prevSettlementId = prevRecord?.settlement_id || null;
+    const nextSettlementId = edited.settlement_id;
+
+    // Alle betroffenen Rechnungen synchronisieren (sowohl Positionstexte/Einzelposten als auch Gesamtsumme)
+    setInvoices(prev =>
+      prev.map(inv => {
+        if (inv.is_storno) return inv;
+        const wasInInvoice =
+          inv.id === prevSettlementId ||
+          inv.work_record_ids.includes(id) ||
+          (inv.line_items || []).some(li => li.id === `li-${id}`);
+        const isNowInInvoice =
+          nextSettlementId === inv.id ||
+          (work.settlement_id === undefined && inv.work_record_ids.includes(id));
+
+        if (!wasInInvoice && !isNowInInvoice) return inv;
+
+        // Fall 1: Arbeitsaufzeichnung wurde aus dieser Rechnung gelöst (z.B. Freigabe zurück in Offene Stunden)
+        if (work.settlement_id === null && wasInInvoice) {
+          const nextWorkIds = inv.work_record_ids.filter(wid => wid !== id);
+          const nextLineItems = (inv.line_items || []).filter(li => li.id !== `li-${id}`);
+          const boundRecords = nextRecords.filter(
+            r => r.settlement_id === inv.id || nextWorkIds.includes(r.id)
+          );
+          const nextTotal =
+            nextLineItems.length > 0
+              ? Math.round(nextLineItems.reduce((s, li) => s + li.amount, 0) * 100) / 100
+              : Math.round(
+                  boundRecords.reduce((s, r) => s + (r.accounting_amount || 0), 0) * 100
+                ) / 100;
           const paidSum = Math.round(inv.payments.reduce((s, p) => s + p.amount, 0) * 100) / 100;
           const nextStatus =
             inv.status === 'cancelled'
               ? 'cancelled'
-              : paidSum >= boundSum && boundSum > 0
+              : paidSum >= nextTotal && nextTotal > 0
                 ? 'paid'
                 : paidSum > 0
                   ? 'partially_paid'
                   : 'unpaid';
-          return { ...inv, total_amount: boundSum, status: nextStatus };
-        })
-      );
-    }
+          return {
+            ...inv,
+            work_record_ids: nextWorkIds,
+            line_items: nextLineItems,
+            total_amount: nextTotal,
+            status: nextStatus
+          };
+        }
+
+        // Fall 2: Arbeitsaufzeichnung ist Teil dieser Rechnung -> Position und Summe aktualisieren
+        const rebuiltItem = buildLineItemsFromRecords([edited], [], {
+          billingCustomerId: inv.customer_id,
+          customers,
+          properties
+        })[0];
+
+        const nextWorkIds = inv.work_record_ids.includes(id)
+          ? inv.work_record_ids
+          : [...inv.work_record_ids, id];
+
+        let nextLineItems = inv.line_items ? [...inv.line_items] : [];
+        if (rebuiltItem && !inv.is_pauschal) {
+          const liIdx = nextLineItems.findIndex(li => li.id === `li-${id}`);
+          if (liIdx >= 0) {
+            nextLineItems[liIdx] = rebuiltItem;
+          } else if (nextLineItems.length > 0) {
+            nextLineItems.push(rebuiltItem);
+          }
+        }
+
+        const boundRecords = nextRecords.filter(
+          r => r.settlement_id === inv.id || nextWorkIds.includes(r.id)
+        );
+        const boundSum = Math.round(
+          boundRecords.reduce((s, r) => s + (r.accounting_amount || 0), 0) * 100
+        ) / 100;
+
+        // Freie Zusatzpositionen (nicht li-<workId> und nicht pauschal-main) beibehalten
+        const extraItemsSum = !inv.is_pauschal
+          ? Math.round(
+              nextLineItems
+                .filter(li => !li.id.startsWith('li-') && li.id !== 'pauschal-main')
+                .reduce((s, li) => s + li.amount, 0) * 100
+            ) / 100
+          : 0;
+
+        const nextTotal = inv.is_pauschal
+          ? boundSum > 0
+            ? boundSum
+            : inv.total_amount
+          : Math.round((boundSum + extraItemsSum) * 100) / 100;
+
+        if (inv.is_pauschal && nextLineItems.length === 1 && nextLineItems[0].id === 'pauschal-main') {
+          nextLineItems = [
+            {
+              ...nextLineItems[0],
+              unit_price_label: `${nextTotal.toFixed(2).replace('.', ',')} €`,
+              amount: nextTotal
+            }
+          ];
+        }
+
+        const nextServicePeriod =
+          boundRecords.length > 0
+            ? computeServicePeriod(boundRecords, inv.issue_date)
+            : inv.service_period;
+
+        const paidSum = Math.round(inv.payments.reduce((s, p) => s + p.amount, 0) * 100) / 100;
+        const nextStatus =
+          inv.status === 'cancelled'
+            ? 'cancelled'
+            : paidSum >= nextTotal && nextTotal > 0
+              ? 'paid'
+              : paidSum > 0
+                ? 'partially_paid'
+                : 'unpaid';
+
+        return {
+          ...inv,
+          work_record_ids: nextWorkIds,
+          line_items: nextLineItems,
+          service_period: nextServicePeriod,
+          total_amount: nextTotal,
+          status: nextStatus
+        };
+      })
+    );
   };
 
   const deleteWorkRecord = (id: string) => {
     recordDeletedTombstones([['workRecords', id]]);
-    setWorkRecords(prev => prev.filter(w => w.id !== id));
+    const remainingRecords = workRecords.filter(w => w.id !== id);
+    setWorkRecords(remainingRecords);
     setInvoices(prev =>
-      prev.map(inv =>
-        inv.work_record_ids.includes(id)
-          ? { ...inv, work_record_ids: inv.work_record_ids.filter(wid => wid !== id) }
-          : inv
-      )
+      prev.map(inv => {
+        if (
+          !inv.work_record_ids.includes(id) &&
+          !(inv.line_items || []).some(li => li.id === `li-${id}`)
+        ) {
+          return inv;
+        }
+        const nextWorkIds = inv.work_record_ids.filter(wid => wid !== id);
+        const nextLineItems = (inv.line_items || []).filter(li => li.id !== `li-${id}`);
+        const boundRecords = remainingRecords.filter(
+          r => r.settlement_id === inv.id || nextWorkIds.includes(r.id)
+        );
+        const nextTotal =
+          nextLineItems.length > 0 && !inv.is_pauschal
+            ? Math.round(nextLineItems.reduce((s, li) => s + li.amount, 0) * 100) / 100
+            : Math.round(boundRecords.reduce((s, r) => s + (r.accounting_amount || 0), 0) * 100) /
+              100;
+        return {
+          ...inv,
+          work_record_ids: nextWorkIds,
+          line_items: nextLineItems,
+          total_amount: nextTotal
+        };
+      })
     );
   };
 
@@ -1906,7 +2369,10 @@ export const AppProvider: React.FC<{
     );
 
     const selectedRecords = workRecords.filter((w) => allBoundRecordIds.includes(w.id));
-    const cust = customers.find((c) => c.id === customerId);
+    const rawCust = customers.find((c) => c.id === customerId);
+    const divergentRecipient = getCustomerBillingRecipient(rawCust, customers);
+    const cust = divergentRecipient || rawCust;
+    const effectiveCustomerId = cust?.id || customerId;
     const issueDate = options?.issueDate || getTodayLocalIso();
     const paidInCash = Boolean(options?.paidInCash);
     const dueDays = paidInCash ? 0 : (options?.dueDays ?? 14);
@@ -1916,7 +2382,7 @@ export const AppProvider: React.FC<{
       options?.customLineItems && options.customLineItems.length > 0
         ? options.customLineItems
         : buildLineItemsFromRecords(selectedRecords, options?.extraItems || [], {
-            billingCustomerId: customerId,
+            billingCustomerId: effectiveCustomerId,
             customers,
             properties
           });
@@ -1936,13 +2402,13 @@ export const AppProvider: React.FC<{
     const resolvedCustomerNum =
       options?.customerNumber?.trim() ||
       cust?.customer_number?.trim() ||
-      resolveCustomerNumber(customerId, customers);
+      resolveCustomerNumber(effectiveCustomerId, customers);
 
     // Falls der Kunde noch keine Kundennummer gespeichert hatte oder sie geändert wurde, im Kundenkonto hinterlegen
     if (cust && resolvedCustomerNum && cust.customer_number !== resolvedCustomerNum) {
       setCustomers((prev) =>
         prev.map((c) =>
-          c.id === customerId
+          c.id === effectiveCustomerId
             ? { ...c, customer_number: resolvedCustomerNum, updated_at: new Date().toISOString() }
             : c
         )
@@ -1973,18 +2439,23 @@ export const AppProvider: React.FC<{
           ? 'partially_paid'
           : 'unpaid';
 
+    const recipientName = cust?.name || 'Kunde';
+    const resolvedIntroText =
+      options?.introText?.trim() ||
+      buildPersonalizedIntroText(recipientName, Boolean(options?.isPauschal));
+
     const newInvoice: Invoice = {
       id: `inv-${Date.now()}`,
       invoice_number: invoiceNum,
-      customer_id: customerId,
+      customer_id: effectiveCustomerId,
       customer_number: resolvedCustomerNum,
-      billing_customer_name: cust?.name || 'Kunde',
+      billing_customer_name: recipientName,
       recipient_street: cust?.street || '',
       recipient_zip: cust?.zip || '',
       recipient_city: cust?.city || '',
       service_period: servicePeriod,
       subject_text: options?.subjectText?.trim() || undefined,
-      intro_text: options?.introText?.trim() || undefined,
+      intro_text: resolvedIntroText,
       closing_text: options?.closingText?.trim() || undefined,
       is_pauschal: Boolean(options?.isPauschal),
       merged_invoice_ids: replaceIds.length > 0 ? replaceIds : undefined,
@@ -2080,18 +2551,42 @@ export const AppProvider: React.FC<{
               : 'unpaid';
       }
 
-      // Synchronisiere Arbeitsaufzeichnungen bei Statuswechsel auf/von Storniert
+      // Synchronisiere Arbeitsaufzeichnungen bei Statuswechsel auf/von Storniert oder Änderung der zugeordneten Arbeiten
       if (nextStatus === 'cancelled' && existing.status !== 'cancelled') {
         setWorkRecords(prev =>
           prev.map(w => (w.settlement_id === invoiceId ? { ...w, settlement_id: null } : w))
         );
       } else if (existing.status === 'cancelled' && nextStatus !== 'cancelled') {
+        const targetRecordIds = patch.work_record_ids ?? existing.work_record_ids;
         setWorkRecords(prev =>
           prev.map(w =>
-            existing.work_record_ids.includes(w.id) && !w.settlement_id && !w.is_lcr
+            targetRecordIds.includes(w.id) && !w.settlement_id && !w.is_lcr
               ? { ...w, settlement_id: invoiceId }
               : w
           )
+        );
+      } else if (patch.work_record_ids !== undefined && nextStatus !== 'cancelled') {
+        const nextSet = new Set(patch.work_record_ids);
+        const prevSet = new Set(existing.work_record_ids);
+        setWorkRecords(prev =>
+          prev.map(w => {
+            if (nextSet.has(w.id) && w.settlement_id !== invoiceId) {
+              return {
+                ...w,
+                settlement_id: invoiceId,
+                is_lcr: false,
+                updated_at: new Date().toISOString()
+              };
+            }
+            if (!nextSet.has(w.id) && (w.settlement_id === invoiceId || prevSet.has(w.id))) {
+              return {
+                ...w,
+                settlement_id: null,
+                updated_at: new Date().toISOString()
+              };
+            }
+            return w;
+          })
         );
       }
     }
@@ -2778,7 +3273,9 @@ export const AppProvider: React.FC<{
         setPixelFrameEnabled,
         appSyncStatus,
         flushPendingAppSync,
-        refreshFromServer
+        refreshFromServer,
+        calendarSyncState,
+        syncCalendarNow
       }}
     >
       {children}

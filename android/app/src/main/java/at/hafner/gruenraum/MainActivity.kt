@@ -67,6 +67,12 @@ class MainActivity : AppCompatActivity() {
         val endDateIso: String
     )
 
+    private data class PendingCalendarWrite(
+        val requestId: String,
+        val payloadJson: String,
+        val isDelete: Boolean
+    )
+
     private data class PendingBackupWrite(
         val requestId: String,
         val jsonPayload: String
@@ -74,6 +80,7 @@ class MainActivity : AppCompatActivity() {
 
     private var pendingDocSave: PendingDocSave? = null
     private var pendingCalendarQuery: PendingCalendarQuery? = null
+    private var pendingCalendarWrite: PendingCalendarWrite? = null
     private var pendingLocationRequestId: String? = null
     private var pendingWebGeoOrigin: String? = null
     private var pendingWebGeoCallback: GeolocationPermissions.Callback? = null
@@ -196,22 +203,40 @@ class MainActivity : AppCompatActivity() {
     }
 
     private val calendarPermissionLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        val pending = pendingCalendarQuery
-        pendingCalendarQuery = null
-        if (pending == null) return@registerForActivityResult
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        val readGranted = permissions[Manifest.permission.READ_CALENDAR] == true ||
+            ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CALENDAR) == PackageManager.PERMISSION_GRANTED
+        val writeGranted = permissions[Manifest.permission.WRITE_CALENDAR] == true ||
+            ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_CALENDAR) == PackageManager.PERMISSION_GRANTED
 
-        if (!granted) {
-            dispatchNativeCallback(
-                pending.requestId,
-                false,
-                "Kalenderberechtigung auf dem Pixel 10 Pro nicht freigegeben."
-            )
-            return@registerForActivityResult
+        val pendingQuery = pendingCalendarQuery
+        pendingCalendarQuery = null
+        if (pendingQuery != null) {
+            if (!readGranted) {
+                dispatchNativeCallback(
+                    pendingQuery.requestId,
+                    false,
+                    "Kalenderberechtigung auf dem Pixel 10 Pro nicht freigegeben."
+                )
+            } else {
+                executeCalendarQueryOnBackground(pendingQuery)
+            }
         }
 
-        executeCalendarQueryOnBackground(pending)
+        val pendingWrite = pendingCalendarWrite
+        pendingCalendarWrite = null
+        if (pendingWrite != null) {
+            if (!readGranted || !writeGranted) {
+                dispatchNativeCallback(
+                    pendingWrite.requestId,
+                    false,
+                    "Kalender-Schreibberechtigung auf dem Pixel 10 Pro nicht freigegeben."
+                )
+            } else {
+                executeCalendarWriteOnBackground(pendingWrite)
+            }
+        }
     }
 
     private val locationPermissionLauncher = registerForActivityResult(
@@ -515,7 +540,60 @@ class MainActivity : AppCompatActivity() {
             executeCalendarQueryOnBackground(query)
         } else {
             pendingCalendarQuery = query
-            calendarPermissionLauncher.launch(Manifest.permission.READ_CALENDAR)
+            calendarPermissionLauncher.launch(
+                arrayOf(
+                    Manifest.permission.READ_CALENDAR,
+                    Manifest.permission.WRITE_CALENDAR
+                )
+            )
+        }
+    }
+
+    fun requestUpsertCalendarEvent(requestId: String, payloadJson: String) {
+        val writeReq = PendingCalendarWrite(requestId, payloadJson, isDelete = false)
+        val hasRead = ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.READ_CALENDAR
+        ) == PackageManager.PERMISSION_GRANTED
+        val hasWrite = ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.WRITE_CALENDAR
+        ) == PackageManager.PERMISSION_GRANTED
+
+        if (hasRead && hasWrite) {
+            executeCalendarWriteOnBackground(writeReq)
+        } else {
+            pendingCalendarWrite = writeReq
+            calendarPermissionLauncher.launch(
+                arrayOf(
+                    Manifest.permission.READ_CALENDAR,
+                    Manifest.permission.WRITE_CALENDAR
+                )
+            )
+        }
+    }
+
+    fun requestDeleteCalendarEvent(requestId: String, googleEventId: String) {
+        val writeReq = PendingCalendarWrite(requestId, googleEventId, isDelete = true)
+        val hasRead = ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.READ_CALENDAR
+        ) == PackageManager.PERMISSION_GRANTED
+        val hasWrite = ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.WRITE_CALENDAR
+        ) == PackageManager.PERMISSION_GRANTED
+
+        if (hasRead && hasWrite) {
+            executeCalendarWriteOnBackground(writeReq)
+        } else {
+            pendingCalendarWrite = writeReq
+            calendarPermissionLauncher.launch(
+                arrayOf(
+                    Manifest.permission.READ_CALENDAR,
+                    Manifest.permission.WRITE_CALENDAR
+                )
+            )
         }
     }
 
@@ -530,6 +608,29 @@ class MainActivity : AppCompatActivity() {
                         query.requestId,
                         false,
                         e.message ?: "Kalenderabfrage fehlgeschlagen."
+                    )
+                }
+            }
+        }.start()
+    }
+
+    private fun executeCalendarWriteOnBackground(writeReq: PendingCalendarWrite) {
+        Thread {
+            try {
+                if (writeReq.isDelete) {
+                    val deleted = calendarReader.deleteEvent(writeReq.payloadJson)
+                    val res = JSONObject().apply { put("deleted", deleted) }.toString()
+                    runOnUiThread { dispatchNativeCallback(writeReq.requestId, true, res) }
+                } else {
+                    val resJson = calendarReader.upsertEventJson(writeReq.payloadJson)
+                    runOnUiThread { dispatchNativeCallback(writeReq.requestId, true, resJson) }
+                }
+            } catch (e: Exception) {
+                runOnUiThread {
+                    dispatchNativeCallback(
+                        writeReq.requestId,
+                        false,
+                        e.message ?: "Kalendersynchronisation fehlgeschlagen."
                     )
                 }
             }

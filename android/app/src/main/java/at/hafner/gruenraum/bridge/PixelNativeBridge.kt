@@ -195,6 +195,20 @@ class PixelNativeBridge(
     }
 
     @JavascriptInterface
+    fun upsertDeviceCalendarEvent(requestId: String, payloadJson: String) {
+        activity.runOnUiThread {
+            activity.requestUpsertCalendarEvent(requestId, payloadJson)
+        }
+    }
+
+    @JavascriptInterface
+    fun deleteDeviceCalendarEvent(requestId: String, googleEventId: String) {
+        activity.runOnUiThread {
+            activity.requestDeleteCalendarEvent(requestId, googleEventId)
+        }
+    }
+
+    @JavascriptInterface
     fun readDeviceLocation(requestId: String) {
         activity.runOnUiThread {
             activity.requestDeviceLocation(requestId)

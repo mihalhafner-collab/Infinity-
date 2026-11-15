@@ -686,7 +686,7 @@ export const VorgaengeView: React.FC = () => {
         )}
 
         <BottomActionBar>
-          <div className="w-full max-w-[260px] flex items-center p-1 bg-slate-100 rounded-xl">
+          <div className="w-full flex items-center p-1 bg-slate-100 rounded-2xl">
             <button
               type="button"
               onClick={() => setTab('anfragen')}

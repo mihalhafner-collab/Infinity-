@@ -13,6 +13,7 @@ export const OWNER_EMAIL = 'mihalhafner@gmail.com';
 
 export const SCOPES = [
   'https://www.googleapis.com/auth/gmail.send',
+  'https://www.googleapis.com/auth/calendar.events',
   'https://www.googleapis.com/auth/calendar.events.readonly'
 ];
 
@@ -391,6 +392,10 @@ export const googleSignIn = async (
 
 export const getAccessToken = async (): Promise<string | null> => {
   return cachedAccessToken;
+};
+
+export const isGoogleConnected = (): boolean => {
+  return Boolean(cachedAccessToken);
 };
 
 export const invalidateAccessToken = (): void => {

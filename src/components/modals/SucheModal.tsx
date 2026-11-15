@@ -18,8 +18,11 @@ import {
 import { ScreenId } from '../../types/index.ts';
 import { getCategoryLabel } from '../../utils/equipmentConfig.ts';
 import {
+  buildSearchIndexEntry,
+  formatAmountSearchable,
   formatIsoToDeSearchable,
-  matchesSearchQuery
+  parseSearchQuery,
+  scoreSearchIndex
 } from '../../utils/searchUtils.ts';
 
 type SearchFilterTab =
@@ -69,6 +72,8 @@ export const SucheModal: React.FC = () => {
     materials,
     setSelectedCustomerId,
     setSelectedInvoiceId,
+    setSelectedWorkRecordId,
+    setActiveModal,
     navigate
   } = useApp();
 
@@ -78,6 +83,7 @@ export const SucheModal: React.FC = () => {
   const inputRef = useRef<HTMLInputElement>(null);
 
   const query = searchQuery.trim();
+  const parsedQuery = useMemo(() => parseSearchQuery(query), [query]);
 
   const customerMap = useMemo(() => {
     const map = new Map<string, (typeof customers)[number]>();
@@ -87,160 +93,340 @@ export const SucheModal: React.FC = () => {
     return map;
   }, [customers]);
 
-  // 1. Kunden & Objekte durchsuchen (inkl. Straße, PLZ, Ort, Telefon, E-Mail, Notiz, Objekte & Sub-Empfänger)
-  const matchingCustomers = useMemo(() => {
-    return customers
-      .filter((c) => {
-        if (!query) return true;
-        const custProps = properties.filter((p) => p.customer_id === c.id);
-        const subRecipient = c.default_billing_customer_id
-          ? customerMap.get(c.default_billing_customer_id)?.name
-          : '';
-        return matchesSearchQuery(query, [
-          c.name,
-          c.customer_number,
-          c.street,
-          c.zip,
-          c.city,
-          c.phone,
-          c.email,
-          c.notes,
-          subRecipient,
-          ...custProps.flatMap((p) => [p.name, p.address, p.notes, p.access_info])
-        ]);
-      })
-      .sort((a, b) => a.name.localeCompare(b.name, 'de'));
-  }, [customers, properties, customerMap, query]);
+  const propertyMap = useMemo(() => {
+    const map = new Map<string, (typeof properties)[number]>();
+    for (const p of properties) {
+      map.set(p.id, p);
+    }
+    return map;
+  }, [properties]);
 
-  // 2. Termine durchsuchen (inkl. Kundenname & deutsches Datum)
-  const matchingAppointments = useMemo(() => {
-    return appointments
-      .filter((a) => {
-        if (!query) return true;
-        const cust = a.customer_id ? customerMap.get(a.customer_id) : undefined;
-        return matchesSearchQuery(query, [
-          a.title,
-          a.address,
-          formatIsoToDeSearchable(a.date),
-          a.start_time,
-          a.end_time,
-          a.notes,
-          cust?.name,
-          cust?.city
-        ]);
-      })
-      .sort((a, b) => b.date.localeCompare(a.date));
-  }, [appointments, customerMap, query]);
-
-  // 3. Arbeitsaufzeichnungen durchsuchen (inkl. Kunde, Objekt, Material & deutsches Datum)
-  const matchingWork = useMemo(() => {
-    return workRecords
-      .filter((w) => {
-        if (!query) return true;
-        const cust = customerMap.get(w.customer_id);
-        const prop = w.property_id
-          ? properties.find((p) => p.id === w.property_id)
-          : undefined;
-        const matNames = (w.materials || []).map((m) => m.name).join(' ');
-        return matchesSearchQuery(query, [
-          w.title,
-          w.notes,
-          formatIsoToDeSearchable(w.work_date),
-          cust?.name,
-          cust?.city,
-          prop?.name,
-          prop?.address,
-          matNames,
-          w.is_lcr ? 'LCR L.C.R.' : ''
-        ]);
-      })
-      .sort((a, b) => b.work_date.localeCompare(a.work_date));
-  }, [workRecords, customerMap, properties, query]);
-
-  // 4. Rechnungen, Aufträge, Angebote & Anfragen durchsuchen
-  const matchingInvoices = useMemo(() => {
-    return invoices.filter((inv) => {
-      if (!query) return true;
-      const cust = customerMap.get(inv.customer_id);
-      return matchesSearchQuery(query, [
-        inv.invoice_number,
-        inv.billing_customer_name,
-        cust?.name,
-        formatIsoToDeSearchable(inv.issue_date),
-        formatIsoToDeSearchable(inv.due_date),
-        inv.total_amount
-      ]);
+  // 1. Vorberechneter Suchindex: Kunden & Objekte
+  const indexedCustomers = useMemo(() => {
+    return customers.map((c) => {
+      const custProps = properties.filter((p) => p.customer_id === c.id);
+      const subRecipient = c.default_billing_customer_id
+        ? customerMap.get(c.default_billing_customer_id)?.name
+        : '';
+      return {
+        item: c,
+        index: buildSearchIndexEntry({
+          exactKeys: [c.customer_number, c.zip],
+          primary: [c.name, c.customer_number],
+          secondary: [
+            c.city,
+            c.street,
+            c.phone,
+            c.email,
+            subRecipient,
+            ...custProps.map((p) => p.name)
+          ],
+          keywords: [
+            c.notes,
+            c.billing_mode === 'divergent_recipient' ? 'sub subauftrag abweichend' : '',
+            ...custProps.flatMap((p) => [p.address, p.notes, p.access_info])
+          ]
+        })
+      };
     });
-  }, [invoices, customerMap, query]);
+  }, [customers, properties, customerMap]);
+
+  const matchingCustomers = useMemo(() => {
+    if (!query) {
+      return [...customers].sort((a, b) => a.name.localeCompare(b.name, 'de'));
+    }
+    return indexedCustomers
+      .map(({ item, index }) => ({
+        item,
+        score: scoreSearchIndex(parsedQuery, index)
+      }))
+      .filter((entry) => entry.score > 0)
+      .sort((a, b) => {
+        if (b.score !== a.score) return b.score - a.score;
+        return a.item.name.localeCompare(b.item.name, 'de');
+      })
+      .map((entry) => entry.item);
+  }, [indexedCustomers, customers, parsedQuery, query]);
+
+  // 2. Vorberechneter Suchindex: Termine
+  const indexedAppointments = useMemo(() => {
+    return appointments.map((a) => {
+      const cust = a.customer_id ? customerMap.get(a.customer_id) : undefined;
+      const prop = a.property_id ? propertyMap.get(a.property_id) : undefined;
+      return {
+        item: a,
+        index: buildSearchIndexEntry({
+          exactKeys: [cust?.customer_number, a.date],
+          primary: [a.title, cust?.name],
+          secondary: [
+            a.address,
+            cust?.city,
+            cust?.street,
+            prop?.name,
+            prop?.address,
+            formatIsoToDeSearchable(a.date)
+          ],
+          keywords: [a.start_time, a.end_time, a.notes, 'termin kalender']
+        })
+      };
+    });
+  }, [appointments, customerMap, propertyMap]);
+
+  const matchingAppointments = useMemo(() => {
+    if (!query) {
+      return [...appointments].sort((a, b) => b.date.localeCompare(a.date));
+    }
+    return indexedAppointments
+      .map(({ item, index }) => ({
+        item,
+        score: scoreSearchIndex(parsedQuery, index)
+      }))
+      .filter((entry) => entry.score > 0)
+      .sort((a, b) => {
+        if (b.score !== a.score) return b.score - a.score;
+        return b.item.date.localeCompare(a.item.date);
+      })
+      .map((entry) => entry.item);
+  }, [indexedAppointments, appointments, parsedQuery, query]);
+
+  // 3. Vorberechneter Suchindex: Arbeitsaufzeichnungen
+  const indexedWork = useMemo(() => {
+    return workRecords.map((w) => {
+      const cust = customerMap.get(w.customer_id);
+      const prop = w.property_id ? propertyMap.get(w.property_id) : undefined;
+      const matNames = (w.materials || []).map((m) => `${m.name} ${m.unit}`).join(' ');
+      const statusKeywords = w.settlement_id
+        ? 'abgerechnet verrechnet erledigt'
+        : w.is_lcr
+          ? 'lcr l.c.r.'
+          : 'offen unbezahlt';
+      return {
+        item: w,
+        index: buildSearchIndexEntry({
+          exactKeys: [cust?.customer_number, w.work_date],
+          primary: [w.title, cust?.name],
+          secondary: [
+            prop?.name,
+            prop?.address,
+            cust?.city,
+            formatIsoToDeSearchable(w.work_date),
+            formatAmountSearchable(w.accounting_amount)
+          ],
+          keywords: [
+            w.notes,
+            matNames,
+            statusKeywords,
+            `${w.hours} std stunden`,
+            w.start_time,
+            w.end_time
+          ]
+        })
+      };
+    });
+  }, [workRecords, customerMap, propertyMap]);
+
+  const matchingWork = useMemo(() => {
+    if (!query) {
+      return [...workRecords].sort((a, b) => b.work_date.localeCompare(a.work_date));
+    }
+    return indexedWork
+      .map(({ item, index }) => ({
+        item,
+        score: scoreSearchIndex(parsedQuery, index)
+      }))
+      .filter((entry) => entry.score > 0)
+      .sort((a, b) => {
+        if (b.score !== a.score) return b.score - a.score;
+        return b.item.work_date.localeCompare(a.item.work_date);
+      })
+      .map((entry) => entry.item);
+  }, [indexedWork, workRecords, parsedQuery, query]);
+
+  // 4. Vorberechneter Suchindex: Rechnungen, Aufträge, Angebote & Anfragen
+  const indexedInvoices = useMemo(() => {
+    return invoices.map((inv) => {
+      const cust = customerMap.get(inv.customer_id);
+      const itemTexts = (inv.line_items || []).map((li) => li.description).join(' ');
+      const statusText =
+        inv.status === 'paid'
+          ? 'bezahlt erledigt'
+          : inv.status === 'draft'
+            ? 'entwurf konzept'
+            : 'offen unbezahlt';
+      return {
+        item: inv,
+        index: buildSearchIndexEntry({
+          exactKeys: [inv.invoice_number, inv.customer_number, cust?.customer_number],
+          primary: [inv.invoice_number, inv.billing_customer_name, cust?.name],
+          secondary: [
+            formatIsoToDeSearchable(inv.issue_date),
+            formatAmountSearchable(inv.total_amount),
+            inv.customer_number
+          ],
+          keywords: [
+            formatIsoToDeSearchable(inv.due_date),
+            statusText,
+            inv.is_pauschal ? 'pauschal pauschalrechnung' : 'regie',
+            inv.subject_text,
+            inv.intro_text,
+            itemTexts
+          ]
+        })
+      };
+    });
+  }, [invoices, customerMap]);
+
+  const matchingInvoices = useMemo(() => {
+    if (!query) return invoices;
+    return indexedInvoices
+      .map(({ item, index }) => ({
+        item,
+        score: scoreSearchIndex(parsedQuery, index)
+      }))
+      .filter((entry) => entry.score > 0)
+      .sort((a, b) => {
+        if (b.score !== a.score) return b.score - a.score;
+        return b.item.issue_date.localeCompare(a.item.issue_date);
+      })
+      .map((entry) => entry.item);
+  }, [indexedInvoices, invoices, parsedQuery, query]);
+
+  const indexedOrders = useMemo(() => {
+    return orders.map((o) => {
+      const cust = customerMap.get(o.customer_id);
+      return {
+        item: o,
+        index: buildSearchIndexEntry({
+          exactKeys: [cust?.customer_number],
+          primary: [o.title, cust?.name],
+          secondary: [formatIsoToDeSearchable(o.scheduled_date), cust?.city],
+          keywords: [o.notes, 'auftrag auftraege']
+        })
+      };
+    });
+  }, [orders, customerMap]);
 
   const matchingOrders = useMemo(() => {
-    return orders.filter((o) => {
-      if (!query) return true;
-      const cust = customerMap.get(o.customer_id);
-      return matchesSearchQuery(query, [
-        o.title,
-        o.notes,
-        formatIsoToDeSearchable(o.scheduled_date),
-        cust?.name,
-        cust?.city
-      ]);
+    if (!query) return orders;
+    return indexedOrders
+      .map(({ item, index }) => ({
+        item,
+        score: scoreSearchIndex(parsedQuery, index)
+      }))
+      .filter((entry) => entry.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .map((entry) => entry.item);
+  }, [indexedOrders, orders, parsedQuery, query]);
+
+  const indexedOffers = useMemo(() => {
+    return offers.map((off) => {
+      const cust = customerMap.get(off.customer_id);
+      return {
+        item: off,
+        index: buildSearchIndexEntry({
+          exactKeys: [cust?.customer_number],
+          primary: [off.title, cust?.name],
+          secondary: [formatAmountSearchable(off.total_amount), cust?.city],
+          keywords: ['angebot angebote']
+        })
+      };
     });
-  }, [orders, customerMap, query]);
+  }, [offers, customerMap]);
 
   const matchingOffers = useMemo(() => {
-    return offers.filter((off) => {
-      if (!query) return true;
-      const cust = customerMap.get(off.customer_id);
-      return matchesSearchQuery(query, [
-        off.title,
-        cust?.name,
-        off.total_amount
-      ]);
+    if (!query) return offers;
+    return indexedOffers
+      .map(({ item, index }) => ({
+        item,
+        score: scoreSearchIndex(parsedQuery, index)
+      }))
+      .filter((entry) => entry.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .map((entry) => entry.item);
+  }, [indexedOffers, offers, parsedQuery, query]);
+
+  const indexedInquiries = useMemo(() => {
+    return inquiries.map((inq) => {
+      const cust = customerMap.get(inq.customer_id);
+      return {
+        item: inq,
+        index: buildSearchIndexEntry({
+          exactKeys: [cust?.customer_number],
+          primary: [inq.title, cust?.name],
+          secondary: [formatIsoToDeSearchable(inq.desired_date), cust?.city],
+          keywords: [inq.notes, 'anfrage anfragen']
+        })
+      };
     });
-  }, [offers, customerMap, query]);
+  }, [inquiries, customerMap]);
 
   const matchingInquiries = useMemo(() => {
-    return inquiries.filter((inq) => {
-      if (!query) return true;
-      const cust = customerMap.get(inq.customer_id);
-      return matchesSearchQuery(query, [
-        inq.title,
-        inq.notes,
-        formatIsoToDeSearchable(inq.desired_date),
-        cust?.name
-      ]);
-    });
-  }, [inquiries, customerMap, query]);
+    if (!query) return inquiries;
+    return indexedInquiries
+      .map(({ item, index }) => ({
+        item,
+        score: scoreSearchIndex(parsedQuery, index)
+      }))
+      .filter((entry) => entry.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .map((entry) => entry.item);
+  }, [indexedInquiries, inquiries, parsedQuery, query]);
 
-  // 5. Geräte, Zubehör & Material durchsuchen
-  const matchingEquipment = useMemo(() => {
-    return equipments.filter((e) => {
-      if (!query) return true;
+  // 5. Vorberechneter Suchindex: Geräte, Zubehör & Material
+  const indexedEquipment = useMemo(() => {
+    return equipments.map((e) => {
       const catLabel = getCategoryLabel(e.category, e.item_type);
       const specsText = e.specs ? Object.values(e.specs).join(' ') : '';
-      return matchesSearchQuery(query, [
-        e.name,
-        e.model,
-        catLabel,
-        specsText,
-        e.notes,
-        e.maintenance_plan
-      ]);
+      return {
+        item: e,
+        index: buildSearchIndexEntry({
+          primary: [e.name, e.model],
+          secondary: [catLabel, specsText],
+          keywords: [
+            e.notes,
+            e.maintenance_plan,
+            e.item_type === 'zubehoer' ? 'zubehör zubehoer' : 'gerät geraet maschine',
+            e.status === 'faellig' ? 'wartung fällig faellig' : 'einsatzbereit'
+          ]
+        })
+      };
     });
-  }, [equipments, query]);
+  }, [equipments]);
+
+  const matchingEquipment = useMemo(() => {
+    if (!query) return equipments;
+    return indexedEquipment
+      .map(({ item, index }) => ({
+        item,
+        score: scoreSearchIndex(parsedQuery, index)
+      }))
+      .filter((entry) => entry.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .map((entry) => entry.item);
+  }, [indexedEquipment, equipments, parsedQuery, query]);
+
+  const indexedMaterials = useMemo(() => {
+    return materials.map((m) => ({
+      item: m,
+      index: buildSearchIndexEntry({
+        primary: [m.name, m.category],
+        secondary: [m.unit, formatAmountSearchable(m.price_per_unit)],
+        keywords: [m.notes, 'material']
+      })
+    }));
+  }, [materials]);
 
   const matchingMaterials = useMemo(() => {
-    return materials.filter((m) => {
-      if (!query) return true;
-      return matchesSearchQuery(query, [
-        m.name,
-        m.category,
-        m.unit,
-        m.notes,
-        m.price_per_unit
-      ]);
-    });
-  }, [materials, query]);
+    if (!query) return materials;
+    return indexedMaterials
+      .map(({ item, index }) => ({
+        item,
+        score: scoreSearchIndex(parsedQuery, index)
+      }))
+      .filter((entry) => entry.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .map((entry) => entry.item);
+  }, [indexedMaterials, materials, parsedQuery, query]);
 
   if (!isSearchOpen) return null;
 
@@ -270,6 +456,18 @@ export const SucheModal: React.FC = () => {
     setSelectedInvoiceId(id);
     setIsSearchOpen(false);
     navigate('M04_ABRECHNUNG');
+  };
+
+  const handleOpenWorkRecord = (id: string) => {
+    setSelectedWorkRecordId(id);
+    setIsSearchOpen(false);
+    navigate('M08_ARBEITEN');
+    setActiveModal('ARBEIT_BEARBEITEN');
+  };
+
+  const handleOpenAppointment = () => {
+    setIsSearchOpen(false);
+    navigate('M02_PLANUNG');
   };
 
   const handleOpenNav = (screen: ScreenId) => {
@@ -331,7 +529,7 @@ export const SucheModal: React.FC = () => {
             autoFocus
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Name, Ort, Tel., Arbeit, Rechnung suchen…"
+            placeholder="Name, #Kd-Nr., Ort, Arbeit, Monat, Betrag…"
             className="flex-1 bg-transparent border-none outline-hidden text-sm font-medium text-slate-950 placeholder:text-slate-400"
           />
           {searchQuery && (
@@ -412,7 +610,7 @@ export const SucheModal: React.FC = () => {
               Keine Treffer für „{searchQuery}“
             </p>
             <p className="text-xs text-slate-500">
-              Suche unterstützt Teilworte, Orte, Telefonnummern, Rechnungsnummern und Objektnamen.
+              Suche unterstützt Namen, Kundennummern (#), Orte, Monate, Beträge, Rechnungsnummern und Materialien.
             </p>
           </div>
         )}
@@ -443,6 +641,11 @@ export const SucheModal: React.FC = () => {
                         </div>
                         <div className="min-w-0">
                           <div className="flex items-center gap-1.5 flex-wrap">
+                            {c.customer_number && (
+                              <span className="px-1.5 py-0.5 bg-slate-100 text-slate-600 text-[10px] font-bold rounded shrink-0">
+                                #{c.customer_number}
+                              </span>
+                            )}
                             <span className="font-bold text-slate-950 text-sm leading-snug truncate">
                               {c.name}
                             </span>
@@ -481,7 +684,7 @@ export const SucheModal: React.FC = () => {
                     <button
                       key={a.id}
                       type="button"
-                      onClick={() => handleOpenNav('M02_PLANUNG')}
+                      onClick={() => handleOpenAppointment()}
                       className="w-full p-3 bg-white border border-slate-200 rounded-2xl flex items-center justify-between hover:border-[#3138A0] active:bg-slate-50 transition-colors text-left shadow-2xs"
                     >
                       <div className="flex items-center gap-3 min-w-0">
@@ -515,35 +718,44 @@ export const SucheModal: React.FC = () => {
             <div className="space-y-2">
               {matchingWork.slice(0, 20).map((w) => {
                 const cust = customerMap.get(w.customer_id);
+                const isBilled = Boolean(w.settlement_id);
                 return (
                   <button
                     key={w.id}
                     type="button"
-                    onClick={() => handleOpenNav('M08_ARBEITEN')}
-                    className="w-full p-3 bg-white border border-slate-200 rounded-2xl flex items-center justify-between hover:border-[#3138A0] active:bg-slate-50 transition-colors text-left shadow-2xs"
+                    onClick={() => handleOpenWorkRecord(w.id)}
+                    className="w-full px-3 py-2.5 bg-white border border-slate-200 rounded-2xl flex items-center justify-between hover:border-[#3138A0] active:bg-slate-50 transition-colors text-left shadow-2xs"
                   >
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className="w-9 h-9 rounded-xl bg-indigo-50 text-[#3138A0] flex items-center justify-center shrink-0">
-                        <Briefcase size={18} />
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className="w-8 h-8 rounded-xl bg-indigo-50 text-[#3138A0] flex items-center justify-center shrink-0">
+                        <Briefcase size={16} />
                       </div>
                       <div className="min-w-0">
                         <div className="flex items-center gap-1.5">
-                          <span className="font-bold text-slate-950 text-sm truncate">
+                          <span className="font-bold text-slate-950 text-[13px] truncate">
                             {w.title}
                           </span>
-                          {w.is_lcr && (
-                            <span className="px-1.5 py-0.5 bg-indigo-100 text-[#3138A0] text-[10px] font-bold rounded shrink-0">
+                          {isBilled ? (
+                            <span className="px-1.5 py-0.5 bg-emerald-50 text-[#2C7738] text-[10px] font-bold rounded shrink-0">
+                              Abger.
+                            </span>
+                          ) : w.is_lcr ? (
+                            <span className="px-1.5 py-0.5 bg-indigo-50 text-[#3138A0] text-[10px] font-bold rounded shrink-0">
                               L.C.R.
+                            </span>
+                          ) : (
+                            <span className="px-1.5 py-0.5 bg-orange-50 text-[#B4470B] text-[10px] font-bold rounded shrink-0">
+                              Offen
                             </span>
                           )}
                         </div>
-                        <span className="text-xs text-slate-600 block truncate">
+                        <span className="text-[11px] text-slate-600 block truncate">
                           {cust ? `${cust.name} · ` : ''}
                           {w.work_date} · {w.hours} Std.
                         </span>
                       </div>
                     </div>
-                    <span className="font-bold text-sm text-[#B4470B] shrink-0 pl-2 tabular-nums">
+                    <span className="font-bold text-[13px] text-[#B4470B] shrink-0 pl-2 tabular-nums">
                       {(w.accounting_amount || 0).toFixed(2)} €
                     </span>
                   </button>
@@ -580,7 +792,11 @@ export const SucheModal: React.FC = () => {
                             </span>
                             <span className="text-xs text-slate-600 block truncate">
                               Datum: {inv.issue_date} ·{' '}
-                              {inv.status === 'paid' ? 'Bezahlt' : 'Offen'}
+                              {inv.status === 'paid'
+                                ? 'Bezahlt'
+                                : inv.status === 'draft'
+                                  ? 'Entwurf'
+                                  : 'Offen'}
                             </span>
                           </div>
                         </div>
