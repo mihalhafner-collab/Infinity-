@@ -70,11 +70,415 @@ if (typeof window !== 'undefined') {
   void ensureHafnerLogoLoaded();
 }
 
-export const DEFAULT_INVOICE_INTRO_TEXT =
-  'Sehr geehrte Damen und Herren,\nvielen Dank für Ihren Auftrag und das damit verbundene Vertrauen!\nHiermit stelle ich Ihnen die folgenden Leistungen in Rechnung:';
+export const DEFAULT_INVOICE_INTRO_BODY =
+  'vielen Dank für Ihren Auftrag und das damit verbundene Vertrauen!\nHiermit stelle ich Ihnen die folgenden Leistungen in Rechnung:';
 
-export const DEFAULT_PAUSCHAL_INTRO_TEXT =
-  'Sehr geehrte Damen und Herren,\nvielen Dank für Ihren Auftrag und das damit verbundene Vertrauen!\nVereinbarungsgemäß stelle ich Ihnen für die durchgeführten Arbeiten folgende Pauschale in Rechnung:';
+export const DEFAULT_PAUSCHAL_INTRO_BODY =
+  'vielen Dank für Ihren Auftrag und das damit verbundene Vertrauen!\nVereinbarungsgemäß stelle ich Ihnen für die durchgeführten Arbeiten folgende Pauschale in Rechnung:';
+
+export const DEFAULT_INVOICE_INTRO_TEXT = `Sehr geehrte Damen und Herren,\n${DEFAULT_INVOICE_INTRO_BODY}`;
+
+export const DEFAULT_PAUSCHAL_INTRO_TEXT = `Sehr geehrte Damen und Herren,\n${DEFAULT_PAUSCHAL_INTRO_BODY}`;
+
+const FEMALE_FIRST_NAMES = new Set([
+  'adelheid', 'agnes', 'alexandra', 'alice', 'alma', 'amalia', 'amelie', 'andrea', 'anett', 'anette',
+  'angela', 'angelika', 'anita', 'anja', 'anna', 'annalena', 'anne', 'anneliese', 'annemarie', 'anni',
+  'annika', 'antonia', 'astrid', 'barbara', 'beate', 'beatrix', 'bernadette', 'bettina', 'bianca',
+  'birgit', 'brigitte', 'britta', 'carina', 'carmen', 'carola', 'carolin', 'caroline', 'charlotte',
+  'christa', 'christiana', 'christiane', 'christina', 'christine', 'clara', 'claudia', 'constanze',
+  'cordula', 'corinna', 'cornelia', 'dagmar', 'daniela', 'deborah', 'denise', 'diana', 'dora', 'doris',
+  'dorothea', 'edith', 'eleonore', 'elfriede', 'elisa', 'elisabeth', 'elke', 'ella', 'ellen', 'elsa',
+  'else', 'elvira', 'emilia', 'emilie', 'emma', 'erika', 'erna', 'esther', 'eva', 'eveline', 'evelyn',
+  'felicitas', 'franziska', 'frieda', 'friederike', 'gabi', 'gabriele', 'gerda', 'gerlinde', 'isabella',
+  'gertraud', 'gertrud', 'gertrude', 'gisela', 'grete', 'gudrun', 'hanna', 'hannah', 'hannelore',
+  'hedwig', 'heide', 'heidemarie', 'heidi', 'heike', 'helena', 'helene', 'helga', 'henriette', 'herma',
+  'hermine', 'herta', 'hertha', 'hilde', 'hildegard', 'ilona', 'ilse', 'ines', 'inge', 'ingeborg',
+  'ingrid', 'irene', 'iris', 'irma', 'irmgard', 'isabel', 'ivonne', 'jacqueline', 'jana', 'janine',
+  'jasmin', 'jennifer', 'jessica', 'johanna', 'josefa', 'josefine', 'judith', 'julia', 'juliane',
+  'jutta', 'karin', 'karla', 'karoline', 'arina', 'katharina', 'kathi', 'kathrin', 'katja', 'katrin',
+  'kerstin', 'klara', 'klaudia', 'kornelia', 'kristina', 'lara', 'larissa', 'laura', 'lea', 'lena',
+  'leonie', 'liane', 'lidia', 'lieselotte', 'lili', 'lilli', 'lina', 'linda', 'lisa', 'lotte', 'lucia',
+  'luise', 'luzia', 'lydia', 'magdalena', 'maja', 'manuela', 'margareta', 'margarete', 'margarethe',
+  'margit', 'margret', 'margrit', 'maria', 'marianna', 'marianne', 'marie', 'marina', 'marion',
+  'marlies', 'marlene', 'martha', 'martina', 'mathilde', 'melanie', 'melissa', 'michaela', 'michelle',
+  'miriam', 'monika', 'nadine', 'nadja', 'natalie', 'natascha', 'nicole', 'nina', 'nora', 'olga',
+  'olivia', 'patricia', 'patrizia', 'paula', 'pauline', 'petra', 'pia', 'ramona', 'rebekka', 'regina',
+  'renate', 'rita', 'romana', 'rosa', 'rosalia', 'rosalie', 'rosemarie', 'rosina', 'rosmarie',
+  'roswitha', 'ruth', 'sabina', 'sabine', 'sabrina', 'sandra', 'sara', 'sarah', 'selina', 'sibylle',
+  'sieglinde', 'sigrid', 'silke', 'silvia', 'simone', 'sofia', 'sofie', 'sonja', 'sophia', 'sophie',
+  'stefanie', 'stella', 'stephanie', 'susanna', 'susanne', 'susi', 'svenja', 'sylvia', 'tamara',
+  'tanja', 'tatjana', 'teresa', 'theresa', 'therese', 'theresia', 'traude', 'traudl', 'ulrike',
+  'ursula', 'ute', 'valentina', 'vanessa', 'vera', 'verena', 'veronika', 'victoria', 'viktoria',
+  'viola', 'walburga', 'walpurga', 'waltraud', 'waltraut', 'yvonne'
+]);
+
+const MALE_FIRST_NAMES = new Set([
+  'achim', 'adalbert', 'adam', 'adolf', 'adrian', 'albert', 'alexander', 'alfons', 'alfred', 'alois',
+  'andreas', 'anton', 'armin', 'arnold', 'arthur', 'august', 'axel', 'bastian', 'benedikt', 'benjamin',
+  'bernd', 'bernhard', 'berthold', 'björn', 'bruno', 'burkhard', 'carl', 'carsten', 'christian',
+  'christoph', 'christopher', 'claus', 'clemens', 'daniel', 'david', 'dennis', 'detlef', 'dieter',
+  'dietmar', 'dietrich', 'dirk', 'dominik', 'ebehard', 'eberhard', 'eckhard', 'edgar', 'eduard',
+  'edwin', 'egon', 'ekkehard', 'elmar', 'emanuel', 'emil', 'engelbert', 'erich', 'ernst', 'erwin',
+  'eugen', 'ewald', 'fabian', 'felix', 'ferdinand', 'florian', 'frank', 'franz', 'friedhelm',
+  'friedrich', 'fritz', 'georg', 'gerald', 'gerd', 'gerhard', 'gernot', 'gerold', 'gottfried',
+  'gotthard', 'gottlieb', 'gregor', 'guido', 'gunter', 'gunther', 'günter', 'günther', 'gustav',
+  'hannes', 'hans', 'hansjörg', 'harald', 'hartmut', 'hartwig', 'heinrich', 'heinz', 'helmut',
+  'helmuth', 'hendrik', 'henning', 'herbert', 'heribert', 'hermann', 'herwig', 'holger', 'horst',
+  'hubert', 'hubertus', 'hugo', 'ignaz', 'ingo', 'ingemar', 'jakob', 'jan', 'jens', 'joachim',
+  'jochen', 'johann', 'johannes', 'jonas', 'jonathan', 'jörg', 'josef', 'joseph', 'julian', 'julius',
+  'jürgen', 'kai', 'karl', 'karlheinz', 'karsten', 'kaspar', 'kevin', 'kilian', 'klaus', 'klemens',
+  'konrad', 'konstantin', 'kurt', 'lars', 'leo', 'leon', 'leonhard', 'leopold', 'lorenz', 'lothar',
+  'ludwig', 'lukas', 'lutz', 'manfred', 'manuel', 'marc', 'marcel', 'marco', 'marcus', 'mario',
+  'marius', 'mark', 'marko', 'markus', 'martin', 'mathias', 'matthias', 'max', 'maximilian', 'meinhard',
+  'michael', 'mihael', 'mihal', 'moritz', 'nikolaus', 'niko', 'norbert', 'olaf', 'oliver', 'oskar',
+  'oswald', 'otmar', 'othmar', 'otto', 'pascal', 'patrick', 'paul', 'peter', 'philipp', 'phillip',
+  'raimund', 'rainer', 'ralf', 'ralph', 'reimund', 'reinhard', 'reinhold', 'rené', 'rene', 'richard',
+  'robert', 'roland', 'rolf', 'roman', 'ronald', 'rüdiger', 'rudolf', 'rupert', 'sascha', 'sebastian',
+  'sepp', 'siegfried', 'sieghard', 'sigmund', 'simon', 'stefan', 'stephan', 'steffen', 'sven', 'theo',
+  'theodor', 'thomas', 'thorsten', 'tilo', 'tim', 'timo', 'tobias', 'tom', 'torsten', 'udo', 'ulrich',
+  'uwe', 'valentin', 'viktor', 'vinzenz', 'volker', 'walter', 'walther', 'werner', 'wilfried',
+  'wilhelm', 'willi', 'willy', 'winfried', 'wolfgang', 'wolfram'
+]);
+
+const COMPANY_KEYWORDS_REGEX =
+  /\b(gmbh|gesmbh|ges\.m\.b\.h|kg|og|ag|e\.u\.|keg|gbr|ohg|verein|verband|stiftung|genossenschaft|gemeinde|stadtgemeinde|marktgemeinde|stadt|caritas|diakonie|hilfswerk|rotes\s+kreuz|lebenshilfe|pfarre|kirche|schule|kindergarten|hausverwaltung|hv|immobilien|immo|wohnungseigentum|weg|wohnanlage|bau|baufirma|holzbau|metallbau|kfz|autohaus|werkstatt|spedition|transport|hotel|gasthof|pension|restaurant|apotheke|praxis|ordination|kanzlei|notariat|steuerberatung|bank|sparkasse|raiffeisen|volksbank|versicherung|gärtnerei|baumschule|forst|gutsverwaltung|firma|betrieb|service|technik|elektro|sanitär|maler|tischlerei|zimmerei|reinigung|holding|group|center|zentrum|studio|agentur|handel|co\.|&\s*co)\b/i;
+
+const ACADEMIC_TITLE_MAP: Record<string, string> = {
+  'dr': 'Dr.',
+  'ddr': 'DDr.',
+  'mag': 'Mag.',
+  'mmag': 'MMag.',
+  'di': 'DI',
+  'dipl-ing': 'Dipl.-Ing.',
+  'dipl.ing': 'Dipl.-Ing.',
+  'ing': 'Ing.',
+  'prof': 'Prof.',
+  'univ-prof': 'Univ.-Prof.',
+  'dkfm': 'Dkfm.',
+  'kommr': 'KommR',
+  'ökr': 'ÖkR',
+  'bgm': 'Bgm.'
+};
+
+const IGNORED_DEGREE_TOKENS = new Set([
+  'ba', 'ma', 'bsc', 'msc', 'mba', 'llm', 'll.m', 'fh', '(fh)', 'bed', 'med', 'phd', 'jun', 'sen', 'jr', 'sr'
+]);
+
+export interface DetectedSalutation {
+  type: 'female' | 'male' | 'family' | 'company' | 'unknown';
+  title: string;
+  firstName: string;
+  lastName: string;
+  salutationLine: string;
+  frauLine: string;
+  herrLine: string;
+  familyLine: string;
+  duLine: string;
+  companyLine: string;
+}
+
+function checkFirstNameGender(rawToken: string): 'female' | 'male' | null {
+  const cleaned = rawToken
+    .toLowerCase()
+    .replace(/[^a-zäöüß-]/g, '')
+    .trim();
+  if (!cleaned || cleaned.length < 2) return null;
+  if (FEMALE_FIRST_NAMES.has(cleaned)) return 'female';
+  if (MALE_FIRST_NAMES.has(cleaned)) return 'male';
+  if (cleaned.includes('-')) {
+    const firstPart = cleaned.split('-')[0];
+    if (FEMALE_FIRST_NAMES.has(firstPart)) return 'female';
+    if (MALE_FIRST_NAMES.has(firstPart)) return 'male';
+  }
+  return null;
+}
+
+export function detectRecipientSalutation(recipientName: string): DetectedSalutation {
+  const raw = (recipientName || '').trim();
+  const defaultResult: DetectedSalutation = {
+    type: 'unknown',
+    title: '',
+    firstName: '',
+    lastName: raw || 'Kunde',
+    salutationLine: 'Sehr geehrte Damen und Herren,',
+    frauLine: 'Sehr geehrte Frau,',
+    herrLine: 'Sehr geehrter Herr,',
+    familyLine: 'Sehr geehrte Familie,',
+    duLine: 'Hallo,',
+    companyLine: 'Sehr geehrte Damen und Herren,'
+  };
+
+  if (!raw) return defaultResult;
+
+  // 1. Firmen / Organisationen / Hausverwaltungen / KFZ / Caritas etc. erkennen
+  const isCompany = COMPANY_KEYWORDS_REGEX.test(raw);
+
+  // Entferne evtl. Klammerzusätze am Ende wie "(Hauptkunde)" oder "(Objekt ...)"
+  const withoutParens = raw.replace(/\s*\([^)]*\)\s*/g, ' ').replace(/\s+/g, ' ').trim();
+
+  // 2. Explizite Präfixe prüfen: "Familie ...", "Frau ...", "Herr ..."
+  const famMatch = withoutParens.match(/^(?:familie|fam\.?)\s+(.+)$/i);
+  if (famMatch) {
+    const famRest = famMatch[1].trim();
+    const parts = famRest.split(/\s+/);
+    const lastName = parts[parts.length - 1] || famRest;
+    return {
+      type: 'family',
+      title: '',
+      firstName: '',
+      lastName,
+      salutationLine: `Sehr geehrte Familie ${lastName},`,
+      frauLine: `Sehr geehrte Frau ${lastName},`,
+      herrLine: `Sehr geehrter Herr ${lastName},`,
+      familyLine: `Sehr geehrte Familie ${lastName},`,
+      duLine: `Liebe Familie ${lastName},`,
+      companyLine: 'Sehr geehrte Damen und Herren,'
+    };
+  }
+
+  const frauMatch = withoutParens.match(/^(?:frau|fr\.?)\s+(.+)$/i);
+  if (frauMatch && !isCompany) {
+    const rest = frauMatch[1].trim();
+    const parts = rest.split(/\s+/);
+    const lastName = parts[parts.length - 1] || rest;
+    const firstName = parts.length > 1 ? parts[0] : '';
+    return {
+      type: 'female',
+      title: '',
+      firstName,
+      lastName,
+      salutationLine: `Sehr geehrte Frau ${lastName},`,
+      frauLine: `Sehr geehrte Frau ${lastName},`,
+      herrLine: `Sehr geehrter Herr ${lastName},`,
+      familyLine: `Sehr geehrte Familie ${lastName},`,
+      duLine: firstName ? `Liebe ${firstName},` : `Guten Tag Frau ${lastName},`,
+      companyLine: 'Sehr geehrte Damen und Herren,'
+    };
+  }
+
+  const herrMatch = withoutParens.match(/^(?:herrn?|hr\.?)\s+(.+)$/i);
+  if (herrMatch && !isCompany) {
+    const rest = herrMatch[1].trim();
+    const parts = rest.split(/\s+/);
+    const lastName = parts[parts.length - 1] || rest;
+    const firstName = parts.length > 1 ? parts[0] : '';
+    return {
+      type: 'male',
+      title: '',
+      firstName,
+      lastName,
+      salutationLine: `Sehr geehrter Herr ${lastName},`,
+      frauLine: `Sehr geehrte Frau ${lastName},`,
+      herrLine: `Sehr geehrter Herr ${lastName},`,
+      familyLine: `Sehr geehrte Familie ${lastName},`,
+      duLine: firstName ? `Lieber ${firstName},` : `Guten Tag Herr ${lastName},`,
+      companyLine: 'Sehr geehrte Damen und Herren,'
+    };
+  }
+
+  if (isCompany) {
+    return {
+      type: 'company',
+      title: '',
+      firstName: '',
+      lastName: withoutParens,
+      salutationLine: 'Sehr geehrte Damen und Herren,',
+      frauLine: `Sehr geehrte Frau ${withoutParens},`,
+      herrLine: `Sehr geehrter Herr ${withoutParens},`,
+      familyLine: `Sehr geehrte Familie ${withoutParens},`,
+      duLine: `Liebes Team von ${withoutParens},`,
+      companyLine: 'Sehr geehrte Damen und Herren,'
+    };
+  }
+
+  // 3. Ehepaare / Zwei Personen ("Hans und Maria Gruber", "Sabine & Thomas Leitner")
+  if (/\s+(?:und|&|\+)\s+/i.test(withoutParens)) {
+    const tokens = withoutParens.split(/\s+/).filter(Boolean);
+    const lastName = tokens[tokens.length - 1] || withoutParens;
+    return {
+      type: 'family',
+      title: '',
+      firstName: '',
+      lastName,
+      salutationLine: `Sehr geehrte Familie ${lastName},`,
+      frauLine: `Sehr geehrte Frau ${lastName},`,
+      herrLine: `Sehr geehrter Herr ${lastName},`,
+      familyLine: `Sehr geehrte Familie ${lastName},`,
+      duLine: `Liebe Familie ${lastName},`,
+      companyLine: 'Sehr geehrte Damen und Herren,'
+    };
+  }
+
+  // 4. Akademische Titel extrahieren ("Dr.", "Mag.", "DI", "Ing.", etc.)
+  const rawTokens = withoutParens.split(/\s+/).filter(Boolean);
+  const foundTitles: string[] = [];
+  const nameTokens: string[] = [];
+
+  for (const tok of rawTokens) {
+    const norm = tok.toLowerCase().replace(/\./g, '').replace(/,/g, '');
+    if (ACADEMIC_TITLE_MAP[norm]) {
+      foundTitles.push(ACADEMIC_TITLE_MAP[norm]);
+    } else if (IGNORED_DEGREE_TOKENS.has(norm)) {
+      // nachgestellte Grade wie BSc/MSc ignorieren
+    } else {
+      nameTokens.push(tok);
+    }
+  }
+
+  const titlePrefix = foundTitles.length > 0 ? `${foundTitles.join(' ')} ` : '';
+
+  if (nameTokens.length === 0) {
+    return defaultResult;
+  }
+
+  // Einzelwort (z.B. nur Nachname "Gruber")
+  if (nameTokens.length === 1) {
+    const single = nameTokens[0].replace(/,/g, '');
+    const gender = checkFirstNameGender(single);
+    if (gender === 'female') {
+      return {
+        type: 'female',
+        title: foundTitles.join(' '),
+        firstName: single,
+        lastName: single,
+        salutationLine: `Sehr geehrte Frau ${titlePrefix}${single},`,
+        frauLine: `Sehr geehrte Frau ${titlePrefix}${single},`,
+        herrLine: `Sehr geehrter Herr ${titlePrefix}${single},`,
+        familyLine: `Sehr geehrte Familie ${single},`,
+        duLine: `Liebe ${single},`,
+        companyLine: 'Sehr geehrte Damen und Herren,'
+      };
+    }
+    if (gender === 'male') {
+      return {
+        type: 'male',
+        title: foundTitles.join(' '),
+        firstName: single,
+        lastName: single,
+        salutationLine: `Sehr geehrter Herr ${titlePrefix}${single},`,
+        frauLine: `Sehr geehrte Frau ${titlePrefix}${single},`,
+        herrLine: `Sehr geehrter Herr ${titlePrefix}${single},`,
+        familyLine: `Sehr geehrte Familie ${single},`,
+        duLine: `Lieber ${single},`,
+        companyLine: 'Sehr geehrte Damen und Herren,'
+      };
+    }
+    return {
+      type: 'family',
+      title: foundTitles.join(' '),
+      firstName: '',
+      lastName: single,
+      salutationLine: `Sehr geehrte Familie ${single},`,
+      frauLine: `Sehr geehrte Frau ${titlePrefix}${single},`,
+      herrLine: `Sehr geehrter Herr ${titlePrefix}${single},`,
+      familyLine: `Sehr geehrte Familie ${single},`,
+      duLine: `Hallo ${single},`,
+      companyLine: 'Sehr geehrte Damen und Herren,'
+    };
+  }
+
+  // Mehrere Wörter: Prüfe "Nachname, Vorname" (mit Beistrich) oder "Vorname Nachname" vs. "Nachname Vorname"
+  const firstTok = nameTokens[0];
+  const lastTok = nameTokens[nameTokens.length - 1].replace(/,/g, '');
+  const hasCommaAfterFirst = firstTok.endsWith(',');
+  const cleanFirstTok = firstTok.replace(/,/g, '');
+
+  const firstGender = checkFirstNameGender(cleanFirstTok);
+  const lastGender = checkFirstNameGender(lastTok);
+
+  let detectedGender: 'female' | 'male' | null = null;
+  let firstName = '';
+  let lastName = lastTok;
+
+  if (hasCommaAfterFirst && lastGender) {
+    // "Pirker, Johann"
+    detectedGender = lastGender;
+    lastName = cleanFirstTok;
+    firstName = lastTok;
+  } else if (firstGender) {
+    // Standard "Johann Pirker" oder "Claudia Kogler"
+    detectedGender = firstGender;
+    firstName = cleanFirstTok;
+    lastName = lastTok;
+  } else if (lastGender) {
+    // Österreichische Schreibweise "Pirker Johann" oder "Kogler Claudia"
+    detectedGender = lastGender;
+    lastName = cleanFirstTok;
+    firstName = lastTok;
+  }
+
+  if (detectedGender === 'female') {
+    return {
+      type: 'female',
+      title: foundTitles.join(' '),
+      firstName,
+      lastName,
+      salutationLine: `Sehr geehrte Frau ${titlePrefix}${lastName},`,
+      frauLine: `Sehr geehrte Frau ${titlePrefix}${lastName},`,
+      herrLine: `Sehr geehrter Herr ${titlePrefix}${lastName},`,
+      familyLine: `Sehr geehrte Familie ${lastName},`,
+      duLine: firstName ? `Liebe ${firstName},` : `Liebe Frau ${lastName},`,
+      companyLine: 'Sehr geehrte Damen und Herren,'
+    };
+  }
+
+  if (detectedGender === 'male') {
+    return {
+      type: 'male',
+      title: foundTitles.join(' '),
+      firstName,
+      lastName,
+      salutationLine: `Sehr geehrter Herr ${titlePrefix}${lastName},`,
+      frauLine: `Sehr geehrte Frau ${titlePrefix}${lastName},`,
+      herrLine: `Sehr geehrter Herr ${titlePrefix}${lastName},`,
+      familyLine: `Sehr geehrte Familie ${lastName},`,
+      duLine: firstName ? `Lieber ${firstName},` : `Lieber Herr ${lastName},`,
+      companyLine: 'Sehr geehrte Damen und Herren,'
+    };
+  }
+
+  // Falls Initiale wie "M. Gruber" -> Nachname erkannt, Familie/Direktansprache als Standard + 1-Tipp für Frau/Herr Gruber
+  return {
+    type: 'unknown',
+    title: foundTitles.join(' '),
+    firstName: cleanFirstTok,
+    lastName,
+    salutationLine: `Sehr geehrte Familie ${lastName},`,
+    frauLine: `Sehr geehrte Frau ${titlePrefix}${lastName},`,
+    herrLine: `Sehr geehrter Herr ${titlePrefix}${lastName},`,
+    familyLine: `Sehr geehrte Familie ${lastName},`,
+    duLine: `Hallo ${withoutParens},`,
+    companyLine: 'Sehr geehrte Damen und Herren,'
+  };
+}
+
+export function replaceIntroSalutation(introText: string, newSalutationLine: string): string {
+  const trimmed = (introText || '').trim();
+  const salutation = newSalutationLine.trim().endsWith(',')
+    ? newSalutationLine.trim()
+    : `${newSalutationLine.trim()},`;
+  if (!trimmed) {
+    return `${salutation}\n${DEFAULT_INVOICE_INTRO_BODY}`;
+  }
+  const lines = trimmed.split(/\r?\n/);
+  if (
+    lines.length > 0 &&
+    /^(sehr\s+geehrte|liebe|guten\s+tag|hallo)/i.test(lines[0].trim())
+  ) {
+    lines[0] = salutation;
+    return lines.join('\n');
+  }
+  return `${salutation}\n${trimmed}`;
+}
+
+export function buildPersonalizedIntroText(
+  recipientName: string,
+  isPauschal = false
+): string {
+  const { salutationLine } = detectRecipientSalutation(recipientName);
+  const body = isPauschal ? DEFAULT_PAUSCHAL_INTRO_BODY : DEFAULT_INVOICE_INTRO_BODY;
+  return `${salutationLine}\n${body}`;
+}
 
 export interface ResolvedInvoiceData {
   invoiceNumber: string;
@@ -369,6 +773,22 @@ export function resolveInvoiceDisplayData(
     invoice.service_period || computeServicePeriod(boundRecords, invoice.issue_date);
 
   const dueIso = invoice.due_date || addDaysIso(invoice.issue_date, 14);
+  const recipientName = invoice.billing_customer_name || customer?.name || 'Kunde';
+  const detectedSalutation = detectRecipientSalutation(recipientName);
+
+  let resolvedIntroText = invoice.intro_text?.trim() || '';
+  if (!resolvedIntroText) {
+    resolvedIntroText = buildPersonalizedIntroText(recipientName, Boolean(invoice.is_pauschal));
+  } else if (
+    detectedSalutation.type !== 'company' &&
+    detectedSalutation.type !== 'unknown' &&
+    /^sehr\s+geehrte\s+damen\s+und\s+herren,/i.test(resolvedIntroText)
+  ) {
+    resolvedIntroText = replaceIntroSalutation(
+      resolvedIntroText,
+      detectedSalutation.salutationLine
+    );
+  }
 
   return {
     invoiceNumber: invoice.invoice_number,
@@ -381,14 +801,14 @@ export function resolveInvoiceDisplayData(
       customer?.customer_number?.trim() ||
       resolveCustomerNumber(invoice.customer_id, customers),
     contactPerson: ISSUER_CONTACT_PERSON,
-    recipientName: invoice.billing_customer_name || customer?.name || 'Kunde',
+    recipientName,
     recipientStreet: invoice.recipient_street ?? customer?.street ?? '',
     recipientZip: invoice.recipient_zip ?? customer?.zip ?? '',
     recipientCity: invoice.recipient_city ?? customer?.city ?? '',
     recipientCountry: 'Österreich',
     servicePeriod,
     subjectText: invoice.subject_text?.trim() || undefined,
-    introText: invoice.intro_text?.trim() || undefined,
+    introText: resolvedIntroText,
     closingText: invoice.closing_text?.trim() || undefined,
     isPauschal: invoice.is_pauschal,
     lineItems,
@@ -565,14 +985,15 @@ export function generateInvoicePdf(
         : `Rechnungs Nr. ${data.invoiceNumber}`);
   doc.text(resolvedSubject, contentLeftX, y);
 
-  // Anschreiben / Einleitungstext
+  // Anschreiben / Einleitungstext mit direkter Empfänger-Ansprache
   y = 109;
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(9.5);
   doc.setTextColor(20, 20, 20);
+  const recipientSalutationLine = detectRecipientSalutation(data.recipientName).salutationLine;
 
   if (data.isStorno) {
-    doc.text('Sehr geehrte Damen und Herren,', contentLeftX, y);
+    doc.text(recipientSalutationLine, contentLeftX, y);
     y += 7.5;
     doc.text(
       `hiermit stornieren wir die betreffende Abrechnung (${data.stornoReason || 'Korrektur'}):`,
@@ -594,7 +1015,7 @@ export function generateInvoicePdf(
     }
     y += 3;
   } else {
-    doc.text('Sehr geehrte Damen und Herren,', contentLeftX, y);
+    doc.text(recipientSalutationLine, contentLeftX, y);
     y += 7.5;
     doc.text('vielen Dank für Ihren Auftrag und das damit verbundene Vertrauen!', contentLeftX, y);
     y += 4.5;

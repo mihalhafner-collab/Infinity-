@@ -162,7 +162,8 @@ export const PlanungView: React.FC = () => {
     setPrefilledWorkTitle,
     setActiveModal,
     navigate,
-    registerLocalBackLayer
+    registerLocalBackLayer,
+    syncCalendarNow
   } = useApp();
 
   const todayIso = useMemo(() => toLocalIsoDate(new Date()), []);
@@ -242,6 +243,7 @@ export const PlanungView: React.FC = () => {
       setIsLoadingCalendar(true);
       setCalendarError(null);
       try {
+        await syncCalendarNow(forceRefresh);
         const items = await fetchGoogleCalendarEvents(fetchStartIso, fetchEndIso, forceRefresh);
         setGoogleEvents(items);
         if (isNativeAndroid) {
@@ -260,7 +262,7 @@ export const PlanungView: React.FC = () => {
         setIsLoadingCalendar(false);
       }
     },
-    [isNativeAndroid, hasGoogleToken, fetchStartIso, fetchEndIso]
+    [isNativeAndroid, hasGoogleToken, fetchStartIso, fetchEndIso, syncCalendarNow]
   );
 
   useEffect(() => {
@@ -294,7 +296,9 @@ export const PlanungView: React.FC = () => {
     appointments.forEach((a) => {
       const match = a.notes?.match(/\[gcal:([^\]]+)\]/);
       if (match?.[1]) {
-        keys.add(`${match[1]}_${a.date}`);
+        const gid = match[1].trim();
+        keys.add(`${gid}_${a.date}`);
+        keys.add(gid);
       }
     });
     return keys;
@@ -328,28 +332,39 @@ export const PlanungView: React.FC = () => {
       appRecord: a
     }));
 
-    const gcalItems: UnifiedPlanItem[] = googleEvents.map((g) => ({
-      uid: g.id,
-      source: 'google',
-      title: g.title,
-      date: g.date,
-      start_time: g.start_time,
-      end_time: g.end_time,
-      duration_minutes: g.duration_minutes,
-      is_all_day: g.is_all_day,
-      customer_id: null,
-      property_id: null,
-      address: g.address,
-      notes: g.notes,
-      googleRecord: g
-    }));
+    // Bereits in App-Termine synchronisierte Google-Termine nicht doppelt anzeigen
+    const gcalItems: UnifiedPlanItem[] = googleEvents
+      .filter(
+        (g) =>
+          !importedGoogleKeys.has(`${g.googleEventId}_${g.date}`) &&
+          !importedGoogleKeys.has(g.googleEventId)
+      )
+      .map((g) => ({
+        uid: g.id,
+        source: 'google',
+        title: g.title,
+        date: g.date,
+        start_time: g.start_time,
+        end_time: g.end_time,
+        duration_minutes: g.duration_minutes,
+        is_all_day: g.is_all_day,
+        customer_id: null,
+        property_id: null,
+        address: g.address,
+        notes: g.notes,
+        googleRecord: g
+      }));
 
     return [...appItems, ...gcalItems];
-  }, [appointments, googleEvents]);
+  }, [appointments, googleEvents, importedGoogleKeys]);
 
   const filteredUnifiedItems = useMemo(() => {
     if (sourceFilter === 'app') return allUnifiedItems.filter((i) => i.source === 'app');
-    if (sourceFilter === 'google') return allUnifiedItems.filter((i) => i.source === 'google');
+    if (sourceFilter === 'google') {
+      return allUnifiedItems.filter(
+        (i) => i.source === 'google' || Boolean(i.appRecord?.notes?.match(/\[gcal:([^\]]+)\]/))
+      );
+    }
     return allUnifiedItems;
   }, [allUnifiedItems, sourceFilter]);
 
@@ -847,6 +862,13 @@ export const PlanungView: React.FC = () => {
                                 >
                                   {item.source === 'app' ? 'App-Termin' : 'Google Kalender'}
                                 </span>
+
+                                {item.source === 'app' &&
+                                  Boolean(item.appRecord?.notes?.match(/\[gcal:([^\]]+)\]/)) && (
+                                    <span className="px-1.5 py-0.5 rounded bg-emerald-50 text-[#0B8043] text-[10px] font-bold">
+                                      G-Sync
+                                    </span>
+                                  )}
 
                                 {isConflict && (
                                   <span className="px-1.5 py-0.5 rounded bg-red-100 text-[#B42318] text-[10px] font-bold">
@@ -1640,7 +1662,7 @@ export const PlanungView: React.FC = () => {
 
         {/* Ansicht-Umschalter [Tag | Woche | Tour] direkt in der unteren Aktionsleiste zwischen Suche & Plus */}
         <BottomActionBar>
-          <div className="w-full max-w-[248px] flex items-center p-1 bg-slate-100 rounded-2xl">
+          <div className="w-full flex items-center p-1 bg-slate-100 rounded-2xl">
             <button
               type="button"
               onClick={() => setActiveTab('tag')}

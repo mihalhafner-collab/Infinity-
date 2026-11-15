@@ -998,14 +998,25 @@ function mutateUpsertOnSnapshotInner(
           ? round2(rawMaterials.reduce((s, m) => s + (m.total || 0), 0))
           : null;
 
-    const accountingAmount =
-      payload.accounting_amount !== undefined && existingIdx < 0
-        ? payload.accounting_amount === null
-          ? null
-          : round2(Number(payload.accounting_amount))
-        : hourlyRate !== null
-          ? round2(hours * hourlyRate + (materialCost || 0))
-          : null;
+    let reconciledHours = hours;
+    let accountingAmount: number | null;
+    if (payload.accounting_amount !== undefined) {
+      accountingAmount =
+        payload.accounting_amount === null ? null : round2(Number(payload.accounting_amount));
+      if (
+        payload.hours === undefined &&
+        accountingAmount !== null &&
+        hourlyRate !== null &&
+        hourlyRate > 0 &&
+        (!materialCost || materialCost === 0)
+      ) {
+        reconciledHours = round2(accountingAmount / hourlyRate);
+      }
+    } else if (hourlyRate !== null) {
+      accountingAmount = round2(reconciledHours * hourlyRate + (materialCost || 0));
+    } else {
+      accountingAmount = prev?.accounting_amount ?? null;
+    }
 
     const nextIsLcr = prev?.settlement_id
       ? prev.is_lcr
@@ -1037,7 +1048,7 @@ function mutateUpsertOnSnapshotInner(
           ? (payload.appointment_id as string | null)
           : (prev?.appointment_id ?? null),
       session_id: prev?.session_id ?? null,
-      hours,
+      hours: reconciledHours,
       start_time: String(payload.start_time ?? prev?.start_time ?? '07:00'),
       end_time: String(payload.end_time ?? prev?.end_time ?? '16:00'),
       break_minutes:
@@ -1075,28 +1086,103 @@ function mutateUpsertOnSnapshotInner(
     if (existingIdx >= 0) next.workRecords[existingIdx] = record;
     else next.workRecords.unshift(record);
 
-    // Recalculate bound invoice if editing an already-settled WorkRecord (identical to AppContext.updateWorkRecord)
-    if (record.settlement_id) {
-      const sid = record.settlement_id;
-      next.invoices = next.invoices.map((inv) => {
-        if (inv.id !== sid || inv.is_storno) return inv;
-        const boundSum = round2(
-          next.workRecords
-            .filter((r) => r.settlement_id === sid)
-            .reduce((s, r) => s + (r.accounting_amount || 0), 0)
+    const prevSettlementId = prev?.settlement_id || null;
+    const nextSettlementId = record.settlement_id;
+
+    // Synchronize all affected invoices (line_items, work_record_ids, total_amount, status)
+    next.invoices = next.invoices.map((inv) => {
+      if (inv.is_storno) return inv;
+      const wasInInv =
+        inv.id === prevSettlementId ||
+        inv.work_record_ids.includes(id) ||
+        (inv.line_items || []).some((li) => li.id === `li-${id}`);
+      const isNowInInv =
+        inv.id === nextSettlementId ||
+        (payload.settlement_id === undefined && inv.work_record_ids.includes(id));
+
+      if (!wasInInv && !isNowInInv) return inv;
+
+      if (payload.settlement_id === null && wasInInv) {
+        const nextWorkIds = inv.work_record_ids.filter((wid) => wid !== id);
+        const nextLineItems = (inv.line_items || []).filter((li) => li.id !== `li-${id}`);
+        const boundRecords = next.workRecords.filter(
+          (r) => r.settlement_id === inv.id || nextWorkIds.includes(r.id)
         );
+        const nextTotal =
+          nextLineItems.length > 0 && !inv.is_pauschal
+            ? round2(nextLineItems.reduce((s, li) => s + li.amount, 0))
+            : round2(boundRecords.reduce((s, r) => s + (r.accounting_amount || 0), 0));
         const paidSum = round2(inv.payments.reduce((s, p) => s + p.amount, 0));
         const nextStatus: Invoice['status'] =
           inv.status === 'cancelled'
             ? 'cancelled'
-            : paidSum >= boundSum && boundSum > 0
+            : paidSum >= nextTotal && nextTotal > 0
               ? 'paid'
               : paidSum > 0
                 ? 'partially_paid'
                 : 'unpaid';
-        return { ...inv, total_amount: boundSum, status: nextStatus };
-      });
-    }
+        return {
+          ...inv,
+          work_record_ids: nextWorkIds,
+          line_items: nextLineItems,
+          total_amount: nextTotal,
+          status: nextStatus
+        };
+      }
+
+      const rebuiltItem = buildLineItemsFromRecords([record], [], {
+        billingCustomerId: inv.customer_id,
+        customers: next.customers,
+        properties: next.properties
+      })[0];
+
+      const nextWorkIds = inv.work_record_ids.includes(id)
+        ? inv.work_record_ids
+        : [...inv.work_record_ids, id];
+      let nextLineItems = inv.line_items ? [...inv.line_items] : [];
+      if (rebuiltItem && !inv.is_pauschal) {
+        const liIdx = nextLineItems.findIndex((li) => li.id === `li-${id}`);
+        if (liIdx >= 0) {
+          nextLineItems[liIdx] = rebuiltItem;
+        } else if (nextLineItems.length > 0) {
+          nextLineItems.push(rebuiltItem);
+        }
+      }
+
+      const boundRecords = next.workRecords.filter(
+        (r) => r.settlement_id === inv.id || nextWorkIds.includes(r.id)
+      );
+      const boundSum = round2(boundRecords.reduce((s, r) => s + (r.accounting_amount || 0), 0));
+      const extraSum = !inv.is_pauschal
+        ? round2(
+            nextLineItems
+              .filter((li) => !li.id.startsWith('li-') && li.id !== 'pauschal-main')
+              .reduce((s, li) => s + li.amount, 0)
+          )
+        : 0;
+      const nextTotal = inv.is_pauschal
+        ? boundSum > 0
+          ? boundSum
+          : inv.total_amount
+        : round2(boundSum + extraSum);
+
+      const paidSum = round2(inv.payments.reduce((s, p) => s + p.amount, 0));
+      const nextStatus: Invoice['status'] =
+        inv.status === 'cancelled'
+          ? 'cancelled'
+          : paidSum >= nextTotal && nextTotal > 0
+            ? 'paid'
+            : paidSum > 0
+              ? 'partially_paid'
+              : 'unpaid';
+      return {
+        ...inv,
+        work_record_ids: nextWorkIds,
+        line_items: nextLineItems,
+        total_amount: nextTotal,
+        status: nextStatus
+      };
+    });
 
     return {
       action: existingIdx >= 0 ? 'updated' : 'created',
@@ -1156,11 +1242,26 @@ function mutateUpsertOnSnapshotInner(
             w.settlement_id === existing.id ? { ...w, settlement_id: null } : w
           );
         } else if (existing.status === 'cancelled' && nextStatus !== 'cancelled') {
+          const targetIds = Array.isArray(patch.work_record_ids)
+            ? patch.work_record_ids
+            : existing.work_record_ids;
           next.workRecords = next.workRecords.map((w) =>
-            existing.work_record_ids.includes(w.id) && !w.settlement_id && !w.is_lcr
+            targetIds.includes(w.id) && !w.settlement_id && !w.is_lcr
               ? { ...w, settlement_id: existing.id }
               : w
           );
+        } else if (Array.isArray(patch.work_record_ids) && nextStatus !== 'cancelled') {
+          const nextSet = new Set(patch.work_record_ids);
+          const prevSet = new Set(existing.work_record_ids);
+          next.workRecords = next.workRecords.map((w) => {
+            if (nextSet.has(w.id) && w.settlement_id !== existing.id) {
+              return { ...w, settlement_id: existing.id, is_lcr: false, updated_at: nowIso };
+            }
+            if (!nextSet.has(w.id) && (w.settlement_id === existing.id || prevSet.has(w.id))) {
+              return { ...w, settlement_id: null, updated_at: nowIso };
+            }
+            return w;
+          });
         }
       }
 
@@ -1211,8 +1312,14 @@ function mutateUpsertOnSnapshotInner(
         ? round2(Number(payload.total_amount))
         : round2(lineItems.reduce((s, li) => s + Number(li.amount || 0), 0));
 
+    const newInvId =
+      requestedId || `inv-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const workRecordIds = Array.isArray(payload.work_record_ids)
+      ? (payload.work_record_ids as string[])
+      : [];
+
     const newInv: Invoice = {
-      id: requestedId || `inv-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      id: newInvId,
       invoice_number: invNumber,
       customer_id: cust.id,
       customer_number:
@@ -1237,9 +1344,7 @@ function mutateUpsertOnSnapshotInner(
       paid_in_cash: Boolean(payload.paid_in_cash),
       total_amount: totalAmount,
       status: (payload.status as Invoice['status']) || 'unpaid',
-      work_record_ids: Array.isArray(payload.work_record_ids)
-        ? (payload.work_record_ids as string[])
-        : [],
+      work_record_ids: workRecordIds,
       is_storno: Boolean(payload.is_storno),
       storno_reference_id: (payload.storno_reference_id as string | null) ?? null,
       storno_reason: (payload.storno_reason as string | null) ?? null,
@@ -1248,6 +1353,14 @@ function mutateUpsertOnSnapshotInner(
       sent_at: (payload.sent_at as string | null) ?? null,
       sent_via: (payload.sent_via as string | null) ?? null
     };
+    if (!newInv.is_storno && newInv.status !== 'cancelled' && workRecordIds.length > 0) {
+      const boundSet = new Set(workRecordIds);
+      next.workRecords = next.workRecords.map((w) =>
+        boundSet.has(w.id)
+          ? { ...w, settlement_id: newInv.id, is_lcr: false, updated_at: nowIso }
+          : w
+      );
+    }
     next.invoices.unshift(newInv);
     return {
       action: 'created',

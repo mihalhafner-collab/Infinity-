@@ -44,7 +44,11 @@ import {
   getTodayLocalIso,
   resolveCustomerNumber
 } from '../../utils/invoicePdf.ts';
-import { matchesSearchQuery } from '../../utils/searchUtils.ts';
+import {
+  buildSearchIndexEntry,
+  parseSearchQuery,
+  scoreSearchIndex
+} from '../../utils/searchUtils.ts';
 
 function buildMapsUrl(addressQuery: string): string {
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(addressQuery)}`;
@@ -118,7 +122,7 @@ export const KundenView: React.FC = () => {
   const [confirmDeleteCustomer, setConfirmDeleteCustomer] = useState(false);
   const [previewPhoto, setPreviewPhoto] = useState<string | null>(null);
   const [showCombinedAmounts, setShowCombinedAmounts] = useState(false);
-  const [workStatusFilter, setWorkStatusFilter] = useState<'all' | 'open' | 'billed'>('all');
+  const [workStatusFilter, setWorkStatusFilter] = useState<'all' | 'open' | 'billed' | 'lcr'>('all');
   const [appointmentFilter, setAppointmentFilter] = useState<'all' | 'upcoming' | 'past'>('all');
 
   // Kundenliste Schnellsuche & Filter
@@ -175,8 +179,38 @@ export const KundenView: React.FC = () => {
     [sortedCustomers, customers]
   );
 
+  const indexedCustomersMap = useMemo(() => {
+    const map = new Map<string, ReturnType<typeof buildSearchIndexEntry>>();
+    for (const c of sortedCustomers) {
+      const custProps = properties.filter((p) => p.customer_id === c.id);
+      const custNum = c.customer_number?.trim() || resolveCustomerNumber(c.id, customers);
+      const divRecip = getCustomerBillingRecipient(c, customers);
+      map.set(
+        c.id,
+        buildSearchIndexEntry({
+          exactKeys: [custNum, c.zip],
+          primary: [c.name, custNum],
+          secondary: [
+            c.city,
+            c.street,
+            c.phone,
+            c.email,
+            divRecip?.name,
+            ...custProps.map((p) => p.name)
+          ],
+          keywords: [
+            c.notes,
+            divRecip ? 'sub subauftrag abweichend' : '',
+            ...custProps.flatMap((p) => [p.address, p.notes, p.access_info])
+          ]
+        })
+      );
+    }
+    return map;
+  }, [sortedCustomers, properties, customers]);
+
   const filteredCustomerList = useMemo(() => {
-    return sortedCustomers.filter((c) => {
+    const baseList = sortedCustomers.filter((c) => {
       const openInfo = openSummaryByCustomer.get(c.id);
       const divRecip = getCustomerBillingRecipient(c, customers);
 
@@ -186,33 +220,34 @@ export const KundenView: React.FC = () => {
       if (customerListFilter === 'sub' && !divRecip) {
         return false;
       }
-
-      if (customerSearchQuery.trim()) {
-        const custProps = properties.filter((p) => p.customer_id === c.id);
-        const custNum = c.customer_number?.trim() || resolveCustomerNumber(c.id, customers);
-        return matchesSearchQuery(customerSearchQuery, [
-          c.name,
-          custNum,
-          c.street,
-          c.zip,
-          c.city,
-          c.phone,
-          c.email,
-          c.notes,
-          divRecip?.name,
-          ...custProps.flatMap((p) => [p.name, p.address, p.notes])
-        ]);
-      }
-
       return true;
     });
+
+    const trimmedQuery = customerSearchQuery.trim();
+    if (!trimmedQuery) return baseList;
+
+    const parsed = parseSearchQuery(trimmedQuery);
+    return baseList
+      .map((c) => {
+        const idx = indexedCustomersMap.get(c.id);
+        return {
+          customer: c,
+          score: idx ? scoreSearchIndex(parsed, idx) : 0
+        };
+      })
+      .filter((entry) => entry.score > 0)
+      .sort((a, b) => {
+        if (b.score !== a.score) return b.score - a.score;
+        return a.customer.name.localeCompare(b.customer.name, 'de');
+      })
+      .map((entry) => entry.customer);
   }, [
     sortedCustomers,
     openSummaryByCustomer,
     customers,
     customerListFilter,
     customerSearchQuery,
-    properties
+    indexedCustomersMap
   ]);
 
   // If a customer is selected, show Kundenakte
@@ -568,6 +603,7 @@ export const KundenView: React.FC = () => {
 
   const linkedOpenWork = accountLinkedWork.filter((w) => !w.settlement_id && !w.is_lcr);
   const linkedBilledWork = accountLinkedWork.filter((w) => Boolean(w.settlement_id));
+  const linkedLcrWork = accountLinkedWork.filter((w) => !w.settlement_id && Boolean(w.is_lcr));
   const linkedTotalHours =
     Math.round(accountLinkedWork.reduce((s, w) => s + w.hours, 0) * 100) / 100;
   const linkedOpenHours =
@@ -582,7 +618,9 @@ export const KundenView: React.FC = () => {
       ? linkedOpenWork
       : workStatusFilter === 'billed'
         ? linkedBilledWork
-        : accountLinkedWork;
+        : workStatusFilter === 'lcr'
+          ? linkedLcrWork
+          : accountLinkedWork;
 
   const handleToggleDivergentBilling = (enabled: boolean) => {
     if (enabled) {
@@ -1256,49 +1294,14 @@ export const KundenView: React.FC = () => {
                           setSelectedWorkRecordId(rec.id);
                           setActiveModal('ARBEIT_BEARBEITEN');
                         }}
-                        className="p-3 bg-white border border-slate-200 rounded-2xl shadow-2xs hover:border-[#3138A0] transition-colors cursor-pointer space-y-2"
+                        className="px-3 py-2.5 bg-white border border-slate-200/90 rounded-2xl shadow-2xs hover:border-[#3138A0] transition-colors cursor-pointer space-y-1.5"
                       >
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="flex items-start gap-2.5 min-w-0">
-                            <div className="w-8 h-8 rounded-xl bg-indigo-50 border border-indigo-100 flex items-center justify-center text-[#3138A0] shrink-0 mt-0.5">
-                              <Clock size={15} />
-                            </div>
-                            <div className="min-w-0">
-                              <h4 className="text-xs font-bold text-slate-900 leading-tight truncate">
-                                {rec.title}
-                              </h4>
-                              <p className="text-[11px] text-slate-500 mt-0.5">
-                                {formatDateDE(rec.work_date)}
-                                {rec.start_time && rec.end_time
-                                  ? ` · ${rec.start_time}–${rec.end_time}`
-                                  : ''}
-                                {' · '}
-                                <span className="font-semibold text-slate-800">
-                                  {rec.hours.toLocaleString('de-DE', {
-                                    maximumFractionDigits: 2
-                                  })}{' '}
-                                  Std.
-                                </span>
-                              </p>
-                            </div>
-                          </div>
+                        <div className="flex items-center justify-between gap-2">
+                          <h4 className="text-[13px] font-bold text-slate-950 leading-tight truncate min-w-0">
+                            {rec.title}
+                          </h4>
 
-                          <div className="text-right shrink-0">
-                            <span
-                              className={`text-xs font-bold block ${
-                                rec.accounting_amount !== null
-                                  ? 'text-slate-900'
-                                  : 'text-[#B42318]'
-                              }`}
-                            >
-                              {rec.accounting_amount !== null
-                                ? `${rec.accounting_amount.toLocaleString('de-DE', {
-                                    minimumFractionDigits: 2,
-                                    maximumFractionDigits: 2
-                                  })} €`
-                                : 'Satz offen'}
-                            </span>
-
+                          <div className="flex items-center gap-1.5 shrink-0">
                             {isBilled ? (
                               <button
                                 type="button"
@@ -1309,51 +1312,78 @@ export const KundenView: React.FC = () => {
                                     navigate('M04_ABRECHNUNG');
                                   }
                                 }}
-                                className="mt-0.5 px-1.5 py-0.5 bg-emerald-50 text-[#2C7738] text-[10px] font-bold rounded-md inline-block"
+                                className="px-1.5 py-0.5 bg-emerald-50 text-[#2C7738] text-[10px] font-bold rounded-md inline-block"
                               >
                                 {linkedInvoice ? linkedInvoice.invoice_number : 'Abgerechnet'}
                               </button>
                             ) : rec.is_lcr ? (
-                              <span className="mt-0.5 px-1.5 py-0.5 bg-indigo-50 text-[#3138A0] text-[10px] font-bold rounded-md inline-block">
+                              <span className="px-1.5 py-0.5 bg-indigo-50 text-[#3138A0] text-[10px] font-bold rounded-md inline-block">
                                 L.C.R.
                               </span>
                             ) : (
-                              <span className="mt-0.5 px-1.5 py-0.5 bg-orange-50 text-[#B4470B] text-[10px] font-bold rounded-md inline-block">
+                              <span className="px-1.5 py-0.5 bg-orange-50 text-[#B4470B] text-[10px] font-bold rounded-md inline-block">
                                 Offen
                               </span>
                             )}
+
+                            <span
+                              className={`text-[13px] font-bold tabular-nums ${
+                                rec.accounting_amount !== null
+                                  ? 'text-[#B4470B]'
+                                  : 'text-[#B42318]'
+                              }`}
+                            >
+                              {rec.accounting_amount !== null
+                                ? `${rec.accounting_amount.toLocaleString('de-DE', {
+                                    minimumFractionDigits: 2,
+                                    maximumFractionDigits: 2
+                                  })} €`
+                                : 'Satz offen'}
+                            </span>
                           </div>
                         </div>
 
+                        <p className="text-[11px] text-slate-500 truncate">
+                          {formatDateDE(rec.work_date)}
+                          {rec.start_time && rec.end_time
+                            ? ` · ${rec.start_time}–${rec.end_time}`
+                            : ''}
+                          {' · '}
+                          <span className="font-bold text-slate-900">
+                            {rec.hours.toLocaleString('de-DE', {
+                              maximumFractionDigits: 2
+                            })}{' '}
+                            Std.
+                          </span>
+                        </p>
+
                         {(subCust || billedViaCust || prop || rec.materials.length > 0 || rec.notes) && (
-                          <div className="pt-1.5 border-t border-slate-100 space-y-1">
-                            {(subCust || billedViaCust || prop || rec.materials.length > 0) && (
-                              <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
-                                {subCust && (
-                                  <span className="px-1.5 py-0.5 bg-indigo-50 text-[#3138A0] font-bold rounded-md">
-                                    Sub: {subCust.name}
-                                  </span>
-                                )}
-                                {billedViaCust && (
-                                  <span className="px-1.5 py-0.5 bg-indigo-50 text-[#3138A0] font-bold rounded-md">
-                                    Abrechnung → {billedViaCust.name}
-                                  </span>
-                                )}
-                                {prop && (
-                                  <span className="px-1.5 py-0.5 bg-slate-100 text-slate-700 font-semibold rounded-md flex items-center gap-1">
-                                    <Home size={10} className="text-[#3138A0]" />
-                                    <span>{prop.name}</span>
-                                  </span>
-                                )}
-                                {rec.materials.length > 0 && (
-                                  <span className="px-1.5 py-0.5 bg-amber-50 text-amber-800 font-semibold rounded-md">
-                                    +{rec.materials.length} Material
-                                  </span>
-                                )}
-                              </div>
+                          <div className="pt-1 border-t border-slate-100 flex flex-wrap items-center gap-1.5 text-[10px]">
+                            {subCust && (
+                              <span className="px-1.5 py-0.5 bg-indigo-50 text-[#3138A0] font-bold rounded-md">
+                                Sub: {subCust.name}
+                              </span>
+                            )}
+                            {billedViaCust && (
+                              <span className="px-1.5 py-0.5 bg-indigo-50 text-[#3138A0] font-bold rounded-md">
+                                Abrechnung → {billedViaCust.name}
+                              </span>
+                            )}
+                            {prop && (
+                              <span className="px-1.5 py-0.5 bg-slate-100 text-slate-700 font-semibold rounded-md flex items-center gap-1">
+                                <Home size={9} className="text-[#3138A0]" />
+                                <span>{prop.name}</span>
+                              </span>
+                            )}
+                            {rec.materials.length > 0 && (
+                              <span className="px-1.5 py-0.5 bg-amber-50 text-amber-800 font-semibold rounded-md">
+                                +{rec.materials.length} Material
+                              </span>
                             )}
                             {rec.notes && (
-                              <p className="text-[11px] text-slate-500 truncate">{rec.notes}</p>
+                              <span className="text-slate-500 italic truncate max-w-full">
+                                „{rec.notes}“
+                              </span>
                             )}
                           </div>
                         )}
@@ -2042,19 +2072,20 @@ export const KundenView: React.FC = () => {
         {/* Schnellfilter unten, wenn Vorgänge -> Arbeiten aktiviert ist */}
         {activeTab === 'vorgaenge' && customerWorkViewOpen && accountLinkedWork.length > 0 && (
           <div className="px-3 pt-2 pb-1.5 flex items-center justify-between gap-2 border-b border-slate-100">
-            <div className="flex-1 flex p-0.5 bg-slate-100 rounded-xl">
+            <div className="flex-1 grid grid-cols-4 gap-1 p-0.5 bg-slate-100 rounded-xl">
               {(
                 [
                   { id: 'all', label: `Alle (${accountLinkedWork.length})` },
                   { id: 'open', label: `Offen (${linkedOpenWork.length})` },
-                  { id: 'billed', label: `Abgerechnet (${linkedBilledWork.length})` }
+                  { id: 'billed', label: `Abger. (${linkedBilledWork.length})` },
+                  { id: 'lcr', label: `L.C.R. (${linkedLcrWork.length})` }
                 ] as const
               ).map((flt) => (
                 <button
                   key={flt.id}
                   type="button"
                   onClick={() => setWorkStatusFilter(flt.id)}
-                  className={`flex-1 py-1.5 text-[11px] font-semibold rounded-lg transition-all ${
+                  className={`py-1.5 px-1 text-[10px] font-bold rounded-lg transition-all truncate ${
                     workStatusFilter === flt.id
                       ? 'bg-white text-[#3138A0] shadow-2xs'
                       : 'text-slate-600 hover:text-slate-900'

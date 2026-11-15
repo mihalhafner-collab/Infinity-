@@ -11,8 +11,10 @@ import {
   addDaysIso,
   buildLineItemsFromRecords,
   buildPaymentTermsClause,
+  buildPersonalizedIntroText,
   computeNextInvoiceNumber,
   computeServicePeriod,
+  detectRecipientSalutation,
   formatDateDE,
   formatEuro,
   formatQtyNumber,
@@ -20,6 +22,7 @@ import {
   getCustomerBillingRecipient,
   getEffectiveBillingCustomerId,
   getTodayLocalIso,
+  replaceIntroSalutation,
   resolveCustomerNumber
 } from '../../utils/invoicePdf.ts';
 import {
@@ -138,17 +141,20 @@ export const RechnungModal: React.FC = () => {
     properties,
     invoices,
     selectedCustomerId: contextCustomerId,
+    currentScreen,
     workRecords,
     preselectedWorkRecordIds,
     setPreselectedWorkRecordIds,
     createInvoiceFromRecords,
     updateWorkRecord,
+    deleteWorkRecord,
     setSelectedInvoiceId,
     setSendingInvoiceId,
     navigate
   } = useApp();
 
   const [selectedCustomerId, setSelectedCustomerId] = useState<string>('');
+  const [autoRedirectedFromCustomerName, setAutoRedirectedFromCustomerName] = useState<string>('');
   const [customerNumberStr, setCustomerNumberStr] = useState<string>('1001');
   const [selectedRecordIds, setSelectedRecordIds] = useState<string[]>([]);
   const [showAllOpenRecords, setShowAllOpenRecords] = useState<boolean>(false);
@@ -230,6 +236,10 @@ export const RechnungModal: React.FC = () => {
           getEffectiveBillingCustomerId(preselectedValid[0], customers) ||
           preselectedValid[0].customer_id ||
           (customers[0]?.id ?? '');
+        const origWorkCust = customers.find((c) => c.id === preselectedValid[0].customer_id);
+        setAutoRedirectedFromCustomerName(
+          origWorkCust && origWorkCust.id !== firstCustId ? origWorkCust.name : ''
+        );
         const spansMultipleCustomers = preselectedValid.some(
           (w) => getEffectiveBillingCustomerId(w, customers) !== firstCustId
         );
@@ -241,26 +251,56 @@ export const RechnungModal: React.FC = () => {
       } else {
         const ctxCust = customers.find((c) => c.id === contextCustomerId);
         const redirectedRecipient = getCustomerBillingRecipient(ctxCust, customers);
-        const defaultCustId = redirectedRecipient
+        let candidateCustId = redirectedRecipient
           ? redirectedRecipient.id
           : ctxCust
             ? ctxCust.id
-            : (customers[0]?.id ?? '');
+            : '';
 
-        initialCustId = defaultCustId;
-        setSelectedCustomerId(defaultCustId);
+        const openWorkForCandidate = candidateCustId
+          ? workRecords.filter(
+              (w) =>
+                getEffectiveBillingCustomerId(w, customers) === candidateCustId &&
+                !w.settlement_id &&
+                !w.is_lcr
+            )
+          : [];
+
+        // Automatische Erkennung des Rechnungsempfängers: falls kein Kunde mit offenen Arbeiten vorgewählt ist, ersten Kunden mit offenen Arbeiten wählen
+        if (!candidateCustId || (openWorkForCandidate.length === 0 && currentScreen !== 'M03_KUNDEN')) {
+          const firstOpenRecord = workRecords.find((w) => !w.settlement_id && !w.is_lcr);
+          if (firstOpenRecord) {
+            candidateCustId =
+              getEffectiveBillingCustomerId(firstOpenRecord, customers) ||
+              firstOpenRecord.customer_id;
+          } else if (!candidateCustId) {
+            candidateCustId = customers[0]?.id ?? '';
+          }
+        }
+
+        setAutoRedirectedFromCustomerName(
+          redirectedRecipient && ctxCust && redirectedRecipient.id === candidateCustId
+            ? ctxCust.name
+            : ''
+        );
+
+        initialCustId = candidateCustId;
+        setSelectedCustomerId(candidateCustId);
         setShowAllOpenRecords(false);
 
         const initialAvailable = workRecords
           .filter(
             (w) =>
-              getEffectiveBillingCustomerId(w, customers) === defaultCustId &&
+              getEffectiveBillingCustomerId(w, customers) === candidateCustId &&
               !w.settlement_id &&
               !w.is_lcr
           )
           .map((w) => w.id);
         setSelectedRecordIds(initialAvailable);
       }
+
+      const initialCustObj = customers.find((c) => c.id === initialCustId);
+      const initialRecipientName = initialCustObj?.name || 'Kunde';
 
       // Kundennummer direkt aus dem Kundenkonto übernehmen
       setCustomerNumberStr(resolveCustomerNumber(initialCustId, customers));
@@ -283,9 +323,7 @@ export const RechnungModal: React.FC = () => {
       setTextOptionsOpen(false);
       setActiveIntroTemplate(startInPauschal ? 'pauschal' : 'standard');
       setCustomSubjectText('');
-      setCustomIntroText(
-        startInPauschal ? DEFAULT_PAUSCHAL_INTRO_TEXT : DEFAULT_INVOICE_INTRO_TEXT
-      );
+      setCustomIntroText(buildPersonalizedIntroText(initialRecipientName, startInPauschal));
       setCustomPaymentTermsText('');
       setCustomClosingText('');
 
@@ -314,6 +352,7 @@ export const RechnungModal: React.FC = () => {
   }, [
     activeModal,
     contextCustomerId,
+    currentScreen,
     customers,
     invoices,
     workRecords,
@@ -680,6 +719,14 @@ export const RechnungModal: React.FC = () => {
   const issueDateFormatted = formatDateDE(issueDate);
   const effectiveServicePeriod = customServicePeriod.trim() || autoServicePeriod;
   const selectedCustomer = customers.find((c) => c.id === selectedCustomerId);
+  const detectedSalutation = useMemo(
+    () => detectRecipientSalutation(selectedCustomer?.name || 'Kunde'),
+    [selectedCustomer?.name]
+  );
+  const currentIntroFirstLine = useMemo(() => {
+    const first = (customIntroText || '').trim().split(/\r?\n/)[0]?.trim() || '';
+    return first;
+  }, [customIntroText]);
 
   const isPaidInCash = paymentChoice === 'cash';
   const dueDays = isPaidInCash ? 0 : parseInt(paymentChoice, 10);
@@ -730,10 +777,52 @@ export const RechnungModal: React.FC = () => {
   const canIssue = selectedCustomerId !== '' && draftLineItems.length > 0;
   const todayIso = getTodayLocalIso();
 
-  const toggleRecord = (id: string) => {
-    setSelectedRecordIds((prev) =>
-      prev.includes(id) ? prev.filter((r) => r !== id) : [...prev, id]
+  const applyRecipientSelection = (rawNextCustId: string, updateRecords = true) => {
+    const rawCust = customers.find((c) => c.id === rawNextCustId);
+    const redirected = getCustomerBillingRecipient(rawCust, customers);
+    const effectiveCust = redirected || rawCust;
+    const effectiveId = effectiveCust?.id || rawNextCustId;
+
+    setAutoRedirectedFromCustomerName(
+      redirected && rawCust && redirected.id !== rawCust.id ? rawCust.name : ''
     );
+    setSelectedCustomerId(effectiveId);
+    setCustomerNumberStr(resolveCustomerNumber(effectiveId, customers));
+    const nextSalutation = detectRecipientSalutation(
+      effectiveCust?.name || 'Kunde'
+    ).salutationLine;
+    setCustomIntroText((prev) => replaceIntroSalutation(prev, nextSalutation));
+
+    if (updateRecords) {
+      setSelectedMergeInvoiceIds([]);
+      const nextRecs = workRecords
+        .filter(
+          (w) =>
+            getEffectiveBillingCustomerId(w, customers) === effectiveId &&
+            !w.settlement_id &&
+            !w.is_lcr
+        )
+        .map((w) => w.id);
+      setSelectedRecordIds(nextRecs);
+    }
+  };
+
+  const toggleRecord = (id: string) => {
+    const nextIds = selectedRecordIds.includes(id)
+      ? selectedRecordIds.filter((r) => r !== id)
+      : [...selectedRecordIds, id];
+    setSelectedRecordIds(nextIds);
+
+    // Automatische Empfänger-Erkennung aus gewählten Arbeiten
+    if (nextIds.length > 0) {
+      const chosenRecs = workRecords.filter((w) => nextIds.includes(w.id));
+      const billingIds = Array.from(
+        new Set(chosenRecs.map((w) => getEffectiveBillingCustomerId(w, customers)))
+      ).filter(Boolean);
+      if (billingIds.length === 1 && billingIds[0] !== selectedCustomerId) {
+        applyRecipientSelection(billingIds[0], false);
+      }
+    }
   };
 
   const toggleMergeInvoice = (invId: string) => {
@@ -767,22 +856,98 @@ export const RechnungModal: React.FC = () => {
     setEditWorkAmountManual(rec.hourly_rate === null && rec.accounting_amount !== null);
   };
 
-  const handleInlineWorkHoursOrRateChange = (nextHoursRaw: string, nextRateRaw: string) => {
+  const clearWorkLineItemOverride = (workId: string) => {
+    const liKey = `li-${workId}`;
+    setLineItemOverrides((prev) => {
+      if (!(liKey in prev)) return prev;
+      const next = { ...prev };
+      delete next[liKey];
+      return next;
+    });
+  };
+
+  const handleInlineWorkTitleChange = (rec: WorkRecord, nextTitle: string) => {
+    setEditWorkTitle(nextTitle);
+    if (nextTitle.trim()) {
+      updateWorkRecord(rec.id, { title: nextTitle.trim() });
+      clearWorkLineItemOverride(rec.id);
+    }
+  };
+
+  const handleInlineWorkDateChange = (rec: WorkRecord, nextDate: string) => {
+    setEditWorkDate(nextDate);
+    if (nextDate) {
+      updateWorkRecord(rec.id, { work_date: nextDate });
+      clearWorkLineItemOverride(rec.id);
+    }
+  };
+
+  const handleInlineWorkHoursOrRateChange = (
+    rec: WorkRecord,
+    nextHoursRaw: string,
+    nextRateRaw: string
+  ) => {
     setEditWorkHoursStr(nextHoursRaw);
     setEditWorkRateStr(nextRateRaw);
     const h = parsePositiveDecimal(nextHoursRaw);
     const hasRate = nextRateRaw.trim() !== '';
-    if (hasRate && !editWorkAmountManual) {
-      const r = parsePositiveDecimal(nextRateRaw);
-      const calc = Math.round(h * r * 100) / 100;
-      setEditWorkAmountStr(String(calc).replace('.', ','));
+    const r = hasRate
+      ? parsePositiveDecimal(nextRateRaw)
+      : rec.hourly_rate && rec.hourly_rate > 0
+        ? rec.hourly_rate
+        : 50;
+    const matCost = rec.material_cost || 0;
+    const calc = Math.round((h * r + matCost) * 100) / 100;
+    setEditWorkAmountStr(String(calc).replace('.', ','));
+
+    if (h > 0) {
+      updateWorkRecord(rec.id, {
+        hours: h,
+        hourly_rate: r,
+        accounting_amount: calc
+      });
+      clearWorkLineItemOverride(rec.id);
     }
+  };
+
+  const handleInlineWorkAmountChange = (rec: WorkRecord, nextAmountRaw: string) => {
+    setEditWorkAmountManual(true);
+    setEditWorkAmountStr(nextAmountRaw);
+    const amt = parsePositiveDecimal(nextAmountRaw);
+    if (nextAmountRaw.trim() === '') return;
+
+    const r =
+      editWorkRateStr.trim() !== ''
+        ? parsePositiveDecimal(editWorkRateStr)
+        : rec.hourly_rate && rec.hourly_rate > 0
+          ? rec.hourly_rate
+          : 50;
+    const matCost = rec.material_cost || 0;
+    const nextHours =
+      r > 0 && matCost === 0
+        ? Math.round((Math.max(0, amt) / r) * 100) / 100
+        : parsePositiveDecimal(editWorkHoursStr) || rec.hours;
+
+    if (r > 0 && matCost === 0) {
+      setEditWorkHoursStr(String(nextHours).replace('.', ','));
+    }
+
+    updateWorkRecord(rec.id, {
+      hours: nextHours,
+      hourly_rate: r,
+      accounting_amount: Math.round(amt * 100) / 100
+    });
+    clearWorkLineItemOverride(rec.id);
   };
 
   const saveInlineEditWork = (rec: WorkRecord) => {
     const nextHours = parsePositiveDecimal(editWorkHoursStr) || rec.hours;
     const hasRate = editWorkRateStr.trim() !== '';
-    const nextRate = hasRate ? parsePositiveDecimal(editWorkRateStr) : null;
+    const nextRate = hasRate
+      ? parsePositiveDecimal(editWorkRateStr)
+      : rec.hourly_rate && rec.hourly_rate > 0
+        ? rec.hourly_rate
+        : 50;
     const matCost = rec.material_cost || 0;
 
     let nextAccountingAmount: number | null = null;
@@ -796,13 +961,23 @@ export const RechnungModal: React.FC = () => {
         Math.round(parsePositiveDecimal(editWorkAmountStr) * 100) / 100;
     }
 
+    const reconciledHours =
+      editWorkAmountManual &&
+      nextAccountingAmount !== null &&
+      nextRate !== null &&
+      nextRate > 0 &&
+      matCost === 0
+        ? Math.round((nextAccountingAmount / nextRate) * 100) / 100
+        : nextHours;
+
     updateWorkRecord(rec.id, {
       title: editWorkTitle.trim() || rec.title,
       work_date: editWorkDate || rec.work_date,
-      hours: nextHours,
-      hourly_rate: editWorkAmountManual ? null : nextRate,
+      hours: reconciledHours,
+      hourly_rate: nextRate,
       accounting_amount: nextAccountingAmount
     });
+    clearWorkLineItemOverride(rec.id);
 
     if (!selectedRecordIds.includes(rec.id)) {
       setSelectedRecordIds((prev) => [...prev, rec.id]);
@@ -852,11 +1027,70 @@ export const RechnungModal: React.FC = () => {
       );
       return;
     }
+
+    let computedPatch: Partial<InvoiceLineItem> = { ...patch };
+
+    // Wenn eine Position einer Arbeitsaufzeichnung (li-<workId>) bearbeitet wird,
+    // sofort die zugrunde liegende Arbeitsaufzeichnung (und damit Offene Stunden) aktualisieren!
+    if (id.startsWith('li-')) {
+      const recId = id.slice(3);
+      const rec = workRecords.find((w) => w.id === recId);
+      if (rec) {
+        const rate = rec.hourly_rate && rec.hourly_rate > 0 ? rec.hourly_rate : 50;
+        const matCost = rec.material_cost || 0;
+
+        if (patch.quantity_label !== undefined) {
+          const parsedHours = parsePositiveDecimal(patch.quantity_label);
+          if (parsedHours > 0) {
+            const nextAmount = Math.round((parsedHours * rate + matCost) * 100) / 100;
+            computedPatch.amount = nextAmount;
+            updateWorkRecord(recId, {
+              hours: parsedHours,
+              hourly_rate: rate,
+              accounting_amount: nextAmount
+            });
+          }
+        } else if (patch.unit_price_label !== undefined) {
+          const parsedRate = parsePositiveDecimal(patch.unit_price_label);
+          if (parsedRate > 0) {
+            const h = rec.hours || 1;
+            const nextAmount = Math.round((h * parsedRate + matCost) * 100) / 100;
+            computedPatch.amount = nextAmount;
+            updateWorkRecord(recId, {
+              hourly_rate: parsedRate,
+              accounting_amount: nextAmount
+            });
+          }
+        } else if (patch.amount !== undefined) {
+          const nextAmount = Math.round(patch.amount * 100) / 100;
+          const nextHours =
+            rate > 0 && matCost === 0
+              ? Math.round((nextAmount / rate) * 100) / 100
+              : rec.hours;
+          if (nextHours !== null) {
+            computedPatch.quantity_label = `${nextHours.toFixed(2).replace('.', ',')} Std`;
+          }
+          updateWorkRecord(recId, {
+            hours: nextHours,
+            hourly_rate: rate,
+            accounting_amount: nextAmount
+          });
+        }
+
+        if (patch.description !== undefined) {
+          const cleanedTitle = patch.description.split(' (')[0].split(' – ')[0].trim();
+          if (cleanedTitle) {
+            updateWorkRecord(recId, { title: cleanedTitle });
+          }
+        }
+      }
+    }
+
     setLineItemOverrides((prev) => ({
       ...prev,
       [id]: {
         ...(prev[id] || {}),
-        ...patch
+        ...computedPatch
       }
     }));
   };
@@ -867,16 +1101,18 @@ export const RechnungModal: React.FC = () => {
 
   const handleSwitchPauschalMode = (enablePauschal: boolean) => {
     setIsPauschalMode(enablePauschal);
+    const currentSalutation =
+      currentIntroFirstLine || detectedSalutation.salutationLine;
     if (enablePauschal) {
       setPauschalSectionOpen(true);
-      if (activeIntroTemplate === 'standard' && customIntroText === DEFAULT_INVOICE_INTRO_TEXT) {
+      if (activeIntroTemplate === 'standard') {
         setActiveIntroTemplate('pauschal');
-        setCustomIntroText(DEFAULT_PAUSCHAL_INTRO_TEXT);
+        setCustomIntroText(replaceIntroSalutation(DEFAULT_PAUSCHAL_INTRO_TEXT, currentSalutation));
       }
     } else {
-      if (activeIntroTemplate === 'pauschal' && customIntroText === DEFAULT_PAUSCHAL_INTRO_TEXT) {
+      if (activeIntroTemplate === 'pauschal') {
         setActiveIntroTemplate('standard');
-        setCustomIntroText(DEFAULT_INVOICE_INTRO_TEXT);
+        setCustomIntroText(replaceIntroSalutation(DEFAULT_INVOICE_INTRO_TEXT, currentSalutation));
       }
     }
   };
@@ -1336,7 +1572,7 @@ export const RechnungModal: React.FC = () => {
                             </button>
                           </div>
 
-                          {/* DIREKT-BEARBEITUNG BEIM ANTIPPEN */}
+                          {/* DIREKT-BEARBEITUNG BEIM ANTIPPEN (LIVE-SYNC MIT OFFENEN STUNDEN) */}
                           {isEditingThis && (
                             <div className="px-3 pb-3 pt-2.5 border-t border-indigo-100 bg-indigo-50/30 space-y-2.5">
                               <div className="grid grid-cols-12 gap-2">
@@ -1347,7 +1583,7 @@ export const RechnungModal: React.FC = () => {
                                   <input
                                     type="text"
                                     value={editWorkTitle}
-                                    onChange={(e) => setEditWorkTitle(e.target.value)}
+                                    onChange={(e) => handleInlineWorkTitleChange(rec, e.target.value)}
                                     className="w-full h-9 px-2.5 bg-white border border-slate-200 rounded-xl text-xs font-semibold text-slate-900 outline-hidden focus:border-[#3138A0]"
                                   />
                                 </div>
@@ -1358,7 +1594,7 @@ export const RechnungModal: React.FC = () => {
                                   <input
                                     type="date"
                                     value={editWorkDate}
-                                    onChange={(e) => setEditWorkDate(e.target.value)}
+                                    onChange={(e) => handleInlineWorkDateChange(rec, e.target.value)}
                                     className="w-full h-9 px-2 bg-white border border-slate-200 rounded-xl text-xs font-semibold text-slate-900 outline-hidden focus:border-[#3138A0]"
                                   />
                                 </div>
@@ -1373,12 +1609,14 @@ export const RechnungModal: React.FC = () => {
                                     type="text"
                                     inputMode="decimal"
                                     value={editWorkHoursStr}
-                                    onChange={(e) =>
+                                    onChange={(e) => {
+                                      setEditWorkAmountManual(false);
                                       handleInlineWorkHoursOrRateChange(
+                                        rec,
                                         e.target.value,
                                         editWorkRateStr
-                                      )
-                                    }
+                                      );
+                                    }}
                                     className="w-full h-9 px-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-900 outline-hidden focus:border-[#3138A0]"
                                   />
                                 </div>
@@ -1393,6 +1631,7 @@ export const RechnungModal: React.FC = () => {
                                     onChange={(e) => {
                                       setEditWorkAmountManual(false);
                                       handleInlineWorkHoursOrRateChange(
+                                        rec,
                                         editWorkHoursStr,
                                         e.target.value
                                       );
@@ -1409,10 +1648,7 @@ export const RechnungModal: React.FC = () => {
                                     type="text"
                                     inputMode="decimal"
                                     value={editWorkAmountStr}
-                                    onChange={(e) => {
-                                      setEditWorkAmountManual(true);
-                                      setEditWorkAmountStr(e.target.value);
-                                    }}
+                                    onChange={(e) => handleInlineWorkAmountChange(rec, e.target.value)}
                                     placeholder="Gesamt €"
                                     className="w-full h-9 px-2.5 bg-white border border-indigo-200 rounded-xl text-xs font-bold text-[#B4470B] outline-hidden focus:border-[#3138A0]"
                                   />
@@ -1429,6 +1665,7 @@ export const RechnungModal: React.FC = () => {
                                       onClick={() => {
                                         setEditWorkAmountManual(false);
                                         handleInlineWorkHoursOrRateChange(
+                                          rec,
                                           editWorkHoursStr,
                                           String(rate)
                                         );
@@ -1447,17 +1684,24 @@ export const RechnungModal: React.FC = () => {
                                 <div className="flex items-center gap-1.5 ml-auto">
                                   <button
                                     type="button"
-                                    onClick={() => setEditingWorkId(null)}
-                                    className="px-2.5 h-8 bg-white border border-slate-200 rounded-xl text-[11px] font-semibold text-slate-600"
+                                    onClick={() => {
+                                      setEditingWorkId(null);
+                                      setSelectedRecordIds((prev) =>
+                                        prev.filter((id) => id !== rec.id)
+                                      );
+                                      deleteWorkRecord(rec.id);
+                                    }}
+                                    className="px-2.5 h-8 bg-red-50 border border-red-200 rounded-xl text-[11px] font-semibold text-red-600"
+                                    title="Arbeitsaufzeichnung löschen"
                                   >
-                                    Abbrechen
+                                    Löschen
                                   </button>
                                   <button
                                     type="button"
                                     onClick={() => saveInlineEditWork(rec)}
                                     className="px-3 h-8 bg-[#3138A0] hover:bg-[#272d82] text-white rounded-xl text-[11px] font-bold shadow-2xs"
                                   >
-                                    Übernehmen
+                                    Fertig
                                   </button>
                                 </div>
                               </div>
@@ -1473,71 +1717,133 @@ export const RechnungModal: React.FC = () => {
 
             {/* UNTERER BEREICH: Alle Rechnungsoptionen übersichtlich & direkt editierbar */}
             <div className="mt-auto pt-2.5 border-t border-slate-100 space-y-3">
-              {/* Empfänger & aus Kundenkonto übernommene Kundennummer */}
-              <div className="grid grid-cols-12 gap-2">
-                <div className="col-span-8">
-                  <label className="font-semibold text-slate-700 mb-1 flex items-center gap-1">
-                    <User size={13} className="text-slate-500" />
-                    <span>Empfänger</span>
-                  </label>
-                  <select
-                    value={selectedCustomerId}
-                    onChange={(e) => {
-                      const nextId = e.target.value;
-                      setSelectedCustomerId(nextId);
-                      setCustomerNumberStr(resolveCustomerNumber(nextId, customers));
-                      setSelectedMergeInvoiceIds([]);
-                      const nextRecs = workRecords
-                        .filter(
-                          (w) =>
-                            getEffectiveBillingCustomerId(w, customers) === nextId &&
-                            !w.settlement_id &&
-                            !w.is_lcr
-                        )
-                        .map((w) => w.id);
-                      setSelectedRecordIds(nextRecs);
-                    }}
-                    className="w-full h-11 px-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-[#3138A0] outline-hidden text-xs text-slate-900 font-semibold"
-                  >
-                    {customers.map((c) => {
-                      const cNum = c.customer_number?.trim() || resolveCustomerNumber(c.id, customers);
-                      return (
-                        <option key={c.id} value={c.id}>
-                          {c.name} (#{cNum}){c.city ? ` · ${c.city}` : ''}
-                        </option>
-                      );
-                    })}
-                  </select>
+              {/* Empfänger (automatisch erkannt) & aus Kundenkonto übernommene Kundennummer + direkte Ansprache */}
+              <div className="space-y-2">
+                <div className="grid grid-cols-12 gap-2">
+                  <div className="col-span-8">
+                    <label className="font-semibold text-slate-700 mb-1 flex items-center justify-between gap-1">
+                      <span className="flex items-center gap-1">
+                        <User size={13} className="text-[#3138A0]" />
+                        <span>Rechnungsempfänger</span>
+                      </span>
+                      <span className="text-[10px] font-bold text-[#2C7738] bg-emerald-50 px-1.5 py-0.5 rounded">
+                        Auto erkannt
+                      </span>
+                    </label>
+                    <select
+                      value={selectedCustomerId}
+                      onChange={(e) => applyRecipientSelection(e.target.value, true)}
+                      className="w-full h-11 px-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-[#3138A0] outline-hidden text-xs text-slate-900 font-semibold"
+                    >
+                      {customers.map((c) => {
+                        const cNum =
+                          c.customer_number?.trim() || resolveCustomerNumber(c.id, customers);
+                        const subVia = getCustomerBillingRecipient(c, customers);
+                        return (
+                          <option key={c.id} value={c.id}>
+                            {c.name} (#{cNum})
+                            {subVia ? ` → über ${subVia.name}` : c.city ? ` · ${c.city}` : ''}
+                          </option>
+                        );
+                      })}
+                    </select>
+                  </div>
+
+                  <div className="col-span-4">
+                    <label className="font-semibold text-slate-700 block mb-1 truncate">
+                      Kunden-Nr.
+                    </label>
+                    <div className="flex items-center h-11 bg-slate-50 border border-slate-200 rounded-xl overflow-hidden focus-within:bg-white focus-within:border-[#3138A0]">
+                      <button
+                        type="button"
+                        onClick={() => stepCustomerNumber(-1)}
+                        aria-label="Kundennummer verringern"
+                        className="w-7 h-full flex items-center justify-center text-slate-600 hover:bg-slate-200/70 active:bg-slate-200 shrink-0 border-r border-slate-200/80"
+                      >
+                        <Minus size={13} />
+                      </button>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        value={customerNumberStr}
+                        onChange={(e) => setCustomerNumberStr(e.target.value)}
+                        className="min-w-0 flex-1 h-full px-1 bg-transparent text-center font-bold text-xs text-slate-900 outline-hidden"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => stepCustomerNumber(1)}
+                        aria-label="Kundennummer erhöhen"
+                        className="w-7 h-full flex items-center justify-center text-[#3138A0] hover:bg-indigo-50 active:bg-indigo-100 shrink-0 border-l border-slate-200/80"
+                      >
+                        <Plus size={13} />
+                      </button>
+                    </div>
+                  </div>
                 </div>
 
-                <div className="col-span-4">
-                  <label className="font-semibold text-slate-700 block mb-1 truncate">
-                    Kunden-Nr.
-                  </label>
-                  <div className="flex items-center h-11 bg-slate-50 border border-slate-200 rounded-xl overflow-hidden focus-within:bg-white focus-within:border-[#3138A0]">
-                    <button
-                      type="button"
-                      onClick={() => stepCustomerNumber(-1)}
-                      aria-label="Kundennummer verringern"
-                      className="w-7 h-full flex items-center justify-center text-slate-600 hover:bg-slate-200/70 active:bg-slate-200 shrink-0 border-r border-slate-200/80"
-                    >
-                      <Minus size={13} />
-                    </button>
-                    <input
-                      type="text"
-                      inputMode="numeric"
-                      value={customerNumberStr}
-                      onChange={(e) => setCustomerNumberStr(e.target.value)}
-                      className="min-w-0 flex-1 h-full px-1 bg-transparent text-center font-bold text-xs text-slate-900 outline-hidden"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => stepCustomerNumber(1)}
-                      aria-label="Kundennummer erhöhen"
-                      className="w-7 h-full flex items-center justify-center text-[#3138A0] hover:bg-indigo-50 active:bg-indigo-100 shrink-0 border-l border-slate-200/80"
-                    >
-                      <Plus size={13} />
-                    </button>
+                {autoRedirectedFromCustomerName && (
+                  <div className="px-2.5 py-1.5 bg-indigo-50 border border-indigo-100 rounded-xl text-[11px] text-[#3138A0] font-semibold">
+                    Sub-Abrechnung erkannt: Objekt „{autoRedirectedFromCustomerName}“ wird direkt über{' '}
+                    <span className="font-bold">{selectedCustomer?.name}</span> abgerechnet.
+                  </div>
+                )}
+
+                {/* Direkte Ansprache in der Rechnung (automatisch aus Empfängername erkannt + 1-Tipp Wahl) */}
+                <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl space-y-1.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[11px] font-bold text-slate-600">
+                      Direkte Ansprache auf Rechnung:
+                    </span>
+                    <span className="text-[11px] font-bold text-[#3138A0] truncate">
+                      {currentIntroFirstLine || detectedSalutation.salutationLine}
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap gap-1">
+                    {[
+                      {
+                        key: 'frau',
+                        label: `Frau ${detectedSalutation.lastName}`,
+                        line: detectedSalutation.frauLine
+                      },
+                      {
+                        key: 'herr',
+                        label: `Herr ${detectedSalutation.lastName}`,
+                        line: detectedSalutation.herrLine
+                      },
+                      {
+                        key: 'fam',
+                        label: `Familie ${detectedSalutation.lastName}`,
+                        line: detectedSalutation.familyLine
+                      },
+                      {
+                        key: 'du',
+                        label: 'Per Du',
+                        line: detectedSalutation.duLine
+                      },
+                      {
+                        key: 'firma',
+                        label: 'Damen & Herren',
+                        line: detectedSalutation.companyLine
+                      }
+                    ].map((opt) => {
+                      const isActive = currentIntroFirstLine === opt.line;
+                      return (
+                        <button
+                          key={opt.key}
+                          type="button"
+                          onClick={() =>
+                            setCustomIntroText((prev) => replaceIntroSalutation(prev, opt.line))
+                          }
+                          className={`px-2 py-1 rounded-lg border text-[10px] font-semibold transition-colors ${
+                            isActive
+                              ? 'bg-[#3138A0] border-[#3138A0] text-white'
+                              : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-100'
+                          }`}
+                        >
+                          {opt.label}
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
               </div>
@@ -1740,7 +2046,11 @@ export const RechnungModal: React.FC = () => {
                             type="button"
                             onClick={() => {
                               setActiveIntroTemplate(tpl.key);
-                              setCustomIntroText(tpl.text);
+                              const currentSalutation =
+                                currentIntroFirstLine || detectedSalutation.salutationLine;
+                              setCustomIntroText(
+                                replaceIntroSalutation(tpl.text, currentSalutation)
+                              );
                             }}
                             className={`px-2.5 py-1 rounded-lg border text-[11px] font-semibold transition-colors ${
                               active

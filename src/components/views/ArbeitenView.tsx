@@ -9,21 +9,18 @@ import {
   Bookmark,
   Check,
   CheckSquare,
-  Clock,
+  ChevronDown,
   Home,
   Lock,
   Pencil,
   Receipt,
-  Search,
   Trash2,
-  X
+  Users
 } from 'lucide-react';
 import { WorkRecord } from '../../types/index.ts';
 import { getEffectiveBillingCustomerId } from '../../utils/invoicePdf.ts';
-import {
-  formatIsoToDeSearchable,
-  matchesSearchQuery
-} from '../../utils/searchUtils.ts';
+
+type WorkStatusFilter = 'all' | 'open' | 'billed' | 'lcr';
 
 export const ArbeitenView: React.FC = () => {
   const {
@@ -40,7 +37,8 @@ export const ArbeitenView: React.FC = () => {
   } = useApp();
 
   const [filterCustomer, setFilterCustomer] = useState<string>('all');
-  const [searchQuery, setSearchQuery] = useState<string>('');
+  const [statusFilter, setStatusFilter] = useState<WorkStatusFilter>('all');
+  const [isCustomerPickerOpen, setIsCustomerPickerOpen] = useState<boolean>(false);
   const [lockedNotice, setLockedNotice] = useState<string | null>(null);
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -50,28 +48,69 @@ export const ArbeitenView: React.FC = () => {
     setSelectedIds([]);
   });
 
-  const filteredRecords = useMemo(
+  usePixelBackLayer(isCustomerPickerOpen, () => {
+    setIsCustomerPickerOpen(false);
+  });
+
+  // Anzahl Aufzeichnungen pro Kunde
+  const customerRecordCounts = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const w of workRecords) {
+      map.set(w.customer_id, (map.get(w.customer_id) || 0) + 1);
+    }
+    return map;
+  }, [workRecords]);
+
+  // Basis-Filterung nach gewähltem Kunden (für exakte Status-Zähler)
+  const baseFilteredRecords = useMemo(
     () =>
       workRecords.filter((w) => {
         if (filterCustomer !== 'all' && w.customer_id !== filterCustomer) return false;
-        if (searchQuery.trim()) {
-          const cust = customers.find((c) => c.id === w.customer_id);
-          const prop = w.property_id
-            ? properties.find((p) => p.id === w.property_id)
-            : undefined;
-          const matText = (w.materials || []).map((m) => m.name).join(' ');
-          return matchesSearchQuery(searchQuery, [
-            w.title,
-            w.notes,
-            formatIsoToDeSearchable(w.work_date),
-            cust?.name,
-            prop?.name,
-            matText
-          ]);
-        }
         return true;
       }),
-    [workRecords, filterCustomer, searchQuery, customers, properties]
+    [workRecords, filterCustomer]
+  );
+
+  // Zähler für Alle / Offen / Abgerechnet / L.C.R.
+  const statusCounts = useMemo(() => {
+    let open = 0;
+    let billed = 0;
+    let lcr = 0;
+    for (const w of baseFilteredRecords) {
+      if (w.settlement_id) {
+        billed++;
+      } else if (w.is_lcr) {
+        lcr++;
+      } else {
+        open++;
+      }
+    }
+    return {
+      all: baseFilteredRecords.length,
+      open,
+      billed,
+      lcr
+    };
+  }, [baseFilteredRecords]);
+
+  // Endgültige Liste nach Status-Auswahl
+  const filteredRecords = useMemo(
+    () =>
+      baseFilteredRecords.filter((w) => {
+        if (statusFilter === 'open') return !w.settlement_id && !w.is_lcr;
+        if (statusFilter === 'billed') return Boolean(w.settlement_id);
+        if (statusFilter === 'lcr') return !w.settlement_id && Boolean(w.is_lcr);
+        return true;
+      }),
+    [baseFilteredRecords, statusFilter]
+  );
+
+  const selectedCustomerObj = useMemo(
+    () =>
+      filterCustomer === 'all'
+        ? null
+        : customers.find((c) => c.id === filterCustomer) || null,
+    [customers, filterCustomer]
   );
 
   const selectedRecords = useMemo(
@@ -198,8 +237,8 @@ export const ArbeitenView: React.FC = () => {
 
       {/* Locked notice banner */}
       {lockedNotice && (
-        <div className="m-3 p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-[#B42318] flex items-start gap-2 animate-fade-in shadow-xs shrink-0">
-          <Lock size={15} className="shrink-0 mt-0.5" />
+        <div className="mx-3 mt-2 p-2.5 bg-red-50 border border-red-200 rounded-xl text-xs text-[#B42318] flex items-start gap-2 animate-fade-in shadow-xs shrink-0">
+          <Lock size={14} className="shrink-0 mt-0.5" />
           <div>
             <span className="font-bold block">Hinweis zur Sperre</span>
             <span>{lockedNotice}</span>
@@ -207,21 +246,31 @@ export const ArbeitenView: React.FC = () => {
         </div>
       )}
 
-      {/* List of Work Records (WF-013, WF-014, WF-015) */}
-      <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-3 overscroll-contain">
-        <div className="p-2.5 bg-slate-100/80 rounded-xl text-[11px] text-slate-500">
-          Alle Originalaufzeichnungen bleiben erhalten. Über „Auswählen“ können mehrere Arbeiten gemeinsam abgerechnet, auf L.C.R. gesetzt oder gelöscht werden.
-        </div>
-
+      {/* Kompakte, übersichtliche Liste der Arbeitsaufzeichnungen */}
+      <div className="flex-1 min-h-0 overflow-y-auto px-3.5 py-2.5 space-y-2 overscroll-contain">
         {filteredRecords.length === 0 ? (
-          <div className="p-8 bg-white border border-slate-200 rounded-2xl text-center space-y-2">
-            <div className="w-12 h-12 rounded-full bg-indigo-50 text-[#3138A0] flex items-center justify-center mx-auto">
-              <Briefcase size={24} />
+          <div className="p-7 bg-white border border-slate-200 rounded-2xl text-center space-y-2.5 mt-2">
+            <div className="w-11 h-11 rounded-full bg-indigo-50 text-[#3138A0] flex items-center justify-center mx-auto">
+              <Briefcase size={22} />
             </div>
             <h3 className="font-bold text-slate-900 text-sm">Keine Arbeitsaufzeichnungen</h3>
             <p className="text-xs text-slate-500 max-w-[240px] mx-auto">
-              Erfassen Sie geleistete Arbeitsstunden und verwendete Materialien über das + Menü unten.
+              {filterCustomer !== 'all' || statusFilter !== 'all'
+                ? 'Keine Einträge für die gewählten Filter gefunden.'
+                : 'Erfassen Sie geleistete Arbeitsstunden über das + Menü unten.'}
             </p>
+            {(filterCustomer !== 'all' || statusFilter !== 'all') && (
+              <button
+                type="button"
+                onClick={() => {
+                  setFilterCustomer('all');
+                  setStatusFilter('all');
+                }}
+                className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-[#3138A0] text-xs font-bold rounded-xl transition-colors"
+              >
+                Alle anzeigen ({workRecords.length})
+              </button>
+            )}
           </div>
         ) : (
           filteredRecords.map((rec) => {
@@ -234,72 +283,62 @@ export const ArbeitenView: React.FC = () => {
                 : null;
             const isBilled = !!rec.settlement_id;
             const isSelected = selectedIds.includes(rec.id);
+            const hasMaterials = Boolean(rec.materials && rec.materials.length > 0);
+            const hasExtraMeta = Boolean(prop || subBillingCust || hasMaterials || rec.notes);
 
             return (
               <div
                 key={rec.id}
-                onClick={selectionMode ? () => toggleSelectRecord(rec.id) : undefined}
-                className={`p-3.5 bg-white border rounded-2xl shadow-2xs space-y-2.5 transition-all ${
-                  selectionMode ? 'cursor-pointer active:scale-[0.99]' : ''
-                } ${
+                onClick={() => {
+                  if (selectionMode) {
+                    toggleSelectRecord(rec.id);
+                  } else {
+                    setSelectedWorkRecordId(rec.id);
+                    setActiveModal('ARBEIT_BEARBEITEN');
+                  }
+                }}
+                className={`px-3 py-2.5 bg-white border rounded-2xl shadow-2xs space-y-1.5 transition-all cursor-pointer active:scale-[0.99] ${
                   selectionMode && isSelected
                     ? 'border-[#3138A0] bg-indigo-50/25 ring-1 ring-[#3138A0]/20'
-                    : 'border-slate-200'
+                    : 'border-slate-200/90 hover:border-slate-300'
                 }`}
               >
-                <div className="flex items-start justify-between gap-2">
-                  <div className="flex items-start gap-2.5 min-w-0">
-                    {selectionMode ? (
+                {/* Zeile 1: Tätigkeit links + Status & Betrag rechts */}
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    {selectionMode && (
                       <div
-                        className={`w-6 h-6 mt-0.5 rounded-lg border flex items-center justify-center shrink-0 transition-colors ${
+                        className={`w-5 h-5 rounded-md border flex items-center justify-center shrink-0 transition-colors ${
                           isSelected
                             ? 'bg-[#3138A0] border-[#3138A0] text-white'
                             : 'bg-white border-slate-300'
                         }`}
                       >
-                        {isSelected && <Check size={14} strokeWidth={3} />}
-                      </div>
-                    ) : (
-                      <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-[#3138A0] shrink-0 font-bold text-xs">
-                        <Clock size={16} />
+                        {isSelected && <Check size={12} strokeWidth={3} />}
                       </div>
                     )}
-
-                    <div className="min-w-0">
-                      <h3 className="text-sm font-bold text-slate-900 leading-tight">
-                        {rec.title}
-                      </h3>
-                      <p className="text-xs text-slate-500 mt-0.5">
-                        {cust?.name} · {rec.work_date}
-                      </p>
-                      {(prop || subBillingCust) && (
-                        <p className="text-[10px] font-semibold text-[#3138A0] flex items-center gap-1 mt-0.5">
-                          {prop && (
-                            <>
-                              <Home size={10} className="shrink-0" />
-                              <span className="truncate">{prop.name}</span>
-                            </>
-                          )}
-                          {prop && subBillingCust && <span>·</span>}
-                          {subBillingCust && (
-                            <span className="truncate">Sub → {subBillingCust.name}</span>
-                          )}
-                        </p>
-                      )}
-                      <p className="text-[11px] text-slate-600 mt-0.5">
-                        {rec.start_time && rec.end_time ? `${rec.start_time}–${rec.end_time}` : ''}
-                        {rec.break_minutes ? ` (−${rec.break_minutes}m Pause)` : ''}
-                        {rec.start_time && rec.end_time ? ' · ' : ''}
-                        <span className="font-semibold text-slate-800">
-                          {rec.hours.toLocaleString('de-DE', { maximumFractionDigits: 2 })} Std.
-                        </span>
-                      </p>
-                    </div>
+                    <h3 className="text-[13px] font-bold text-slate-950 leading-tight truncate">
+                      {rec.title}
+                    </h3>
                   </div>
 
-                  <div className="text-right shrink-0">
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {isBilled ? (
+                      <span className="px-1.5 py-0.5 bg-emerald-50 text-[#2C7738] text-[10px] font-bold rounded-md">
+                        Abgerechnet
+                      </span>
+                    ) : rec.is_lcr ? (
+                      <span className="px-1.5 py-0.5 bg-indigo-50 text-[#3138A0] text-[10px] font-bold rounded-md">
+                        L.C.R.
+                      </span>
+                    ) : (
+                      <span className="px-1.5 py-0.5 bg-orange-50 text-[#B4470B] text-[10px] font-bold rounded-md">
+                        Offen
+                      </span>
+                    )}
+
                     {rec.accounting_amount !== null ? (
-                      <span className="font-bold text-sm text-[#B4470B] block">
+                      <span className="font-bold text-[13px] text-[#B4470B] tabular-nums">
                         {rec.accounting_amount.toLocaleString('de-DE', {
                           minimumFractionDigits: 2,
                           maximumFractionDigits: 2
@@ -307,88 +346,97 @@ export const ArbeitenView: React.FC = () => {
                         €
                       </span>
                     ) : (
-                      <span className="font-bold text-xs text-[#B42318] block">
+                      <span className="font-bold text-[11px] text-[#B42318]">
                         Satz offen
-                      </span>
-                    )}
-                    {isBilled ? (
-                      <span className="px-1.5 py-0.5 bg-emerald-50 text-[#2C7738] text-[10px] font-bold rounded">
-                        Abgerechnet
-                      </span>
-                    ) : rec.is_lcr ? (
-                      <span className="px-1.5 py-0.5 bg-indigo-50 text-[#3138A0] text-[10px] font-bold rounded">
-                        L.C.R.
-                      </span>
-                    ) : (
-                      <span className="px-1.5 py-0.5 bg-orange-50 text-[#B4470B] text-[10px] font-bold rounded">
-                        Offen
                       </span>
                     )}
                   </div>
                 </div>
 
-                {rec.materials && rec.materials.length > 0 && (
-                  <div className="p-2 bg-amber-50/70 border border-amber-100 rounded-lg text-[11px] text-slate-700 flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                    <span className="font-semibold text-amber-800">Material:</span>
-                    {rec.materials.map((m, i) => (
-                      <span key={i}>
-                        {m.quantity.toLocaleString('de-DE')} {m.unit} {m.name}
-                        {m.total !== null
-                          ? ` (${m.total.toLocaleString('de-DE', {
-                              minimumFractionDigits: 2,
-                              maximumFractionDigits: 2
-                            })} €)`
-                          : ''}
-                        {i < rec.materials.length - 1 ? ',' : ''}
+                {/* Zeile 2: Kunde · Datum · Stunden links + L.C.R.-Schnellwahl & Bearbeiten rechts */}
+                <div className="flex items-center justify-between gap-2">
+                  <div className="min-w-0 text-[11px] text-slate-500 truncate">
+                    <span className="font-semibold text-slate-700">
+                      {cust?.name || 'Unbekannt'}
+                    </span>
+                    {' · '}
+                    <span>{rec.work_date}</span>
+                    {' · '}
+                    <span className="font-bold text-slate-900">
+                      {rec.hours.toLocaleString('de-DE', { maximumFractionDigits: 2 })} Std.
+                    </span>
+                    {rec.start_time && rec.end_time && (
+                      <span className="text-slate-400">
+                        {' '}
+                        ({rec.start_time}–{rec.end_time})
                       </span>
-                    ))}
+                    )}
                   </div>
-                )}
 
-                {rec.notes && (
-                  <p className="text-[11px] text-slate-600 bg-slate-50 p-2 rounded-lg italic">
-                    {rec.notes}
-                  </p>
-                )}
-
-                {/* L.C.R. Schalter & Bearbeiten Bar (ausgeblendet im Mehrfachauswahl-Modus für ruhige Bedienung) */}
-                {!selectionMode && (
-                  <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs">
-                    <div className="flex items-center gap-1.5 text-slate-500">
-                      <Bookmark
-                        size={14}
-                        className={rec.is_lcr ? 'text-[#3138A0]' : 'text-slate-400'}
-                      />
-                      <span className="font-medium">L.C.R.:</span>
-                      {isBilled ? (
-                        <span className="text-[10px] text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded">
-                          Rechnung fixiert
-                        </span>
-                      ) : (
+                  {!selectionMode && (
+                    <div
+                      className="flex items-center gap-1 shrink-0"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {!isBilled && (
                         <button
+                          type="button"
                           onClick={() => handleToggleLcr(rec)}
-                          className={`px-2 py-0.5 text-[11px] font-semibold rounded-md transition-colors ${
+                          className={`h-6 px-2 rounded-lg text-[10px] font-bold flex items-center gap-1 transition-colors ${
                             rec.is_lcr
                               ? 'bg-[#3138A0] text-white shadow-2xs'
-                              : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                              : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                           }`}
+                          title={rec.is_lcr ? 'L.C.R. deaktivieren' : 'Auf L.C.R. setzen'}
                         >
-                          {rec.is_lcr ? 'Aktiviert' : 'Aktivieren'}
+                          <Bookmark size={10} />
+                          <span>L.C.R.</span>
                         </button>
                       )}
-                    </div>
 
-                    <button
-                      onClick={() => {
-                        setSelectedWorkRecordId(rec.id);
-                        setActiveModal('ARBEIT_BEARBEITEN');
-                      }}
-                      className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-800 flex items-center gap-1.5 transition-colors"
-                      title="Aufzeichnung bearbeiten"
-                    >
-                      <Pencil size={12} className="text-[#3138A0]" />
-                      <span>Bearbeiten</span>
-                    </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedWorkRecordId(rec.id);
+                          setActiveModal('ARBEIT_BEARBEITEN');
+                        }}
+                        className="w-6 h-6 rounded-lg bg-slate-100 hover:bg-slate-200 text-[#3138A0] flex items-center justify-center transition-colors"
+                        title="Aufzeichnung bearbeiten"
+                        aria-label="Aufzeichnung bearbeiten"
+                      >
+                        <Pencil size={11} />
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {/* Optionale Zusatzinfos (Objekt, Sub-Abrechnung, Material, Notiz) kompakt in einer Zeile */}
+                {hasExtraMeta && (
+                  <div className="pt-1 border-t border-slate-100 flex flex-wrap items-center gap-1.5 text-[10px]">
+                    {prop && (
+                      <span className="px-1.5 py-0.5 bg-slate-100 text-slate-700 font-semibold rounded-md flex items-center gap-1 max-w-[160px] truncate">
+                        <Home size={9} className="text-[#3138A0] shrink-0" />
+                        <span className="truncate">{prop.name}</span>
+                      </span>
+                    )}
+                    {subBillingCust && (
+                      <span className="px-1.5 py-0.5 bg-indigo-50 text-[#3138A0] font-semibold rounded-md truncate">
+                        Sub → {subBillingCust.name}
+                      </span>
+                    )}
+                    {hasMaterials && (
+                      <span className="px-1.5 py-0.5 bg-amber-50 text-amber-800 font-semibold rounded-md truncate">
+                        Material:{' '}
+                        {rec.materials
+                          .map((m) => `${m.quantity.toLocaleString('de-DE')} ${m.unit} ${m.name}`)
+                          .join(', ')}
+                      </span>
+                    )}
+                    {rec.notes && (
+                      <span className="text-slate-500 italic truncate max-w-full">
+                        „{rec.notes}“
+                      </span>
+                    )}
                   </div>
                 )}
               </div>
@@ -453,45 +501,130 @@ export const ArbeitenView: React.FC = () => {
 
       {/* Untere Bedienleiste fixiert (Pixel 10 Pro Daumenzone) */}
       <div className="shrink-0 w-full mt-auto bg-white border-t border-slate-200/80 z-20 shadow-md">
-        {/* Filter & Schnellsuche im unteren Bedienbereich */}
-        <div className="px-3.5 pt-2.5 pb-1.5 border-b border-slate-100 space-y-1.5">
-          <div className="flex items-center gap-2 text-xs">
-            <div className="flex-1 min-w-0 h-9 bg-slate-50 border border-slate-200 rounded-xl px-2.5 flex items-center gap-1.5 focus-within:bg-white focus-within:border-[#3138A0] transition-colors">
-              <Search size={14} className="text-slate-400 shrink-0" />
-              <input
-                type="search"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Tätigkeit, Kunde, Datum…"
-                className="flex-1 min-w-0 bg-transparent border-none outline-hidden text-xs font-medium text-slate-900 placeholder:text-slate-400"
-              />
-              {searchQuery && (
-                <button
-                  type="button"
-                  onClick={() => setSearchQuery('')}
-                  className="text-slate-400 hover:text-slate-700"
-                  aria-label="Filter zurücksetzen"
-                >
-                  <X size={13} />
-                </button>
-              )}
-            </div>
+        <div className="px-3.5 pt-2 pb-1.5 border-b border-slate-100 space-y-1.5">
+          {/* Ausklappbare Kundenauswahl im einheitlichen App-Design */}
+          {isCustomerPickerOpen && (
+            <div className="bg-white border border-slate-200/90 rounded-2xl shadow-lg p-1.5 max-h-56 overflow-y-auto space-y-1 animate-fade-in">
+              <button
+                type="button"
+                onClick={() => {
+                  setFilterCustomer('all');
+                  setSelectedIds([]);
+                  setIsCustomerPickerOpen(false);
+                }}
+                className={`w-full px-2.5 py-2 rounded-xl text-left flex items-center justify-between gap-2 text-xs transition-colors ${
+                  filterCustomer === 'all'
+                    ? 'bg-indigo-50/80 text-[#3138A0] font-bold'
+                    : 'hover:bg-slate-50 text-slate-800 font-semibold'
+                }`}
+              >
+                <div className="flex items-center gap-2 min-w-0">
+                  <div
+                    className={`w-6 h-6 rounded-lg flex items-center justify-center shrink-0 ${
+                      filterCustomer === 'all'
+                        ? 'bg-[#3138A0] text-white'
+                        : 'bg-slate-100 text-slate-600'
+                    }`}
+                  >
+                    <Users size={13} />
+                  </div>
+                  <span className="truncate">Alle Kunden</span>
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <span className="px-1.5 py-0.5 rounded-md bg-slate-100 text-slate-600 text-[10px] font-bold">
+                    {workRecords.length}
+                  </span>
+                  {filterCustomer === 'all' && <Check size={14} className="text-[#3138A0]" />}
+                </div>
+              </button>
 
-            <select
-              value={filterCustomer}
-              onChange={(e) => {
-                setFilterCustomer(e.target.value);
-                setSelectedIds([]);
-              }}
-              className="w-[140px] shrink-0 h-9 bg-slate-50 border border-slate-200 rounded-xl px-2 text-xs font-semibold text-slate-700 outline-hidden truncate"
+              {customers.map((c) => {
+                const count = customerRecordCounts.get(c.id) || 0;
+                const isSelectedCust = filterCustomer === c.id;
+                return (
+                  <button
+                    key={c.id}
+                    type="button"
+                    onClick={() => {
+                      setFilterCustomer(c.id);
+                      setSelectedIds([]);
+                      setIsCustomerPickerOpen(false);
+                    }}
+                    className={`w-full px-2.5 py-2 rounded-xl text-left flex items-center justify-between gap-2 text-xs transition-colors ${
+                      isSelectedCust
+                        ? 'bg-indigo-50/80 text-[#3138A0] font-bold'
+                        : 'hover:bg-slate-50 text-slate-800 font-medium'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      {c.customer_number && (
+                        <span className="px-1.5 py-0.5 bg-slate-100 text-slate-500 text-[10px] font-bold rounded shrink-0">
+                          #{c.customer_number}
+                        </span>
+                      )}
+                      <span className="truncate">{c.name}</span>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <span
+                        className={`px-1.5 py-0.5 rounded-md text-[10px] font-bold ${
+                          count > 0
+                            ? 'bg-indigo-50 text-[#3138A0]'
+                            : 'bg-slate-100 text-slate-400'
+                        }`}
+                      >
+                        {count}
+                      </span>
+                      {isSelectedCust && <Check size={14} className="text-[#3138A0]" />}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Kundenauswahl im einheitlichen ausklappbaren Design + Wählen-Button */}
+          <div className="flex items-center gap-2 text-xs">
+            <button
+              type="button"
+              onClick={() => setIsCustomerPickerOpen((prev) => !prev)}
+              className={`flex-1 min-w-0 h-9 px-2.5 bg-white border rounded-xl flex items-center justify-between gap-2 transition-all ${
+                isCustomerPickerOpen || filterCustomer !== 'all'
+                  ? 'border-[#3138A0] ring-1 ring-[#3138A0]/15'
+                  : 'border-slate-200/90 hover:border-slate-300'
+              }`}
             >
-              <option value="all">Alle Kunden ({workRecords.length})</option>
-              {customers.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
+              <div className="flex items-center gap-2 min-w-0">
+                <div
+                  className={`w-6 h-6 rounded-lg flex items-center justify-center shrink-0 transition-colors ${
+                    isCustomerPickerOpen || filterCustomer !== 'all'
+                      ? 'bg-indigo-50 text-[#3138A0]'
+                      : 'bg-slate-100 text-slate-600'
+                  }`}
+                >
+                  <Users size={13} />
+                </div>
+                <span className="text-xs font-bold text-slate-900 truncate">
+                  {selectedCustomerObj ? selectedCustomerObj.name : 'Alle Kunden'}
+                </span>
+              </div>
+
+              <div className="flex items-center gap-1.5 shrink-0">
+                <span className="px-1.5 py-0.5 bg-slate-100 text-slate-600 text-[10px] font-bold rounded-md">
+                  {selectedCustomerObj
+                    ? customerRecordCounts.get(selectedCustomerObj.id) || 0
+                    : workRecords.length}
+                </span>
+                <div
+                  className={`w-6 h-6 rounded-lg flex items-center justify-center transition-transform duration-200 ${
+                    isCustomerPickerOpen
+                      ? 'bg-indigo-50 text-[#3138A0] rotate-180'
+                      : 'bg-slate-100 text-slate-500'
+                  }`}
+                >
+                  <ChevronDown size={14} />
+                </div>
+              </div>
+            </button>
 
             {filteredRecords.length > 0 && (
               <button
@@ -541,7 +674,63 @@ export const ArbeitenView: React.FC = () => {
           )}
         </div>
 
-        <BottomActionBar />
+        {/* Gelber Bereich: Status-Auswahl [Alle | Offen | Abger. | L.C.R.] direkt links neben Lupe & Plus */}
+        <BottomActionBar>
+          <div className="w-full grid grid-cols-4 gap-0.5 p-1 bg-slate-100 rounded-2xl">
+            {(
+              [
+                {
+                  id: 'all',
+                  label: 'Alle',
+                  count: statusCounts.all,
+                  activeClass: 'bg-white text-slate-900 shadow-2xs'
+                },
+                {
+                  id: 'open',
+                  label: 'Offen',
+                  count: statusCounts.open,
+                  activeClass: 'bg-white text-[#B4470B] shadow-2xs'
+                },
+                {
+                  id: 'billed',
+                  label: 'Abger.',
+                  count: statusCounts.billed,
+                  activeClass: 'bg-white text-[#2C7738] shadow-2xs'
+                },
+                {
+                  id: 'lcr',
+                  label: 'L.C.R.',
+                  count: statusCounts.lcr,
+                  activeClass: 'bg-white text-[#3138A0] shadow-2xs'
+                }
+              ] as const
+            ).map((tab) => {
+              const isActive = statusFilter === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => {
+                    setStatusFilter(tab.id);
+                    setSelectedIds([]);
+                  }}
+                  className={`py-2 px-1 rounded-xl text-[10px] font-bold flex items-center justify-center gap-0.5 transition-all min-w-0 ${
+                    isActive ? tab.activeClass : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <span className="truncate">{tab.label}</span>
+                  <span
+                    className={`text-[9px] px-1 rounded shrink-0 ${
+                      isActive ? 'bg-slate-100 font-extrabold' : 'text-slate-400 font-semibold'
+                    }`}
+                  >
+                    {tab.count}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </BottomActionBar>
         <BottomNav />
       </div>
     </div>

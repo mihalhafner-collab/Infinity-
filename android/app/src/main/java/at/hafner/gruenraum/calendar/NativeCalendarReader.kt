@@ -1,20 +1,154 @@
 package at.hafner.gruenraum.calendar
 
 import android.content.ContentUris
+import android.content.ContentValues
 import android.content.Context
 import android.provider.CalendarContract
 import org.json.JSONArray
 import org.json.JSONObject
 import java.time.Instant
 import java.time.LocalDate
+import java.time.LocalTime
 import java.time.ZoneId
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
+import java.util.TimeZone
 
 class NativeCalendarReader(private val context: Context) {
 
     private val dateFormatter = DateTimeFormatter.ISO_LOCAL_DATE
     private val timeFormatter = DateTimeFormatter.ofPattern("HH:mm")
+
+    private fun findWritableCalendarId(): Long? {
+        val projection = arrayOf(
+            CalendarContract.Calendars._ID,
+            CalendarContract.Calendars.ACCOUNT_TYPE,
+            CalendarContract.Calendars.IS_PRIMARY,
+            CalendarContract.Calendars.CALENDAR_ACCESS_LEVEL,
+            CalendarContract.Calendars.VISIBLE
+        )
+        var bestId: Long? = null
+        var bestScore = -1
+
+        context.contentResolver.query(
+            CalendarContract.Calendars.CONTENT_URI,
+            projection,
+            null,
+            null,
+            null
+        )?.use { cursor ->
+            val idxId = cursor.getColumnIndexOrThrow(CalendarContract.Calendars._ID)
+            val idxType = cursor.getColumnIndexOrThrow(CalendarContract.Calendars.ACCOUNT_TYPE)
+            val idxPrimary = cursor.getColumnIndexOrThrow(CalendarContract.Calendars.IS_PRIMARY)
+            val idxAccess = cursor.getColumnIndexOrThrow(CalendarContract.Calendars.CALENDAR_ACCESS_LEVEL)
+            val idxVisible = cursor.getColumnIndexOrThrow(CalendarContract.Calendars.VISIBLE)
+
+            while (cursor.moveToNext()) {
+                val access = if (!cursor.isNull(idxAccess)) cursor.getInt(idxAccess) else 0
+                if (access < CalendarContract.Calendars.CAL_ACCESS_CONTRIBUTOR) continue
+
+                val id = cursor.getLong(idxId)
+                val acctType = cursor.getString(idxType) ?: ""
+                val isPrimary = !cursor.isNull(idxPrimary) && cursor.getInt(idxPrimary) == 1
+                val isVisible = !cursor.isNull(idxVisible) && cursor.getInt(idxVisible) == 1
+
+                var score = 0
+                if (acctType == "com.google") score += 10
+                if (isPrimary) score += 5
+                if (isVisible) score += 2
+
+                if (score > bestScore) {
+                    bestScore = score
+                    bestId = id
+                }
+            }
+        }
+        return bestId
+    }
+
+    fun upsertEventJson(payloadJson: String): String {
+        val obj = JSONObject(payloadJson)
+        val existingEventId = obj.optString("googleEventId", "").trim().toLongOrNull()
+        val title = obj.optString("title", "Termin").trim().ifEmpty { "Termin" }
+        val dateIso = obj.optString("date", "").trim()
+        val startTimeStr = obj.optString("start_time", "").trim()
+        val endTimeStr = obj.optString("end_time", "").trim()
+        val durationMin = obj.optInt("duration_minutes", 60).let { if (it > 0) it else 60 }
+        val address = obj.optString("address", "").trim()
+        val notes = obj.optString("notes", "").trim()
+
+        val localDate = LocalDate.parse(dateIso, dateFormatter)
+        val zone = ZoneId.systemDefault()
+        val isAllDay = startTimeStr.isEmpty()
+
+        val startMillis: Long
+        val endMillis: Long
+        val eventTz: String
+
+        if (isAllDay) {
+            startMillis = localDate.atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli()
+            endMillis = localDate.plusDays(1).atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli()
+            eventTz = "UTC"
+        } else {
+            val startLt = runCatching { LocalTime.parse(startTimeStr, timeFormatter) }
+                .getOrDefault(LocalTime.of(8, 0))
+            val endLt = if (endTimeStr.isNotEmpty()) {
+                runCatching { LocalTime.parse(endTimeStr, timeFormatter) }
+                    .getOrDefault(startLt.plusMinutes(durationMin.toLong()))
+            } else {
+                startLt.plusMinutes(durationMin.toLong())
+            }
+            val safeEndLt = if (endLt.isAfter(startLt)) endLt else startLt.plusMinutes(60)
+            startMillis = localDate.atTime(startLt).atZone(zone).toInstant().toEpochMilli()
+            endMillis = localDate.atTime(safeEndLt).atZone(zone).toInstant().toEpochMilli()
+            eventTz = TimeZone.getDefault().id
+        }
+
+        val values = ContentValues().apply {
+            put(CalendarContract.Events.TITLE, title)
+            put(CalendarContract.Events.DTSTART, startMillis)
+            put(CalendarContract.Events.DTEND, endMillis)
+            put(CalendarContract.Events.ALL_DAY, if (isAllDay) 1 else 0)
+            put(CalendarContract.Events.EVENT_TIMEZONE, eventTz)
+            put(CalendarContract.Events.EVENT_LOCATION, address)
+            put(CalendarContract.Events.DESCRIPTION, notes)
+        }
+
+        if (existingEventId != null && existingEventId > 0L) {
+            val updateUri = ContentUris.withAppendedId(CalendarContract.Events.CONTENT_URI, existingEventId)
+            val updatedRows = runCatching {
+                context.contentResolver.update(updateUri, values, null, null)
+            }.getOrDefault(0)
+            if (updatedRows > 0) {
+                return JSONObject().apply {
+                    put("googleEventId", existingEventId.toString())
+                    put("updated", true)
+                }.toString()
+            }
+        }
+
+        val calId = findWritableCalendarId()
+            ?: throw IllegalStateException("Kein beschreibbarer Google Kalender auf dem Pixel 10 Pro gefunden.")
+        values.put(CalendarContract.Events.CALENDAR_ID, calId)
+
+        val insertedUri = context.contentResolver.insert(CalendarContract.Events.CONTENT_URI, values)
+            ?: throw IllegalStateException("Termin konnte nicht in den Google Kalender eingetragen werden.")
+        val newId = ContentUris.parseId(insertedUri)
+        return JSONObject().apply {
+            put("googleEventId", newId.toString())
+            put("created", true)
+        }.toString()
+    }
+
+    fun deleteEvent(googleEventId: String): Boolean {
+        val idLong = googleEventId.trim().toLongOrNull() ?: return false
+        if (idLong <= 0L) return false
+        val uri = ContentUris.withAppendedId(CalendarContract.Events.CONTENT_URI, idLong)
+        val deleted = runCatching {
+            context.contentResolver.delete(uri, null, null)
+        }.getOrDefault(0)
+        return deleted > 0
+    }
 
     fun queryEventsJson(startDateIso: String, endDateIso: String): String {
         val zone = ZoneId.systemDefault()

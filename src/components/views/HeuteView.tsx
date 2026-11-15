@@ -19,8 +19,10 @@ import {
   AlertTriangle,
   Wrench,
   MessageSquare,
-  MoreVertical
+  MoreVertical,
+  Pencil
 } from 'lucide-react';
+import { extractGoogleEventId } from '../../services/googleCalendarService.ts';
 import {
   WeatherIconKind,
   useSmartphoneWeather
@@ -56,7 +58,12 @@ export const HeuteView: React.FC = () => {
     customers,
     navigate,
     setSelectedCustomerId,
-    setIsThreeDotsMenuOpen
+    setSelectedWorkRecordId,
+    setPreselectedWorkRecordIds,
+    setActiveModal,
+    setIsThreeDotsMenuOpen,
+    calendarSyncState,
+    syncCalendarNow
   } = useApp();
 
   const { weather, refreshWeather } = useSmartphoneWeather();
@@ -229,7 +236,21 @@ export const HeuteView: React.FC = () => {
         {/* 1. DEIN TAG / HEUTIGE TERMINE */}
         <div className="space-y-2">
           <div className="flex items-center justify-between text-xs font-bold px-0.5">
-            <span className="text-slate-600 uppercase tracking-wider text-[10px]">Dein Tag</span>
+            <div className="flex items-center gap-2">
+              <span className="text-slate-600 uppercase tracking-wider text-[10px]">Dein Tag</span>
+              <button
+                type="button"
+                onClick={() => void syncCalendarNow(true)}
+                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-indigo-50/80 text-[#3138A0] text-[10px] font-semibold active:scale-95 transition-transform"
+                title="Mit Google Kalender synchronisieren"
+              >
+                <RefreshCw
+                  size={10}
+                  className={calendarSyncState.syncing ? 'animate-spin' : ''}
+                />
+                <span>Google Sync</span>
+              </button>
+            </div>
             <button
               type="button"
               onClick={handleOpenTour}
@@ -274,9 +295,16 @@ export const HeuteView: React.FC = () => {
                           )}
                         </div>
                         <div className="min-w-0">
-                          <h3 className="text-sm font-bold text-slate-950 leading-snug">
-                            {app.title || 'Termin'}
-                          </h3>
+                          <div className="flex items-center gap-1.5">
+                            <h3 className="text-sm font-bold text-slate-950 leading-snug truncate">
+                              {app.title || 'Termin'}
+                            </h3>
+                            {extractGoogleEventId(app.notes) && (
+                              <span className="px-1.5 py-0.2 bg-indigo-50 text-[#3138A0] text-[9px] font-bold rounded shrink-0">
+                                G-Kalender
+                              </span>
+                            )}
+                          </div>
                           <p className="text-xs text-slate-600 mt-0.5 truncate">
                             {cust ? cust.name : 'Ohne Kunde'}
                             {app.duration_minutes ? ` · ${app.duration_minutes} Min.` : ''}
@@ -342,16 +370,21 @@ export const HeuteView: React.FC = () => {
               </p>
             ) : (
               <>
-                {openWork.slice(0, 6).map((w) => {
+                {openWork.slice(0, 8).map((w) => {
                   const c = customers.find((cust) => cust.id === w.customer_id);
                   return (
-                    <button
+                    <div
                       key={w.id}
-                      type="button"
-                      onClick={() => navigate('M04_ABRECHNUNG')}
-                      className="w-full px-3.5 py-2.5 flex items-center justify-between gap-2 text-left hover:bg-slate-100/70 transition-colors"
+                      onClick={() => {
+                        if (w.customer_id) {
+                          setSelectedCustomerId(w.customer_id);
+                        }
+                        setPreselectedWorkRecordIds([w.id]);
+                        setActiveModal('RECHNUNG_VORBEREITEN');
+                      }}
+                      className="w-full px-3.5 py-2.5 flex items-center justify-between gap-2 text-left hover:bg-slate-100/70 transition-colors cursor-pointer"
                     >
-                      <div className="min-w-0">
+                      <div className="min-w-0 flex-1">
                         <span className="text-xs font-bold text-slate-900 block truncate">
                           {w.title}
                         </span>
@@ -359,10 +392,24 @@ export const HeuteView: React.FC = () => {
                           {c?.name || 'Ohne Kunde'} · {w.work_date} · {w.hours} Std.
                         </span>
                       </div>
-                      <span className="text-xs font-bold text-[#B4470B] tabular-nums shrink-0">
-                        {(w.accounting_amount || 0).toFixed(2)} €
-                      </span>
-                    </button>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className="text-xs font-bold text-[#B4470B] tabular-nums">
+                          {(w.accounting_amount || 0).toFixed(2)} €
+                        </span>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedWorkRecordId(w.id);
+                            setActiveModal('ARBEIT_BEARBEITEN');
+                          }}
+                          className="w-7 h-7 rounded-lg bg-white border border-slate-200 flex items-center justify-center text-slate-600 hover:text-[#3138A0]"
+                          title="Arbeitsaufzeichnung direkt bearbeiten"
+                        >
+                          <Pencil size={12} />
+                        </button>
+                      </div>
+                    </div>
                   );
                 })}
                 <button
