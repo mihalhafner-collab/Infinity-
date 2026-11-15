@@ -140,8 +140,20 @@ const MALE_FIRST_NAMES = new Set([
   'wilhelm', 'willi', 'willy', 'winfried', 'wolfgang', 'wolfram'
 ]);
 
-const COMPANY_KEYWORDS_REGEX =
-  /\b(gmbh|gesmbh|ges\.m\.b\.h|kg|og|ag|e\.u\.|keg|gbr|ohg|verein|verband|stiftung|genossenschaft|gemeinde|stadtgemeinde|marktgemeinde|stadt|caritas|diakonie|hilfswerk|rotes\s+kreuz|lebenshilfe|pfarre|kirche|schule|kindergarten|hausverwaltung|hv|immobilien|immo|wohnungseigentum|weg|wohnanlage|bau|baufirma|holzbau|metallbau|kfz|autohaus|werkstatt|spedition|transport|hotel|gasthof|pension|restaurant|apotheke|praxis|ordination|kanzlei|notariat|steuerberatung|bank|sparkasse|raiffeisen|volksbank|versicherung|gärtnerei|baumschule|forst|gutsverwaltung|firma|betrieb|service|technik|elektro|sanitär|maler|tischlerei|zimmerei|reinigung|holding|group|center|zentrum|studio|agentur|handel|co\.|&\s*co)\b/i;
+// Rechtsformen (AT / DE) – dürfen niemals als Nachname oder Familie interpretiert werden
+const LEGAL_FORM_REGEX =
+  /\b(gesbr|ges\.?\s*b\.?\s*r\.?|gbr|gmbh|gesmbh|ges\.?\s*m\.?\s*b\.?\s*h\.?|kg|og|ag|e\.?\s*u\.?|keg|ohg|se|weg|arge|co\.?|&\s*co|&\s*partner|ges\.?\s*n\.?\s*b\.?\s*r\.?|genmbh|reg\.?\s*gen\.?|inc\.?|ltd\.?)\b/i;
+
+// Firmen-, Praxis-, Kanzlei- & Institutionsbegriffe inkl. deutscher Komposita (z.B. Zahnarztpraxis, Gemeinschaftspraxis, Hausverwaltung)
+const COMPANY_COMPOUND_REGEX =
+  /(?:[a-zäöüß]*)(praxis|praxisgemeinschaft|ordination|ordinationsgemeinschaft|ambulatorium|ambulanz|klinik|klinikum|krankenhaus|sanatorium|apotheke|kanzlei|notariat|steuerberatung|wirtschaftstreuhand|hausverwaltung|gebäudeverwaltung|liegenschaftsverwaltung|gutsverwaltung|immobilienverwaltung|verwaltung|hausbetreuung|objektbetreuung|gartenbau|landschaftsbau|forstbetrieb|holzbau|metallbau|wohnbau|hochbau|tiefbau|erdbau|baufirma|bauunternehmen|werkstatt|werkstätte|autohaus|lagerhaus|gärtnerei|baumschule|tischlerei|zimmerei|schlosserei|spenglerei|malerei|bäckerei|fleischerei|metzgerei|reinigung|gebäudereinigung|spedition|agentur|studio|institut|zentrum|center|holding|stiftung|genossenschaft|verband|verein|gemeinde|stadtgemeinde|marktgemeinde|ortsgemeinde|pfarre|kirche|schule|kindergarten|pflegeheim|seniorenheim|gasthof|gasthaus|wirtshaus|restaurant|hotel|pension)\b/i;
+
+const COMPANY_STANDALONE_REGEX =
+  /\b(firma|betrieb|unternehmen|gesellschaft|service|technik|elektro|sanitär|handel|immobilien|immo|wohnungseigentum|wohnanlage|wohnhausanlage|bau|forst|kfz|bank|sparkasse|raiffeisen|volksbank|versicherung|caritas|diakonie|hilfswerk|rotes\s+kreuz|lebenshilfe|stadt|land|bund|kammer|innung|team|group)\b/i;
+
+// Berufs-, Rollen- & Fachbezeichnungen, die keine Nachnamen sind (z.B. "Mag. Dr. Matthias Gabriel – Zahnarzt")
+const PROFESSION_DESCRIPTOR_REGEX =
+  /^(zahnarzt|zahnärztin|zahnärzte|zahnarztpraxis|zahnmedizin|arzt|ärztin|ärzte|arztpraxis|facharzt|fachärztin|hausarzt|hausärztin|tierarzt|tierärztin|wahlarzt|wahlärztin|kassenarzt|primar|primarius|oberarzt|oberärztin|ordination|praxis|gemeinschaftspraxis|gruppenpraxis|praxisgemeinschaft|kieferorthopäde|kieferorthopädin|kieferorthopädie|oralchirurgie|physiotherapeut|physiotherapeutin|physiotherapie|psychotherapeut|psychotherapeutin|psychotherapie|therapie|apotheker|apothekerin|rechtsanwalt|rechtsanwältin|rechtsanwälte|anwalt|anwältin|notar|notarin|steuerberater|steuerberaterin|wirtschaftsprüfer|architekt|architektin|baumeister|baumeisterin|ziviltechniker|sachverständiger|gutachter|inhaber|inhaberin|inh|geschäftsführer|geschäftsführerin|gf|partner|kollegen)$/i;
 
 const ACADEMIC_TITLE_MAP: Record<string, string> = {
   'dr': 'Dr.',
@@ -154,6 +166,9 @@ const ACADEMIC_TITLE_MAP: Record<string, string> = {
   'ing': 'Ing.',
   'prof': 'Prof.',
   'univ-prof': 'Univ.-Prof.',
+  'med': 'med.',
+  'univ': 'univ.',
+  'dent': 'dent.',
   'dkfm': 'Dkfm.',
   'kommr': 'KommR',
   'ökr': 'ÖkR',
@@ -161,8 +176,14 @@ const ACADEMIC_TITLE_MAP: Record<string, string> = {
 };
 
 const IGNORED_DEGREE_TOKENS = new Set([
-  'ba', 'ma', 'bsc', 'msc', 'mba', 'llm', 'll.m', 'fh', '(fh)', 'bed', 'med', 'phd', 'jun', 'sen', 'jr', 'sr'
+  'ba', 'ma', 'bsc', 'msc', 'mba', 'llm', 'll.m', 'fh', '(fh)', 'bed', 'phd', 'jun', 'sen', 'jr', 'sr'
 ]);
+
+export interface SalutationContext {
+  company?: string | null;
+  notes?: string | null;
+  email?: string | null;
+}
 
 export interface DetectedSalutation {
   type: 'female' | 'male' | 'family' | 'company' | 'unknown';
@@ -193,8 +214,28 @@ function checkFirstNameGender(rawToken: string): 'female' | 'male' | null {
   return null;
 }
 
-export function detectRecipientSalutation(recipientName: string): DetectedSalutation {
+function isNonSurnameToken(rawToken: string): boolean {
+  const cleaned = rawToken.replace(/^[,.\-–—|/()]+|[,.\-–—|/()]+$/g, '').trim();
+  if (!cleaned) return true;
+  if (LEGAL_FORM_REGEX.test(cleaned)) return true;
+  if (COMPANY_COMPOUND_REGEX.test(cleaned)) return true;
+  if (COMPANY_STANDALONE_REGEX.test(cleaned)) return true;
+  if (PROFESSION_DESCRIPTOR_REGEX.test(cleaned)) return true;
+  return false;
+}
+
+export function detectRecipientSalutation(
+  recipientName: string,
+  context?: SalutationContext | null
+): DetectedSalutation {
   const raw = (recipientName || '').trim();
+  const companyField = (context?.company || '').trim();
+  const notesField = (context?.notes || '').trim();
+  const isPrivateCategory = /^(privatkunde|privat)$/i.test(companyField);
+  const combinedContextText = [raw, !isPrivateCategory ? companyField : '']
+    .filter(Boolean)
+    .join(' ');
+
   const defaultResult: DetectedSalutation = {
     type: 'unknown',
     title: '',
@@ -204,23 +245,29 @@ export function detectRecipientSalutation(recipientName: string): DetectedSaluta
     frauLine: 'Sehr geehrte Frau,',
     herrLine: 'Sehr geehrter Herr,',
     familyLine: 'Sehr geehrte Familie,',
-    duLine: 'Hallo,',
+    duLine: 'Guten Tag,',
     companyLine: 'Sehr geehrte Damen und Herren,'
   };
 
   if (!raw) return defaultResult;
 
-  // 1. Firmen / Organisationen / Hausverwaltungen / KFZ / Caritas etc. erkennen
-  const isCompany = COMPANY_KEYWORDS_REGEX.test(raw);
-
-  // Entferne evtl. Klammerzusätze am Ende wie "(Hauptkunde)" oder "(Objekt ...)"
+  // Entferne Klammerzusätze wie "(Hauptkunde)" oder "(Objekt ...)"
   const withoutParens = raw.replace(/\s*\([^)]*\)\s*/g, ' ').replace(/\s+/g, ' ').trim();
 
-  // 2. Explizite Präfixe prüfen: "Familie ...", "Frau ...", "Herr ..."
-  const famMatch = withoutParens.match(/^(?:familie|fam\.?)\s+(.+)$/i);
-  if (famMatch) {
+  // Prüfe auf Rechtsformen (GesbR, GmbH, OG, KG, e.U., WEG etc.) und Institutionen/Praxen
+  const hasLegalForm = LEGAL_FORM_REGEX.test(combinedContextText);
+  const hasCompanyOrPracticeKeyword =
+    COMPANY_COMPOUND_REGEX.test(combinedContextText) ||
+    COMPANY_STANDALONE_REGEX.test(combinedContextText);
+
+  // 1. Explizite Präfixe prüfen: "Familie ...", "Ehepaar ..." (nur wenn keine Rechtsform/Firma wie GesbR vorliegt!)
+  const famMatch = withoutParens.match(/^(?:familie|fam\.?|ehepaar)\s+(.+)$/i);
+  if (famMatch && !hasLegalForm && !hasCompanyOrPracticeKeyword) {
     const famRest = famMatch[1].trim();
-    const parts = famRest.split(/\s+/);
+    const parts = famRest
+      .split(/\s+/)
+      .map((p) => p.replace(/,/g, ''))
+      .filter((p) => p && !isNonSurnameToken(p));
     const lastName = parts[parts.length - 1] || famRest;
     return {
       type: 'family',
@@ -236,10 +283,14 @@ export function detectRecipientSalutation(recipientName: string): DetectedSaluta
     };
   }
 
+  // 2. Explizite Anrede "Frau ..." oder "Herr ..." am Anfang
   const frauMatch = withoutParens.match(/^(?:frau|fr\.?)\s+(.+)$/i);
-  if (frauMatch && !isCompany) {
+  if (frauMatch && !hasLegalForm) {
     const rest = frauMatch[1].trim();
-    const parts = rest.split(/\s+/);
+    const parts = rest
+      .split(/\s+/)
+      .map((p) => p.replace(/,/g, ''))
+      .filter((p) => p && !isNonSurnameToken(p));
     const lastName = parts[parts.length - 1] || rest;
     const firstName = parts.length > 1 ? parts[0] : '';
     return {
@@ -257,9 +308,12 @@ export function detectRecipientSalutation(recipientName: string): DetectedSaluta
   }
 
   const herrMatch = withoutParens.match(/^(?:herrn?|hr\.?)\s+(.+)$/i);
-  if (herrMatch && !isCompany) {
+  if (herrMatch && !hasLegalForm) {
     const rest = herrMatch[1].trim();
-    const parts = rest.split(/\s+/);
+    const parts = rest
+      .split(/\s+/)
+      .map((p) => p.replace(/,/g, ''))
+      .filter((p) => p && !isNonSurnameToken(p));
     const lastName = parts[parts.length - 1] || rest;
     const firstName = parts.length > 1 ? parts[0] : '';
     return {
@@ -276,138 +330,187 @@ export function detectRecipientSalutation(recipientName: string): DetectedSaluta
     };
   }
 
-  if (isCompany) {
-    return {
-      type: 'company',
-      title: '',
-      firstName: '',
-      lastName: withoutParens,
-      salutationLine: 'Sehr geehrte Damen und Herren,',
-      frauLine: `Sehr geehrte Frau ${withoutParens},`,
-      herrLine: `Sehr geehrter Herr ${withoutParens},`,
-      familyLine: `Sehr geehrte Familie ${withoutParens},`,
-      duLine: `Liebes Team von ${withoutParens},`,
-      companyLine: 'Sehr geehrte Damen und Herren,'
-    };
+  // 3. Segmente bei Trennzeichen ("Mag. Dr. Matthias Gabriel – Zahnarzt", "Dr. Kogler | Ordination") aufbereiten
+  const segments = withoutParens
+    .split(/\s+(?:[-–—|/])\s+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  // Falls im Kundennamen keine Person steht, aber in companyField oder notes ("Ansprechpartner: ...")
+  const candidateSources = [...segments];
+  if (
+    companyField &&
+    !isPrivateCategory &&
+    !LEGAL_FORM_REGEX.test(companyField) &&
+    !COMPANY_COMPOUND_REGEX.test(companyField)
+  ) {
+    candidateSources.push(companyField);
+  }
+  const contactMatch = notesField.match(
+    /(?:ansprechpartner(?:in)?|kontakt|inhaber(?:in)?|z\.?\s*hd\.?)\s*[:\-]?\s*([^\n,;]+)/i
+  );
+  if (contactMatch?.[1]) {
+    candidateSources.push(contactMatch[1].trim());
   }
 
-  // 3. Ehepaare / Zwei Personen ("Hans und Maria Gruber", "Sabine & Thomas Leitner")
-  if (/\s+(?:und|&|\+)\s+/i.test(withoutParens)) {
-    const tokens = withoutParens.split(/\s+/).filter(Boolean);
-    const lastName = tokens[tokens.length - 1] || withoutParens;
-    return {
-      type: 'family',
-      title: '',
-      firstName: '',
-      lastName,
-      salutationLine: `Sehr geehrte Familie ${lastName},`,
-      frauLine: `Sehr geehrte Frau ${lastName},`,
-      herrLine: `Sehr geehrter Herr ${lastName},`,
-      familyLine: `Sehr geehrte Familie ${lastName},`,
-      duLine: `Liebe Familie ${lastName},`,
-      companyLine: 'Sehr geehrte Damen und Herren,'
-    };
+  // Prüfe, ob eine echte Paarkonstellation ("Hans und Maria Gruber") vorliegt (und KEINE GesbR / Praxisgemeinschaft / Firma)
+  const hasConjunction = /\s+(?:und|&|\+)\s+/i.test(withoutParens);
+  const hasMultipleDoctors = (withoutParens.match(/\b(?:d?dr|mag|ing|di)\b/gi) || []).length >= 2;
+
+  if (
+    hasConjunction &&
+    !hasLegalForm &&
+    !hasCompanyOrPracticeKeyword &&
+    !hasMultipleDoctors
+  ) {
+    const tokens = withoutParens
+      .split(/\s+/)
+      .map((t) => t.replace(/,/g, ''))
+      .filter((t) => t && !/^(und|&|\+)$/i.test(t) && !isNonSurnameToken(t));
+    const hasRecognizedGivenName = tokens
+      .slice(0, -1)
+      .some((t) => checkFirstNameGender(t) !== null);
+    const lastCandidate = tokens[tokens.length - 1];
+    if (hasRecognizedGivenName && lastCandidate && !isNonSurnameToken(lastCandidate)) {
+      return {
+        type: 'family',
+        title: '',
+        firstName: '',
+        lastName: lastCandidate,
+        salutationLine: `Sehr geehrte Familie ${lastCandidate},`,
+        frauLine: `Sehr geehrte Frau ${lastCandidate},`,
+        herrLine: `Sehr geehrter Herr ${lastCandidate},`,
+        familyLine: `Sehr geehrte Familie ${lastCandidate},`,
+        duLine: `Liebe Familie ${lastCandidate},`,
+        companyLine: 'Sehr geehrte Damen und Herren,'
+      };
+    }
   }
 
-  // 4. Akademische Titel extrahieren ("Dr.", "Mag.", "DI", "Ing.", etc.)
-  const rawTokens = withoutParens.split(/\s+/).filter(Boolean);
+  // 4. Extrahiere akademische Titel sowie Vor- und Nachname aus den bereinigten Token
+  const primaryText = segments[0] || withoutParens;
+  const rawTokens = primaryText.split(/\s+/).filter(Boolean);
   const foundTitles: string[] = [];
-  const nameTokens: string[] = [];
+  const personTokens: string[] = [];
 
   for (const tok of rawTokens) {
-    const norm = tok.toLowerCase().replace(/\./g, '').replace(/,/g, '');
+    const cleanedTok = tok.replace(/^[,.\-–—|/()]+|[,.\-–—|/()]+$/g, '');
+    if (!cleanedTok || /^(und|&|\+)$/i.test(cleanedTok)) continue;
+    const norm = cleanedTok.toLowerCase().replace(/\./g, '');
     if (ACADEMIC_TITLE_MAP[norm]) {
       foundTitles.push(ACADEMIC_TITLE_MAP[norm]);
     } else if (IGNORED_DEGREE_TOKENS.has(norm)) {
       // nachgestellte Grade wie BSc/MSc ignorieren
-    } else {
-      nameTokens.push(tok);
+    } else if (!isNonSurnameToken(cleanedTok)) {
+      personTokens.push(tok.replace(/\.$/, ''));
+    }
+  }
+
+  // Falls im Hauptsegment keine Personentoken übrig blieben (z.B. "Zahnarztpraxis GesbR"), prüfe weitere Segmente/Kontext
+  if (personTokens.length === 0 && candidateSources.length > 1) {
+    for (const src of candidateSources.slice(1)) {
+      for (const tok of src.split(/\s+/).filter(Boolean)) {
+        const cleanedTok = tok.replace(/^[,.\-–—|/()]+|[,.\-–—|/()]+$/g, '');
+        if (!cleanedTok || /^(und|&|\+)$/i.test(cleanedTok)) continue;
+        const norm = cleanedTok.toLowerCase().replace(/\./g, '');
+        if (ACADEMIC_TITLE_MAP[norm]) {
+          if (!foundTitles.includes(ACADEMIC_TITLE_MAP[norm])) {
+            foundTitles.push(ACADEMIC_TITLE_MAP[norm]);
+          }
+        } else if (!IGNORED_DEGREE_TOKENS.has(norm) && !isNonSurnameToken(cleanedTok)) {
+          personTokens.push(cleanedTok);
+        }
+      }
+      if (personTokens.length > 0) break;
     }
   }
 
   const titlePrefix = foundTitles.length > 0 ? `${foundTitles.join(' ')} ` : '';
 
-  if (nameTokens.length === 0) {
-    return defaultResult;
+  // Bestimme Vorname / Nachname / Geschlecht aus personTokens
+  let detectedGender: 'female' | 'male' | null = null;
+  let firstName = '';
+  let lastName = '';
+
+  if (personTokens.length === 1) {
+    const single = personTokens[0].replace(/,/g, '');
+    lastName = single;
+    // Einzelwort ohne weiteren Nachnamen ist nur dann eine Person, wenn kein Firmenkontext vorliegt
+    if (!hasLegalForm && !hasCompanyOrPracticeKeyword) {
+      const g = checkFirstNameGender(single);
+      if (g) {
+        detectedGender = g;
+        firstName = single;
+      }
+    }
+  } else if (personTokens.length >= 2) {
+    const firstTok = personTokens[0];
+    const lastTok = personTokens[personTokens.length - 1].replace(/,/g, '');
+    const hasCommaAfterFirst = firstTok.endsWith(',');
+    const cleanFirstTok = firstTok.replace(/,/g, '');
+
+    const firstGender = checkFirstNameGender(cleanFirstTok);
+    const lastGender = checkFirstNameGender(lastTok);
+
+    if (hasCommaAfterFirst && lastGender) {
+      // "Pirker, Johann"
+      detectedGender = lastGender;
+      lastName = cleanFirstTok;
+      firstName = lastTok;
+    } else if (firstGender) {
+      // Standard "Matthias Gabriel" oder "Barbara Todoroff"
+      detectedGender = firstGender;
+      firstName = cleanFirstTok;
+      lastName = lastTok;
+    } else if (lastGender) {
+      // Österreichische Reihenfolge "Pirker Johann"
+      detectedGender = lastGender;
+      lastName = cleanFirstTok;
+      firstName = lastTok;
+    } else {
+      lastName = lastTok;
+      firstName = cleanFirstTok;
+    }
   }
 
-  // Einzelwort (z.B. nur Nachname "Gruber")
-  if (nameTokens.length === 1) {
-    const single = nameTokens[0].replace(/,/g, '');
-    const gender = checkFirstNameGender(single);
-    if (gender === 'female') {
-      return {
-        type: 'female',
-        title: foundTitles.join(' '),
-        firstName: single,
-        lastName: single,
-        salutationLine: `Sehr geehrte Frau ${titlePrefix}${single},`,
-        frauLine: `Sehr geehrte Frau ${titlePrefix}${single},`,
-        herrLine: `Sehr geehrter Herr ${titlePrefix}${single},`,
-        familyLine: `Sehr geehrte Familie ${single},`,
-        duLine: `Liebe ${single},`,
-        companyLine: 'Sehr geehrte Damen und Herren,'
-      };
-    }
-    if (gender === 'male') {
-      return {
-        type: 'male',
-        title: foundTitles.join(' '),
-        firstName: single,
-        lastName: single,
-        salutationLine: `Sehr geehrter Herr ${titlePrefix}${single},`,
-        frauLine: `Sehr geehrte Frau ${titlePrefix}${single},`,
-        herrLine: `Sehr geehrter Herr ${titlePrefix}${single},`,
-        familyLine: `Sehr geehrte Familie ${single},`,
-        duLine: `Lieber ${single},`,
-        companyLine: 'Sehr geehrte Damen und Herren,'
-      };
-    }
+  // Fallback-Label für die 1-Tipp-Buttons, falls überhaupt kein Personenname enthalten ist (z.B. "Zahnarztpraxis GesbR")
+  const safePersonLastName = lastName || withoutParens.replace(LEGAL_FORM_REGEX, '').trim() || 'Kunde';
+  const frauOptionLine = lastName
+    ? `Sehr geehrte Frau ${titlePrefix}${lastName},`
+    : 'Sehr geehrte Damen und Herren,';
+  const herrOptionLine = lastName
+    ? `Sehr geehrter Herr ${titlePrefix}${lastName},`
+    : 'Sehr geehrte Damen und Herren,';
+  const familyOptionLine = lastName
+    ? `Sehr geehrte Familie ${lastName},`
+    : 'Sehr geehrte Damen und Herren,';
+
+  // 5. Wenn eine Gesellschaftsform (GesbR, GmbH, OG, KG, AG, WEG) oder mehrere Ärzte/Partner vorliegen -> IMMER "Sehr geehrte Damen und Herren,"
+  const startsWithCompanyOrPractice =
+    COMPANY_COMPOUND_REGEX.test(rawTokens[0] || '') ||
+    COMPANY_STANDALONE_REGEX.test(rawTokens[0] || '');
+
+  if (
+    hasLegalForm ||
+    hasMultipleDoctors ||
+    (hasCompanyOrPracticeKeyword && (startsWithCompanyOrPractice || !detectedGender))
+  ) {
     return {
-      type: 'family',
+      type: 'company',
       title: foundTitles.join(' '),
-      firstName: '',
-      lastName: single,
-      salutationLine: `Sehr geehrte Familie ${single},`,
-      frauLine: `Sehr geehrte Frau ${titlePrefix}${single},`,
-      herrLine: `Sehr geehrter Herr ${titlePrefix}${single},`,
-      familyLine: `Sehr geehrte Familie ${single},`,
-      duLine: `Hallo ${single},`,
+      firstName,
+      lastName: safePersonLastName,
+      salutationLine: 'Sehr geehrte Damen und Herren,',
+      frauLine: frauOptionLine,
+      herrLine: herrOptionLine,
+      familyLine: familyOptionLine,
+      duLine: firstName ? `Hallo ${firstName},` : `Guten Tag,`,
       companyLine: 'Sehr geehrte Damen und Herren,'
     };
   }
 
-  // Mehrere Wörter: Prüfe "Nachname, Vorname" (mit Beistrich) oder "Vorname Nachname" vs. "Nachname Vorname"
-  const firstTok = nameTokens[0];
-  const lastTok = nameTokens[nameTokens.length - 1].replace(/,/g, '');
-  const hasCommaAfterFirst = firstTok.endsWith(',');
-  const cleanFirstTok = firstTok.replace(/,/g, '');
-
-  const firstGender = checkFirstNameGender(cleanFirstTok);
-  const lastGender = checkFirstNameGender(lastTok);
-
-  let detectedGender: 'female' | 'male' | null = null;
-  let firstName = '';
-  let lastName = lastTok;
-
-  if (hasCommaAfterFirst && lastGender) {
-    // "Pirker, Johann"
-    detectedGender = lastGender;
-    lastName = cleanFirstTok;
-    firstName = lastTok;
-  } else if (firstGender) {
-    // Standard "Johann Pirker" oder "Claudia Kogler"
-    detectedGender = firstGender;
-    firstName = cleanFirstTok;
-    lastName = lastTok;
-  } else if (lastGender) {
-    // Österreichische Schreibweise "Pirker Johann" oder "Kogler Claudia"
-    detectedGender = lastGender;
-    lastName = cleanFirstTok;
-    firstName = lastTok;
-  }
-
-  if (detectedGender === 'female') {
+  // 6. Einzelperson (auch mit Berufsbezeichnung wie "Mag. Dr. Matthias Gabriel – Zahnarzt")
+  if (detectedGender === 'female' && lastName) {
     return {
       type: 'female',
       title: foundTitles.join(' '),
@@ -417,12 +520,12 @@ export function detectRecipientSalutation(recipientName: string): DetectedSaluta
       frauLine: `Sehr geehrte Frau ${titlePrefix}${lastName},`,
       herrLine: `Sehr geehrter Herr ${titlePrefix}${lastName},`,
       familyLine: `Sehr geehrte Familie ${lastName},`,
-      duLine: firstName ? `Liebe ${firstName},` : `Liebe Frau ${lastName},`,
+      duLine: firstName ? `Liebe ${firstName},` : `Guten Tag Frau ${titlePrefix}${lastName},`,
       companyLine: 'Sehr geehrte Damen und Herren,'
     };
   }
 
-  if (detectedGender === 'male') {
+  if (detectedGender === 'male' && lastName) {
     return {
       type: 'male',
       title: foundTitles.join(' '),
@@ -432,22 +535,39 @@ export function detectRecipientSalutation(recipientName: string): DetectedSaluta
       frauLine: `Sehr geehrte Frau ${titlePrefix}${lastName},`,
       herrLine: `Sehr geehrter Herr ${titlePrefix}${lastName},`,
       familyLine: `Sehr geehrte Familie ${lastName},`,
-      duLine: firstName ? `Lieber ${firstName},` : `Lieber Herr ${lastName},`,
+      duLine: firstName ? `Lieber ${firstName},` : `Guten Tag Herr ${titlePrefix}${lastName},`,
       companyLine: 'Sehr geehrte Damen und Herren,'
     };
   }
 
-  // Falls Initiale wie "M. Gruber" -> Nachname erkannt, Familie/Direktansprache als Standard + 1-Tipp für Frau/Herr Gruber
+  // 7. Explizite Kategorie "Familie" im Kundenstamm
+  if (/^(familie|ehepaar)$/i.test(companyField) && lastName) {
+    return {
+      type: 'family',
+      title: foundTitles.join(' '),
+      firstName,
+      lastName,
+      salutationLine: `Sehr geehrte Familie ${lastName},`,
+      frauLine: `Sehr geehrte Frau ${titlePrefix}${lastName},`,
+      herrLine: `Sehr geehrter Herr ${titlePrefix}${lastName},`,
+      familyLine: `Sehr geehrte Familie ${lastName},`,
+      duLine: `Liebe Familie ${lastName},`,
+      companyLine: 'Sehr geehrte Damen und Herren,'
+    };
+  }
+
+  // 8. Sicherer Standard-Fallback bei unklarem Geschlecht / unbekannter Bezeichnung:
+  // Niemals blind "Sehr geehrte Familie ..." raten, sondern seriös "Sehr geehrte Damen und Herren," verwenden!
   return {
-    type: 'unknown',
+    type: hasCompanyOrPracticeKeyword ? 'company' : 'unknown',
     title: foundTitles.join(' '),
-    firstName: cleanFirstTok,
-    lastName,
-    salutationLine: `Sehr geehrte Familie ${lastName},`,
-    frauLine: `Sehr geehrte Frau ${titlePrefix}${lastName},`,
-    herrLine: `Sehr geehrter Herr ${titlePrefix}${lastName},`,
-    familyLine: `Sehr geehrte Familie ${lastName},`,
-    duLine: `Hallo ${withoutParens},`,
+    firstName,
+    lastName: safePersonLastName,
+    salutationLine: 'Sehr geehrte Damen und Herren,',
+    frauLine: frauOptionLine,
+    herrLine: herrOptionLine,
+    familyLine: familyOptionLine,
+    duLine: `Guten Tag,`,
     companyLine: 'Sehr geehrte Damen und Herren,'
   };
 }
@@ -471,11 +591,53 @@ export function replaceIntroSalutation(introText: string, newSalutationLine: str
   return `${salutation}\n${trimmed}`;
 }
 
+/**
+ * Prüft einen gespeicherten Einleitungstext auf fehlerhafte Anreden
+ * (z.B. "Sehr geehrte Familie GesbR," oder "Sehr geehrte Familie ..." bei einer Praxis/Firma)
+ * und korrigiert die erste Zeile automatisch anhand des Empfängerkontexts.
+ */
+export function sanitizeIntroTextSalutation(
+  introText: string,
+  recipientName: string,
+  context?: SalutationContext | null
+): string {
+  const trimmed = (introText || '').trim();
+  const detected = detectRecipientSalutation(recipientName, context);
+  if (!trimmed) {
+    return `${detected.salutationLine}\n${DEFAULT_INVOICE_INTRO_BODY}`;
+  }
+  const firstLine = trimmed.split(/\r?\n/)[0]?.trim() || '';
+
+  // Wenn die gespeicherte Anrede eine Rechtsform oder einen Firmen-/Praxisbegriff als Namen verwendet (z.B. "Sehr geehrte Familie GesbR,")
+  const hasFalseEntityInSalutation =
+    /^(?:sehr\s+geehrte\s+(?:familie|frau|herr)|liebe|hallo)\b/i.test(firstLine) &&
+    (LEGAL_FORM_REGEX.test(firstLine) ||
+      COMPANY_COMPOUND_REGEX.test(firstLine) ||
+      COMPANY_STANDALONE_REGEX.test(firstLine) ||
+      /\bzahnarzt\b/i.test(firstLine));
+
+  // Oder wenn eine Praxis/Firma fälschlicherweise mit "Sehr geehrte Familie ..." angesprochen wurde
+  const isCompanyAddressedAsFamily =
+    detected.type === 'company' && /^sehr\s+geehrte\s+familie\b/i.test(firstLine);
+
+  // Oder wenn eine eindeutig erkannte Person noch die generische Standardanrede hat
+  const isPersonWithGenericDefault =
+    (detected.type === 'female' || detected.type === 'male' || detected.type === 'family') &&
+    /^sehr\s+geehrte\s+damen\s+und\s+herren,/i.test(firstLine);
+
+  if (hasFalseEntityInSalutation || isCompanyAddressedAsFamily || isPersonWithGenericDefault) {
+    return replaceIntroSalutation(trimmed, detected.salutationLine);
+  }
+
+  return trimmed;
+}
+
 export function buildPersonalizedIntroText(
   recipientName: string,
-  isPauschal = false
+  isPauschal = false,
+  context?: SalutationContext | null
 ): string {
-  const { salutationLine } = detectRecipientSalutation(recipientName);
+  const { salutationLine } = detectRecipientSalutation(recipientName, context);
   const body = isPauschal ? DEFAULT_PAUSCHAL_INTRO_BODY : DEFAULT_INVOICE_INTRO_BODY;
   return `${salutationLine}\n${body}`;
 }
@@ -774,19 +936,19 @@ export function resolveInvoiceDisplayData(
 
   const dueIso = invoice.due_date || addDaysIso(invoice.issue_date, 14);
   const recipientName = invoice.billing_customer_name || customer?.name || 'Kunde';
-  const detectedSalutation = detectRecipientSalutation(recipientName);
 
   let resolvedIntroText = invoice.intro_text?.trim() || '';
   if (!resolvedIntroText) {
-    resolvedIntroText = buildPersonalizedIntroText(recipientName, Boolean(invoice.is_pauschal));
-  } else if (
-    detectedSalutation.type !== 'company' &&
-    detectedSalutation.type !== 'unknown' &&
-    /^sehr\s+geehrte\s+damen\s+und\s+herren,/i.test(resolvedIntroText)
-  ) {
-    resolvedIntroText = replaceIntroSalutation(
+    resolvedIntroText = buildPersonalizedIntroText(
+      recipientName,
+      Boolean(invoice.is_pauschal),
+      customer
+    );
+  } else {
+    resolvedIntroText = sanitizeIntroTextSalutation(
       resolvedIntroText,
-      detectedSalutation.salutationLine
+      recipientName,
+      customer
     );
   }
 

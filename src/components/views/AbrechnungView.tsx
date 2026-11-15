@@ -1044,7 +1044,7 @@ export const AbrechnungView: React.FC = () => {
                         if (found.customer_number) {
                           setEditCustomerNumber(found.customer_number);
                         }
-                        const nextSalutation = detectRecipientSalutation(found.name).salutationLine;
+                        const nextSalutation = detectRecipientSalutation(found.name, found).salutationLine;
                         setEditIntroText((prev) => replaceIntroSalutation(prev, nextSalutation));
                       }
                     }}
@@ -1066,7 +1066,8 @@ export const AbrechnungView: React.FC = () => {
                     onChange={(e) => {
                       const nextName = e.target.value;
                       setEditBillingName(nextName);
-                      const nextSalutation = detectRecipientSalutation(nextName).salutationLine;
+                      const activeCust = customers.find((c) => c.id === editCustomerId);
+                      const nextSalutation = detectRecipientSalutation(nextName, activeCust).salutationLine;
                       setEditIntroText((prev) => replaceIntroSalutation(prev, nextSalutation));
                     }}
                     className="w-full h-11 px-3 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-[#3138A0] outline-hidden text-xs font-medium text-slate-900"

@@ -29,7 +29,8 @@ import {
   computeServicePeriod,
   getCustomerBillingRecipient,
   getTodayLocalIso,
-  resolveCustomerNumber
+  resolveCustomerNumber,
+  sanitizeIntroTextSalutation
 } from '../utils/invoicePdf.ts';
 import {
   getNativeBackupMeta,
@@ -120,6 +121,8 @@ interface AppContextType {
   setSelectedWorkRecordId: (id: string | null) => void;
   selectedEquipmentId: string | null;
   setSelectedEquipmentId: (id: string | null) => void;
+  selectedMaterialId: string | null;
+  setSelectedMaterialId: (id: string | null) => void;
   sendingInvoiceId: string | null;
   setSendingInvoiceId: (id: string | null) => void;
   preselectedWorkRecordIds: string[];
@@ -348,6 +351,7 @@ export const AppProvider: React.FC<{
   const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | null>(null);
   const [selectedWorkRecordId, setSelectedWorkRecordId] = useState<string | null>(null);
   const [selectedEquipmentId, setSelectedEquipmentId] = useState<string | null>(null);
+  const [selectedMaterialId, setSelectedMaterialId] = useState<string | null>(null);
   const [sendingInvoiceId, setSendingInvoiceId] = useState<string | null>(null);
   const [preselectedWorkRecordIds, setPreselectedWorkRecordIds] = useState<string[]>([]);
   const [prefilledWorkTitle, setPrefilledWorkTitle] = useState<string | null>(null);
@@ -2497,9 +2501,9 @@ export const AppProvider: React.FC<{
           : 'unpaid';
 
     const recipientName = cust?.name || 'Kunde';
-    const resolvedIntroText =
-      options?.introText?.trim() ||
-      buildPersonalizedIntroText(recipientName, Boolean(options?.isPauschal));
+    const resolvedIntroText = options?.introText?.trim()
+      ? sanitizeIntroTextSalutation(options.introText, recipientName, cust)
+      : buildPersonalizedIntroText(recipientName, Boolean(options?.isPauschal), cust);
 
     const newInvoice: Invoice = {
       id: `inv-${Date.now()}`,
@@ -3131,6 +3135,9 @@ export const AppProvider: React.FC<{
     const prevDeletedIds = { ...deletedIds };
     recordDeletedTombstones([['materials', id]]);
     setMaterials(prev => prev.filter(m => m.id !== id));
+    if (selectedMaterialId === id) {
+      setSelectedMaterialId(null);
+    }
     setUndoToast({
       visible: true,
       message: `Material „${target.name}“ gelöscht`,
@@ -3340,6 +3347,8 @@ export const AppProvider: React.FC<{
         setSelectedWorkRecordId,
         selectedEquipmentId,
         setSelectedEquipmentId,
+        selectedMaterialId,
+        setSelectedMaterialId,
         sendingInvoiceId,
         setSendingInvoiceId,
         preselectedWorkRecordIds,

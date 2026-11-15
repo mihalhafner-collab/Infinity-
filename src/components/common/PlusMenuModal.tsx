@@ -31,6 +31,7 @@ export const PlusMenuModal: React.FC = () => {
     selectedCustomerId,
     setSelectedPropertyId,
     setSelectedEquipmentId,
+    setSelectedMaterialId,
     customers,
     properties,
     performBackup
@@ -63,6 +64,7 @@ export const PlusMenuModal: React.FC = () => {
         setActiveModal('WARTUNG_DOKUMENTIEREN');
         break;
       case 'material_anlegen':
+        setSelectedMaterialId(null);
         setActiveModal('MATERIAL_ANLEGEN');
         break;
       case 'arbeit_nachtragen':

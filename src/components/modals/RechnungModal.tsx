@@ -23,7 +23,8 @@ import {
   getEffectiveBillingCustomerId,
   getTodayLocalIso,
   replaceIntroSalutation,
-  resolveCustomerNumber
+  resolveCustomerNumber,
+  sanitizeIntroTextSalutation
 } from '../../utils/invoicePdf.ts';
 import {
   AlertTriangle,
@@ -323,7 +324,9 @@ export const RechnungModal: React.FC = () => {
       setTextOptionsOpen(false);
       setActiveIntroTemplate(startInPauschal ? 'pauschal' : 'standard');
       setCustomSubjectText('');
-      setCustomIntroText(buildPersonalizedIntroText(initialRecipientName, startInPauschal));
+      setCustomIntroText(
+        buildPersonalizedIntroText(initialRecipientName, startInPauschal, initialCustObj)
+      );
       setCustomPaymentTermsText('');
       setCustomClosingText('');
 
@@ -720,13 +723,22 @@ export const RechnungModal: React.FC = () => {
   const effectiveServicePeriod = customServicePeriod.trim() || autoServicePeriod;
   const selectedCustomer = customers.find((c) => c.id === selectedCustomerId);
   const detectedSalutation = useMemo(
-    () => detectRecipientSalutation(selectedCustomer?.name || 'Kunde'),
-    [selectedCustomer?.name]
+    () => detectRecipientSalutation(selectedCustomer?.name || 'Kunde', selectedCustomer),
+    [selectedCustomer]
+  );
+  const sanitizedCustomIntroText = useMemo(
+    () =>
+      sanitizeIntroTextSalutation(
+        customIntroText,
+        selectedCustomer?.name || 'Kunde',
+        selectedCustomer
+      ),
+    [customIntroText, selectedCustomer]
   );
   const currentIntroFirstLine = useMemo(() => {
-    const first = (customIntroText || '').trim().split(/\r?\n/)[0]?.trim() || '';
+    const first = (sanitizedCustomIntroText || '').trim().split(/\r?\n/)[0]?.trim() || '';
     return first;
-  }, [customIntroText]);
+  }, [sanitizedCustomIntroText]);
 
   const isPaidInCash = paymentChoice === 'cash';
   const dueDays = isPaidInCash ? 0 : parseInt(paymentChoice, 10);
@@ -756,7 +768,7 @@ export const RechnungModal: React.FC = () => {
     recipientCountry: 'Österreich',
     servicePeriod: effectiveServicePeriod,
     subjectText: customSubjectText.trim() || undefined,
-    introText: customIntroText.trim() || undefined,
+    introText: sanitizedCustomIntroText.trim() || undefined,
     closingText: customClosingText.trim() || undefined,
     isPauschal: isPauschalMode,
     lineItems: draftLineItems,
@@ -789,7 +801,8 @@ export const RechnungModal: React.FC = () => {
     setSelectedCustomerId(effectiveId);
     setCustomerNumberStr(resolveCustomerNumber(effectiveId, customers));
     const nextSalutation = detectRecipientSalutation(
-      effectiveCust?.name || 'Kunde'
+      effectiveCust?.name || 'Kunde',
+      effectiveCust
     ).salutationLine;
     setCustomIntroText((prev) => replaceIntroSalutation(prev, nextSalutation));
 
@@ -1129,7 +1142,7 @@ export const RechnungModal: React.FC = () => {
       customerNumber: effectiveCustomerNumber,
       paymentTermsText: effectivePaymentTerms,
       subjectText: customSubjectText.trim() || undefined,
-      introText: customIntroText.trim() || undefined,
+      introText: sanitizedCustomIntroText.trim() || undefined,
       closingText: customClosingText.trim() || undefined,
       isPauschal: isPauschalMode,
       replaceInvoiceIds: selectedMergeInvoiceIds,
@@ -1799,33 +1812,51 @@ export const RechnungModal: React.FC = () => {
                     </span>
                   </div>
                   <div className="flex flex-wrap gap-1">
-                    {[
-                      {
-                        key: 'frau',
-                        label: `Frau ${detectedSalutation.lastName}`,
-                        line: detectedSalutation.frauLine
-                      },
-                      {
-                        key: 'herr',
-                        label: `Herr ${detectedSalutation.lastName}`,
-                        line: detectedSalutation.herrLine
-                      },
-                      {
-                        key: 'fam',
-                        label: `Familie ${detectedSalutation.lastName}`,
-                        line: detectedSalutation.familyLine
-                      },
-                      {
-                        key: 'du',
-                        label: 'Per Du',
-                        line: detectedSalutation.duLine
-                      },
-                      {
-                        key: 'firma',
-                        label: 'Damen & Herren',
-                        line: detectedSalutation.companyLine
-                      }
-                    ].map((opt) => {
+                    {(detectedSalutation.lastName
+                      ? [
+                          {
+                            key: 'frau',
+                            label: `Frau ${detectedSalutation.title ? `${detectedSalutation.title} ` : ''}${detectedSalutation.lastName}`,
+                            line: detectedSalutation.frauLine
+                          },
+                          {
+                            key: 'herr',
+                            label: `Herr ${detectedSalutation.title ? `${detectedSalutation.title} ` : ''}${detectedSalutation.lastName}`,
+                            line: detectedSalutation.herrLine
+                          },
+                          ...(detectedSalutation.type !== 'company'
+                            ? [
+                                {
+                                  key: 'fam',
+                                  label: `Familie ${detectedSalutation.lastName}`,
+                                  line: detectedSalutation.familyLine
+                                }
+                              ]
+                            : []),
+                          {
+                            key: 'du',
+                            label: 'Per Du',
+                            line: detectedSalutation.duLine
+                          },
+                          {
+                            key: 'firma',
+                            label: 'Damen & Herren',
+                            line: detectedSalutation.companyLine
+                          }
+                        ]
+                      : [
+                          {
+                            key: 'firma',
+                            label: 'Damen & Herren',
+                            line: detectedSalutation.companyLine
+                          },
+                          {
+                            key: 'du',
+                            label: 'Guten Tag',
+                            line: detectedSalutation.duLine
+                          }
+                        ]
+                    ).map((opt) => {
                       const isActive = currentIntroFirstLine === opt.line;
                       return (
                         <button
