@@ -128,10 +128,10 @@ export const HeuteView: React.FC = () => {
 
   return (
     <div className="flex-1 min-h-0 flex flex-col h-full bg-[#F8F9FA] overflow-hidden relative">
-      {/* Main Scroll Area */}
-      <div className="flex-1 min-h-0 overflow-y-auto px-4 pt-3.5 pb-4 space-y-4 overscroll-contain">
+      {/* Main Scroll Area (Flex-Column, damit ZU ERLEDIGEN unten sitzt und nach oben aufklappt) */}
+      <div className="flex-1 min-h-0 overflow-y-auto px-4 pt-3.5 pb-3 flex flex-col gap-4 overscroll-contain">
         {/* Datum & Live-Wetter Kopfzeile + Drei-Punkte-Menü */}
-        <div className="flex items-start justify-between gap-2.5">
+        <div className="flex items-start justify-between gap-2.5 shrink-0">
           <div>
             <h1 className="text-2xl font-bold text-slate-950 tracking-tight leading-tight">
               {todayLabel}
@@ -336,8 +336,8 @@ export const HeuteView: React.FC = () => {
           )}
         </div>
 
-        {/* 2. ZU ERLEDIGEN (Einheitliches Ausklapp-Design) */}
-        <div className="space-y-2.5 pt-0.5">
+        {/* 2. ZU ERLEDIGEN (Unten platziert & nach oben aufklappbar) */}
+        <div className="mt-auto pt-2 space-y-2.5 shrink-0">
           <div className="flex items-center justify-between px-0.5">
             <span className="text-[10px] font-bold uppercase tracking-wider text-slate-600">
               Zu erledigen
@@ -347,7 +347,7 @@ export const HeuteView: React.FC = () => {
             </span>
           </div>
 
-          {/* Ausklappbare Karte 1: Offene Stunden */}
+          {/* Ausklappbare Karte 1: Offene Stunden (nach oben aufklappbar) */}
           <CollapsibleCard
             title="Offene Stunden"
             subtitle={`${openHoursSum.toFixed(2)} Std. · ${openWork.length} Einträge`}
@@ -362,7 +362,8 @@ export const HeuteView: React.FC = () => {
             onToggle={() =>
               setExpandedGroup((prev) => (prev === 'stunden' ? null : 'stunden'))
             }
-            bodyClassName="divide-y divide-slate-100 bg-slate-50/70 border-t border-slate-100"
+            expandDirection="up"
+            bodyClassName="divide-y divide-slate-100 bg-slate-50/70 border-b border-slate-100"
           >
             {openWork.length === 0 ? (
               <p className="p-3.5 text-xs text-slate-500">
@@ -370,60 +371,71 @@ export const HeuteView: React.FC = () => {
               </p>
             ) : (
               <>
-                {openWork.slice(0, 8).map((w) => {
-                  const c = customers.find((cust) => cust.id === w.customer_id);
-                  return (
-                    <div
-                      key={w.id}
-                      onClick={() => {
-                        if (w.customer_id) {
-                          setSelectedCustomerId(w.customer_id);
-                        }
-                        setPreselectedWorkRecordIds([w.id]);
-                        setActiveModal('RECHNUNG_VORBEREITEN');
-                      }}
-                      className="w-full px-3.5 py-2.5 flex items-center justify-between gap-2 text-left hover:bg-slate-100/70 transition-colors cursor-pointer"
-                    >
-                      <div className="min-w-0 flex-1">
-                        <span className="text-xs font-bold text-slate-900 block truncate">
-                          {w.title}
-                        </span>
-                        <span className="text-[11px] text-slate-500 tabular-nums block truncate">
-                          {c?.name || 'Ohne Kunde'} · {w.work_date} · {w.hours} Std.
-                        </span>
+                <div className="max-h-[300px] overflow-y-auto overscroll-contain divide-y divide-slate-100">
+                  {openWork.map((w) => {
+                    const c = customers.find((cust) => cust.id === w.customer_id);
+                    return (
+                      <div
+                        key={w.id}
+                        onClick={() => {
+                          if (w.customer_id) {
+                            setSelectedCustomerId(w.customer_id);
+                          }
+                          setPreselectedWorkRecordIds([w.id]);
+                          setActiveModal('RECHNUNG_VORBEREITEN');
+                        }}
+                        className="w-full px-3.5 py-2.5 flex items-center justify-between gap-2 text-left hover:bg-slate-100/70 transition-colors cursor-pointer"
+                      >
+                        <div className="min-w-0 flex-1">
+                          <span className="text-xs font-bold text-slate-900 block truncate">
+                            {w.title}
+                          </span>
+                          <span className="text-[11px] text-slate-500 tabular-nums block truncate">
+                            {c?.name || 'Ohne Kunde'} · {w.work_date} · {w.hours} Std.
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className="text-xs font-bold text-[#B4470B] tabular-nums">
+                            {(w.accounting_amount || 0).toFixed(2)} €
+                          </span>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedWorkRecordId(w.id);
+                              setActiveModal('ARBEIT_BEARBEITEN');
+                            }}
+                            className="w-7 h-7 rounded-lg bg-white border border-slate-200 flex items-center justify-center text-slate-600 hover:text-[#3138A0]"
+                            title="Arbeitsaufzeichnung direkt bearbeiten"
+                          >
+                            <Pencil size={12} />
+                          </button>
+                        </div>
                       </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        <span className="text-xs font-bold text-[#B4470B] tabular-nums">
-                          {(w.accounting_amount || 0).toFixed(2)} €
-                        </span>
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setSelectedWorkRecordId(w.id);
-                            setActiveModal('ARBEIT_BEARBEITEN');
-                          }}
-                          className="w-7 h-7 rounded-lg bg-white border border-slate-200 flex items-center justify-center text-slate-600 hover:text-[#3138A0]"
-                          title="Arbeitsaufzeichnung direkt bearbeiten"
-                        >
-                          <Pencil size={12} />
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-                <button
-                  type="button"
-                  onClick={() => navigate('M04_ABRECHNUNG')}
-                  className="w-full px-3.5 py-2.5 text-xs font-bold text-[#3138A0] hover:bg-indigo-50/50 text-center transition-colors"
-                >
-                  Zur Abrechnung ({openWork.length} offene Einträge) →
-                </button>
+                    );
+                  })}
+                </div>
+                <div className="grid grid-cols-2 divide-x divide-slate-100 border-t border-slate-100 bg-white/80">
+                  <button
+                    type="button"
+                    onClick={() => navigate('M08_ARBEITEN')}
+                    className="w-full px-3 py-2.5 text-xs font-bold text-slate-700 hover:bg-slate-100/70 text-center transition-colors"
+                  >
+                    Alle Aufzeichnungen ({openWork.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => navigate('M04_ABRECHNUNG')}
+                    className="w-full px-3 py-2.5 text-xs font-bold text-[#3138A0] hover:bg-indigo-50/50 text-center transition-colors"
+                  >
+                    Zur Abrechnung →
+                  </button>
+                </div>
               </>
             )}
           </CollapsibleCard>
 
-          {/* Ausklappbare Karte 2: Fällig & neu */}
+          {/* Ausklappbare Karte 2: Fällig & neu (nach oben aufklappbar) */}
           <CollapsibleCard
             title="Fällig & neu"
             subtitle={`${dueEquipments.length} Wartung · ${newInquiries.length} neue Anfrage`}
@@ -438,14 +450,15 @@ export const HeuteView: React.FC = () => {
             onToggle={() =>
               setExpandedGroup((prev) => (prev === 'faellig' ? null : 'faellig'))
             }
-            bodyClassName="divide-y divide-slate-100 bg-slate-50/70 border-t border-slate-100"
+            expandDirection="up"
+            bodyClassName="divide-y divide-slate-100 bg-slate-50/70 border-b border-slate-100"
           >
             {dueEquipments.length === 0 && newInquiries.length === 0 ? (
               <p className="p-3.5 text-xs text-slate-500">
                 Keine fälligen Wartungen oder neuen Anfragen.
               </p>
             ) : (
-              <>
+              <div className="max-h-[260px] overflow-y-auto overscroll-contain divide-y divide-slate-100">
                 {dueEquipments.map((eq) => (
                   <button
                     key={eq.id}
@@ -495,7 +508,7 @@ export const HeuteView: React.FC = () => {
                     </button>
                   );
                 })}
-              </>
+              </div>
             )}
           </CollapsibleCard>
         </div>

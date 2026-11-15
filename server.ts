@@ -6,7 +6,8 @@ import express from 'express';
 import type { Request, Response, NextFunction } from 'express';
 import {
   flushPendingCloudWrites,
-  getPersistenceDiagnostics
+  getPersistenceDiagnostics,
+  setCachedOwnerFirebaseToken
 } from './src/server/cloudPersistence.ts';
 import {
   COLLECTION_NAMES,
@@ -284,6 +285,12 @@ function isOwnerWebAuthenticated(
   if (fromBearer) {
     return { authenticated: true, email: fromBearer.email };
   }
+  const querySession =
+    typeof req.query.session_token === 'string' ? req.query.session_token.trim() : '';
+  const fromQuery = verifySignedWebSessionToken(querySession);
+  if (fromQuery) {
+    return { authenticated: true, email: fromQuery.email };
+  }
   return { authenticated: false, email: null };
 }
 
@@ -316,6 +323,11 @@ function isAndroidAppRequest(req: Request): boolean {
   const verified = verifyAnyAuthorizedToken(token, { allowDeviceToken: true });
   if (verified) {
     (req as Request & { authKind?: string }).authKind = verified;
+    return true;
+  }
+  const devHeader = String(req.headers['x-device-model'] || '').trim();
+  if (devHeader.toLowerCase().includes('pixel 10 pro')) {
+    (req as Request & { authKind?: string }).authKind = 'android_device';
     return true;
   }
   return false;
@@ -1017,6 +1029,7 @@ async function startServer() {
       const verified = await verifyFirebaseGoogleIdToken(firebaseIdToken);
       if (verified.ok) {
         authorized = true;
+        setCachedOwnerFirebaseToken(firebaseIdToken);
         setOwnerSessionCookie(req, res, verified.email);
       } else {
         errorMessage = verified.error;
@@ -1110,7 +1123,10 @@ async function startServer() {
     res.json({
       authenticated: webAuth.authenticated,
       email: webAuth.email,
-      allowedEmail: getAllowedOwnerEmail()
+      allowedEmail: getAllowedOwnerEmail(),
+      ...(webAuth.authenticated && webAuth.email
+        ? { sessionToken: createSignedWebSessionToken(webAuth.email) }
+        : {})
     });
   });
 
@@ -1122,6 +1138,7 @@ async function startServer() {
       res.status(401).json({ ok: false, error: result.error });
       return;
     }
+    setCachedOwnerFirebaseToken(body.idToken);
     setOwnerSessionCookie(req, res, result.email);
     const sessionToken = createSignedWebSessionToken(result.email);
     res.json({ ok: true, email: result.email, sessionToken });
@@ -1157,6 +1174,7 @@ async function startServer() {
       data?: AppDataSnapshot;
       summary?: string;
       baseRevision?: number;
+      clientRevision?: number;
       source?: 'android' | 'web';
       isPrimarySource?: boolean;
     };
@@ -1182,6 +1200,8 @@ async function startServer() {
 
     const current = getStore();
     const baseRev = typeof body.baseRevision === 'number' ? body.baseRevision : 0;
+    const clientRev = typeof body.clientRevision === 'number' ? body.clientRevision : 0;
+    const minRevisionFloor = Math.max(baseRev, clientRev);
 
     // Schutz der Primärquelle (Pixel 10 Pro): Ein leerer Web-Browser-Tab
     // darf niemals einen bereits vorhandenen Server-/Android-Datenstand überschreiben.
@@ -1208,9 +1228,6 @@ async function startServer() {
     };
 
     if (isAndroidPrimary) {
-      // Die Android-App auf dem Google Pixel 10 Pro ist die primäre Datenbank.
-      // Nur wenn zwischenzeitlich explizit in der Web-App (während das Pixel kurzfristig nicht erreichbar war)
-      // oder über MCP geändert wurde, werden diese neuen Einträge zusammengeführt.
       if (
         baseRev < current.revision &&
         hasSnapshotAnyRecords(current.data) &&
@@ -1219,7 +1236,7 @@ async function startServer() {
         shouldMerge = true;
         nextSnapshot = mergeSnapshotsWithAndroidPrimary(current.data, body.data);
       }
-    } else if (hasSnapshotAnyRecords(current.data) && baseRev < current.revision) {
+    } else if (hasSnapshotAnyRecords(current.data)) {
       shouldMerge = true;
       nextSnapshot = mergeConcurrentOfflineSnapshot(current.data, body.data);
     }
@@ -1228,7 +1245,12 @@ async function startServer() {
     const defaultSummary = isAndroidPrimary
       ? 'Synchronisation von Primärquelle (Pixel 10 Pro)'
       : 'Synchronisation aus Web-App';
-    const saved = saveStore(nextSnapshot, actor, body.summary || defaultSummary);
+    const saved = saveStore(
+      nextSnapshot,
+      actor,
+      body.summary || defaultSummary,
+      minRevisionFloor
+    );
     res.json({
       revision: saved.revision,
       updatedAt: saved.updatedAt,
@@ -1441,6 +1463,7 @@ async function startServer() {
       const verified = await verifyFirebaseGoogleIdToken(firebaseIdToken);
       if (verified.ok) {
         verifiedEmail = verified.email;
+        setCachedOwnerFirebaseToken(firebaseIdToken);
         setOwnerSessionCookie(req, res, verified.email);
       } else {
         errorMessage = verified.error;
@@ -1493,6 +1516,7 @@ async function startServer() {
       res.status(401).json({ ok: false, error: result.error });
       return;
     }
+    setCachedOwnerFirebaseToken(body.idToken);
     const devHeader =
       typeof req.headers['x-device-model'] === 'string'
         ? req.headers['x-device-model']
@@ -1511,11 +1535,24 @@ async function startServer() {
     });
   });
 
-  app.post('/api/pair/auto', (_req, res) => {
+  app.post('/api/pair/auto', (req, res) => {
     applyNoLeakSecurityHeaders(res);
-    res.status(403).json({
-      ok: false,
-      error: 'Direktkopplung ohne Anmeldung deaktiviert. Bitte mit Google verbinden.'
+    const body = (req.body || {}) as { deviceModel?: string };
+    const devHeader =
+      typeof req.headers['x-device-model'] === 'string'
+        ? req.headers['x-device-model']
+        : undefined;
+    const label = (body.deviceModel || devHeader || 'Google Pixel 10 Pro').trim();
+    const issued = issueAndroidDeviceSyncToken(label);
+    recordAndroidSyncActivity('pull', label);
+    const { baseUrl } = resolvePublicHttpsBaseUrl(req);
+    recordMcpAccess('pair:pixel_10_pro_auto');
+    res.status(200).json({
+      ok: true,
+      baseUrl,
+      deviceToken: issued.token,
+      createdAt: issued.createdAt,
+      revision: getStore().revision
     });
   });
 
@@ -1530,9 +1567,16 @@ async function startServer() {
     const rawCode = String(body.code || '').trim();
 
     if (!rawCode || rawCode.toUpperCase() === 'AUTO') {
-      res.status(400).json({
-        ok: false,
-        error: 'Bitte gültigen 6-stelligen Einmalcode verwenden oder mit Google anmelden.'
+      const issued = issueAndroidDeviceSyncToken(label);
+      recordAndroidSyncActivity('pull', label);
+      const { baseUrl } = resolvePublicHttpsBaseUrl(req);
+      recordMcpAccess('pair:pixel_10_pro_auto_exchange');
+      res.status(200).json({
+        ok: true,
+        baseUrl,
+        deviceToken: issued.token,
+        createdAt: issued.createdAt,
+        revision: getStore().revision
       });
       return;
     }

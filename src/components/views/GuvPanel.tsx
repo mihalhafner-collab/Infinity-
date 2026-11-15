@@ -802,7 +802,7 @@ export const GuvPanel: React.FC = () => {
                     Aus Gerätebestand übernehmen (1 Tipp)
                   </span>
                   <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-0.5">
-                    {equipments.slice(0, 8).map((eq) => (
+                    {equipments.map((eq) => (
                       <button
                         key={eq.id}
                         type="button"

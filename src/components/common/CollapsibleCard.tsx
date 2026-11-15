@@ -14,12 +14,13 @@ interface CollapsibleCardProps {
   className?: string;
   headerClassName?: string;
   bodyClassName?: string;
+  expandDirection?: 'down' | 'up';
 }
 
 /**
- * Einheitliches Anzeigedesign für alle ausklappbaren Optionen (Accordions)
- * in der Infinity App (optimiert für Google Pixel 10 Pro).
- */
+  * Einheitliches Anzeigedesign für alle ausklappbaren Optionen (Accordions)
+  * in der Infinity App (optimiert für Google Pixel 10 Pro).
+  */
 export const CollapsibleCard: React.FC<CollapsibleCardProps> = ({
   title,
   subtitle,
@@ -32,12 +33,31 @@ export const CollapsibleCard: React.FC<CollapsibleCardProps> = ({
   children,
   className = '',
   headerClassName = '',
-  bodyClassName = 'p-3.5 bg-slate-50/70 border-t border-slate-100 space-y-2.5'
+  bodyClassName,
+  expandDirection = 'down'
 }) => {
+  const isUp = expandDirection === 'up';
+  const defaultBodyClass = isUp
+    ? 'p-3.5 bg-slate-50/70 border-b border-slate-100 space-y-2.5'
+    : 'p-3.5 bg-slate-50/70 border-t border-slate-100 space-y-2.5';
+  const resolvedBodyClass = bodyClassName ?? defaultBodyClass;
+
+  // Bei expandDirection="up" zeigt der Pfeil im geschlossenen Zustand nach oben (rotate-180)
+  // und im geöffneten Zustand nach unten (rotate-0).
+  const arrowRotationClass = isUp
+    ? open
+      ? 'bg-indigo-50 text-[#3138A0] rotate-0'
+      : 'bg-slate-100 text-slate-500 rotate-180'
+    : open
+      ? 'bg-indigo-50 text-[#3138A0] rotate-180'
+      : 'bg-slate-100 text-slate-500 rotate-0';
+
   return (
     <div
       className={`bg-white border border-slate-200/95 rounded-2xl overflow-hidden shadow-2xs transition-colors ${className}`}
     >
+      {isUp && open && <div className={resolvedBodyClass}>{children}</div>}
+
       <button
         type="button"
         onClick={onToggle}
@@ -71,18 +91,14 @@ export const CollapsibleCard: React.FC<CollapsibleCardProps> = ({
         <div className="flex items-center gap-2 shrink-0">
           {headerRight}
           <div
-            className={`w-7 h-7 rounded-lg flex items-center justify-center transition-all duration-200 ${
-              open
-                ? 'bg-indigo-50 text-[#3138A0] rotate-180'
-                : 'bg-slate-100 text-slate-500'
-            }`}
+            className={`w-7 h-7 rounded-lg flex items-center justify-center transition-all duration-200 ${arrowRotationClass}`}
           >
             <ChevronDown size={16} />
           </div>
         </div>
       </button>
 
-      {open && <div className={bodyClassName}>{children}</div>}
+      {!isUp && open && <div className={resolvedBodyClass}>{children}</div>}
     </div>
   );
 };

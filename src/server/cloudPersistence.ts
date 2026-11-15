@@ -21,15 +21,35 @@ export interface PersistenceDiagnostics {
 const CHUNK_CHAR_SIZE = 600_000;
 
 let cachedToken: { accessToken: string; expiresAtMs: number } | null = null;
+let cachedOwnerIdToken: { idToken: string; expiresAtMs: number } | null = null;
 let firestoreCloudActive = false;
 let firestoreRetryAfterMs = 0;
 let lastDiskWriteAt: string | null = null;
 let lastCloudSyncAt: string | null = null;
 const inFlightCloudWrites = new Set<Promise<void>>();
 
+export function setCachedOwnerFirebaseToken(idToken: string | null | undefined): void {
+  const trimmed = typeof idToken === 'string' ? idToken.trim() : '';
+  if (!trimmed) return;
+  cachedOwnerIdToken = {
+    idToken: trimmed,
+    expiresAtMs: Date.now() + 50 * 60_000
+  };
+  firestoreRetryAfterMs = 0;
+}
+
 export function getDataDir(): string {
   const custom = process.env.HAFNER_DATA_DIR?.trim();
-  return custom ? path.resolve(custom) : path.join(os.tmpdir(), 'hafner-gruenraum-runtime-data');
+  if (custom) return path.resolve(custom);
+  const localPersistent = path.resolve(process.cwd(), '.runtime-data');
+  try {
+    if (!fs.existsSync(localPersistent)) {
+      fs.mkdirSync(localPersistent, { recursive: true, mode: 0o700 });
+    }
+    return localPersistent;
+  } catch {
+    return path.join(os.tmpdir(), 'hafner-gruenraum-runtime-data');
+  }
 }
 
 export function ensureDataDir(): string {
@@ -104,6 +124,10 @@ async function getCloudIamAccessToken(): Promise<string | null> {
   }
 
   const now = Date.now();
+  if (cachedOwnerIdToken && cachedOwnerIdToken.expiresAtMs > now) {
+    return cachedOwnerIdToken.idToken;
+  }
+
   if (cachedToken && cachedToken.expiresAtMs - 60_000 > now) {
     return cachedToken.accessToken;
   }

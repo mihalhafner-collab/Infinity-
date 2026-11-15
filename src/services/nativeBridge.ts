@@ -121,14 +121,15 @@ const pixelTunnelStatusListeners = new Set<PixelTunnelStatusListener>();
 
 const LEGACY_REMOTE_URL_KEY = 'hafner_remote_mcp_base_url';
 const LEGACY_REMOTE_TOKEN_KEY = 'hafner_remote_mcp_token';
-export const DEFAULT_INFINITY_CLOUD_URL = 'https://infinity-hafner.ai.studio';
+export const DEFAULT_INFINITY_CLOUD_URL =
+  'https://hafner-gruenraum-523881801839.europe-west1.run.app';
 
 export function normalizeInfinityCloudBaseUrl(raw?: string | null): string {
   const trimmed = (raw || '').trim();
   if (!trimmed) return DEFAULT_INFINITY_CLOUD_URL;
   const withoutMcp = trimmed.replace(/\/mcp.*$/i, '').replace(/\/+$/, '');
   if (
-    withoutMcp.includes('ais-pre-usuarrctzvo6yzyghmhedg') ||
+    withoutMcp.toLowerCase().includes('infinity-hafner.ai.studio') ||
     withoutMcp.toLowerCase().includes('hafner-gruenraum.ai.studio')
   ) {
     return DEFAULT_INFINITY_CLOUD_URL;
@@ -598,10 +599,15 @@ export function resolveBackendEndpoint(path: string): {
     return { url: null, headers: {} };
   }
   const headers: Record<string, string> = {};
+  let finalUrl = cleanPath;
   if (webSessionToken) {
     headers['Authorization'] = `Bearer ${webSessionToken}`;
+    if (cleanPath.startsWith('/api/internal/events')) {
+      const sep = cleanPath.includes('?') ? '&' : '?';
+      finalUrl = `${cleanPath}${sep}session_token=${encodeURIComponent(webSessionToken)}`;
+    }
   }
-  return { url: cleanPath, headers };
+  return { url: finalUrl, headers };
 }
 
 export function getRevealedNativeMcpToken(): string | null {

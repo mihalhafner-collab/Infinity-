@@ -925,7 +925,7 @@ export const AbrechnungView: React.FC = () => {
                   </div>
 
                   {groupedOpenWork.length > 0 && (
-                    <div className="space-y-2">
+                    <div className="max-h-72 overflow-y-auto overscroll-contain space-y-2 pr-0.5">
                       {groupedOpenWork.map((g) => (
                         <div
                           key={g.customer.id}

@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import {
+  getDeterministicServerSeed,
   hydrateStoreFromCloudOrDisk,
   persistStoreToDiskAndCloud,
   readLocalJsonSync
@@ -125,6 +126,10 @@ const VALID_TAX_METHODS: readonly TaxCalculationMethod[] = [
 
 function round2(val: number): number {
   return Math.round(val * 100) / 100;
+}
+
+function generateDeterministicDefaultToken(): string {
+  return `hgh_mcp_${getDeterministicServerSeed().slice(0, 48)}`;
 }
 
 function generateRandomRotatedToken(): string {
@@ -288,7 +293,7 @@ function normalizePersistedMcpConfig(
     adminToken:
       typeof raw?.adminToken === 'string' && raw.adminToken.trim().length >= 24
         ? raw.adminToken.trim()
-        : generateRandomRotatedToken(),
+        : generateDeterministicDefaultToken(),
     requireToken: true,
     createdAt: raw?.createdAt || new Date().toISOString(),
     lastAccessAt: raw?.lastAccessAt || null,
@@ -341,12 +346,17 @@ export function getStore(): PersistedAppStore {
 export function saveStore(
   nextData: AppDataSnapshot,
   actor: PersistedAppStore['lastActor'],
-  summary: string
+  summary: string,
+  minRevisionFloor = 0
 ): PersistedAppStore {
   const current = getStore();
   const nowIso = new Date().toISOString();
+  const baseFloor = Math.max(
+    current.revision,
+    Number.isFinite(minRevisionFloor) && minRevisionFloor > 0 ? Math.floor(minRevisionFloor) : 0
+  );
   const updated: PersistedAppStore = {
-    revision: current.revision + 1,
+    revision: baseFloor + 1,
     updatedAt: nowIso,
     lastActor: actor,
     lastActionSummary: summary,

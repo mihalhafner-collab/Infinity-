@@ -1634,30 +1634,60 @@ export const KundenView: React.FC = () => {
           <div className="space-y-3">
             {/* Offene Arbeiten Hauptkarte */}
             <div className="p-3.5 bg-white border border-slate-200 rounded-2xl shadow-2xs space-y-2">
-              <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
-                Offene Arbeiten
-              </span>
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
+                  Offene Arbeiten ({openWork.length})
+                </span>
+                <span className="text-xs text-slate-500">Nicht abgerechnet</span>
+              </div>
               <div className="flex items-center justify-between">
                 <div>
                   <span className="text-lg font-bold text-slate-900 block">
                     {openHoursSum} Std.
                   </span>
-                  <span className="text-xs text-slate-500">Nicht abgerechnet</span>
                 </div>
                 <span className="text-xl font-bold text-[#B4470B] tabular-nums">
                   {openAmountSum.toFixed(2)} €
                 </span>
               </div>
               {openWork.length > 0 && (
-                <button
-                  type="button"
-                  onClick={() => setActiveModal('RECHNUNG_VORBEREITEN')}
-                  className="w-full mt-1 py-2.5 bg-[#3138A0] hover:bg-[#272d82] text-white text-xs font-semibold rounded-xl transition-all shadow-xs"
-                >
-                  {divergentRecipient
-                    ? `Jetzt über ${divergentRecipient.name} abrechnen`
-                    : 'Diesen Betrag jetzt abrechnen'}
-                </button>
+                <>
+                  <div className="max-h-56 overflow-y-auto overscroll-contain space-y-1.5 pt-1 pr-0.5">
+                    {openWork.map((rec) => (
+                      <div
+                        key={rec.id}
+                        onClick={() => {
+                          setSelectedWorkRecordId(rec.id);
+                          setActiveModal('ARBEIT_BEARBEITEN');
+                        }}
+                        className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between text-xs cursor-pointer hover:border-[#3138A0] transition-colors"
+                      >
+                        <div className="min-w-0 pr-2">
+                          <span className="font-bold text-slate-900 block truncate">
+                            {rec.title}
+                          </span>
+                          <span className="text-[10px] text-slate-500 block tabular-nums">
+                            {rec.work_date} · {rec.hours} Std.
+                          </span>
+                        </div>
+                        <span className="font-bold text-[#B4470B] shrink-0 tabular-nums">
+                          {rec.accounting_amount !== null
+                            ? `${rec.accounting_amount.toFixed(2)} €`
+                            : 'Satz offen'}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setActiveModal('RECHNUNG_VORBEREITEN')}
+                    className="w-full mt-1 py-2.5 bg-[#3138A0] hover:bg-[#272d82] text-white text-xs font-semibold rounded-xl transition-all shadow-xs"
+                  >
+                    {divergentRecipient
+                      ? `Jetzt über ${divergentRecipient.name} abrechnen`
+                      : 'Diesen Betrag jetzt abrechnen'}
+                  </button>
+                </>
               )}
             </div>
 

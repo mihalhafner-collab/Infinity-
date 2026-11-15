@@ -66,13 +66,61 @@ service cloud.firestore {
       allow delete: if false;
     }
 
-    // System-only Cloud Run server persistence (accessed exclusively via GCP IAM, never via client SDK)
+    function isValidServerStateMeta(data, storeKey) {
+      return data.keys().hasAll(['storeKey', 'chunkCount', 'byteLength', 'sha256', 'updatedAt'])
+        && data.keys().hasOnly(['storeKey', 'chunkCount', 'byteLength', 'sha256', 'updatedAt'])
+        && data.storeKey is string
+        && data.storeKey.size() >= 1
+        && data.storeKey.size() <= 128
+        && data.storeKey == storeKey
+        && data.chunkCount is int
+        && data.chunkCount >= 1
+        && data.chunkCount <= 50
+        && data.byteLength is int
+        && data.byteLength >= 2
+        && data.byteLength <= 30000000
+        && data.sha256 is string
+        && data.sha256.size() == 64
+        && data.sha256.matches('^[a-f0-9]{64}$')
+        && data.updatedAt is string
+        && data.updatedAt.size() >= 10
+        && data.updatedAt.size() <= 64;
+    }
+
+    function isValidServerStateChunk(data) {
+      return data.keys().hasAll(['storeKey', 'index', 'payload', 'updatedAt'])
+        && data.keys().hasOnly(['storeKey', 'index', 'payload', 'updatedAt'])
+        && data.storeKey is string
+        && data.storeKey.size() >= 1
+        && data.storeKey.size() <= 128
+        && data.index is int
+        && data.index >= 0
+        && data.index < 50
+        && data.payload is string
+        && data.payload.size() >= 1
+        && data.payload.size() <= 700000
+        && data.updatedAt is string
+        && data.updatedAt.size() >= 10
+        && data.updatedAt.size() <= 64;
+    }
+
+    // Owner-verified Cloud Run & Web/Android state persistence
     match /_mcp_server_state/{storeKey} {
-      allow read, write: if false;
+      allow get: if isVerifiedOwner() && isValidId(storeKey);
+      allow list: if false;
+      allow create, update: if isVerifiedOwner()
+        && isValidId(storeKey)
+        && isValidServerStateMeta(incoming(), storeKey);
+      allow delete: if false;
     }
 
     match /_mcp_server_chunks/{chunkId} {
-      allow read, write: if false;
+      allow get: if isVerifiedOwner() && isValidId(chunkId);
+      allow list: if false;
+      allow create, update: if isVerifiedOwner()
+        && isValidId(chunkId)
+        && isValidServerStateChunk(incoming());
+      allow delete: if false;
     }
   }
 }
