@@ -313,8 +313,16 @@ function formatDurationText(netMinutes: number): string {
 }
 
 function parseGermanDecimalOrNull(val: string): number | null {
-  if (!val.trim()) return null;
-  const normalized = val.replace(',', '.').replace(/[^0-9.]/g, '');
+  const trimmed = val.trim().replace(/\s+/g, '');
+  if (!trimmed) return null;
+  let normalized = '';
+  if (trimmed.includes(',')) {
+    normalized = trimmed.replace(/\./g, '').replace(',', '.').replace(/[^0-9.]/g, '');
+  } else if (/^-?\d{1,3}(\.\d{3})+$/.test(trimmed) || (trimmed.match(/\./g) || []).length > 1) {
+    normalized = trimmed.replace(/\./g, '').replace(/[^0-9]/g, '');
+  } else {
+    normalized = trimmed.replace(/[^0-9.]/g, '');
+  }
   if (!normalized) return null;
   const parsed = parseFloat(normalized);
   return Number.isNaN(parsed) ? null : Math.max(0, parsed);

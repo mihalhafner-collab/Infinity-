@@ -33,7 +33,16 @@ import {
 } from 'lucide-react';
 
 function parseEuroInput(val: string): number {
-  const cleaned = val.replace(',', '.').replace(/[^0-9.]/g, '');
+  const trimmed = val.trim().replace(/\s+/g, '');
+  if (!trimmed) return 0;
+  let cleaned = '';
+  if (trimmed.includes(',')) {
+    cleaned = trimmed.replace(/\./g, '').replace(',', '.').replace(/[^0-9.]/g, '');
+  } else if (/^-?\d{1,3}(\.\d{3})+$/.test(trimmed) || (trimmed.match(/\./g) || []).length > 1) {
+    cleaned = trimmed.replace(/\./g, '').replace(/[^0-9]/g, '');
+  } else {
+    cleaned = trimmed.replace(/[^0-9.]/g, '');
+  }
   const parsed = parseFloat(cleaned);
   return Number.isNaN(parsed) ? 0 : Math.max(0, Math.round(parsed * 100) / 100);
 }

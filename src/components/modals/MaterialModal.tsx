@@ -63,7 +63,10 @@ export const MaterialModal: React.FC = () => {
     e.preventDefault();
     if (!name.trim()) return;
 
-    const cleanedPrice = price.trim().replace(',', '.');
+    const rawPrice = price.trim().replace(/\s+/g, '');
+    const cleanedPrice = rawPrice.includes(',')
+      ? rawPrice.replace(/\./g, '').replace(',', '.')
+      : rawPrice;
     const parsedPrice =
       cleanedPrice === ''
         ? null
