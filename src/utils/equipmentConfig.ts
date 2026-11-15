@@ -1002,6 +1002,89 @@ export const EQUIPMENT_CATEGORIES: EquipmentCategoryDef[] = [
   }
 ];
 
+export interface FunctionalGroupInfo {
+  id: string;
+  title: string;
+  order: number;
+}
+
+export const FUNCTIONAL_GROUPS: FunctionalGroupInfo[] = [
+  { id: 'schnitt', title: 'Schnitt & Baumpflege', order: 1 },
+  { id: 'rasen_boden', title: 'Rasen, Wiese & Boden', order: 4 },
+  { id: 'laub_wasser_hand', title: 'Laub, Bewässerung & Handgeräte', order: 7 },
+  { id: 'milwaukee_elektro_bau', title: 'Milwaukee, Elektro & Allgemein', order: 10 },
+  { id: 'zubehoer', title: 'Zubehör & Verschleißteile', order: 20 }
+];
+
+const FUNCTIONAL_GROUP_MAP: Record<string, FunctionalGroupInfo> = {
+  // 1. Schnitt & Baumpflege
+  felco_silky_schnitt: { id: 'schnitt', title: 'Schnitt & Baumpflege', order: 1 },
+  motorsaegen: { id: 'schnitt', title: 'Schnitt & Baumpflege', order: 2 },
+  heckenschere: { id: 'schnitt', title: 'Schnitt & Baumpflege', order: 3 },
+  // 2. Rasen, Wiese & Boden
+  rasenmaeher: { id: 'rasen_boden', title: 'Rasen, Wiese & Boden', order: 4 },
+  freischneider: { id: 'rasen_boden', title: 'Rasen, Wiese & Boden', order: 5 },
+  vertikutierer_boden: { id: 'rasen_boden', title: 'Rasen, Wiese & Boden', order: 6 },
+  // 3. Laub, Bewässerung & Handgeräte
+  blaeser_sonstige: { id: 'laub_wasser_hand', title: 'Laub, Bewässerung & Handgeräte', order: 7 },
+  bewaesserung_spritze: { id: 'laub_wasser_hand', title: 'Laub, Bewässerung & Handgeräte', order: 8 },
+  handwerkzeuge_garten: { id: 'laub_wasser_hand', title: 'Laub, Bewässerung & Handgeräte', order: 9 },
+  // 4. Milwaukee, Elektro, Reinigung & Bau
+  milwaukee_geraete: { id: 'milwaukee_elektro_bau', title: 'Milwaukee, Elektro & Allgemein', order: 10 },
+  elektrowerkzeuge_allgemein: { id: 'milwaukee_elektro_bau', title: 'Milwaukee, Elektro & Allgemein', order: 11 },
+  reinigung_kehrmaschine: { id: 'milwaukee_elektro_bau', title: 'Milwaukee, Elektro & Allgemein', order: 12 },
+  bau_pflaster_geraete: { id: 'milwaukee_elektro_bau', title: 'Milwaukee, Elektro & Allgemein', order: 13 },
+  leitern_allgemein: { id: 'milwaukee_elektro_bau', title: 'Milwaukee, Elektro & Allgemein', order: 14 },
+  winterdienst_geraete: { id: 'milwaukee_elektro_bau', title: 'Milwaukee, Elektro & Allgemein', order: 15 },
+  fahrzeug_anhaenger: { id: 'milwaukee_elektro_bau', title: 'Milwaukee, Elektro & Allgemein', order: 16 },
+  // 5. Zubehör & Verschleißteile
+  zub_kette_schiene: { id: 'zubehoer', title: 'Zubehör & Verschleißteile', order: 20 },
+  zub_feilen_schaerfen: { id: 'zubehoer', title: 'Zubehör & Verschleißteile', order: 21 },
+  zub_faden_messer: { id: 'zubehoer', title: 'Zubehör & Verschleißteile', order: 22 },
+  zub_bewaesserung_gardena: { id: 'zubehoer', title: 'Zubehör & Verschleißteile', order: 23 },
+  zub_akku_ladung: { id: 'zubehoer', title: 'Zubehör & Verschleißteile', order: 24 },
+  zub_bohrer_trennscheiben: { id: 'zubehoer', title: 'Zubehör & Verschleißteile', order: 25 },
+  zub_filter_psa_sonstiges: { id: 'zubehoer', title: 'Zubehör & Verschleißteile', order: 26 }
+};
+
+const GLOBAL_SPEC_LABELS: Record<string, string> = {
+  feilen_durchmesser: 'Feilen-Ø',
+  kettenteilung: 'Kettenteilung',
+  nutbreite: 'Treibgliedstärke / Nut',
+  treibglieder: 'Treibglieder (TG)',
+  schwertlaenge: 'Schwert- / Messerlänge',
+  antrieb: 'Antrieb / Kraftstoff',
+  faden_durchmesser: 'Mähfaden-Ø',
+  aufnahme_bohrung: 'Aufnahme / Bohrung',
+  schneidwerkzeug: 'Schneidwerkzeug',
+  schnittbreite: 'Schnittbreite',
+  messer_typ: 'Messerlänge / Typ',
+  motoroel_kerze: 'Motoröl / Zündkerze',
+  arbeitsbreite: 'Arbeitsbreite / Ø',
+  werkzeug_welle: 'Messerwelle / Zinken',
+  zahnabstand: 'Zahnabstand',
+  hauptmass: 'Maß / Parameter',
+  verschleissteil: 'Verschleißteil / Ersatzteil',
+  blatt_klinge: 'Blattlänge / Klinge',
+  zahnung_schnitt: 'Zahnung / Schnitt-Ø',
+  ausfuehrung: 'Breite / Ausführung',
+  anschluss: 'System / Anschluss',
+  volumen_leistung: 'Länge / Volumen',
+  akkusystem: 'Akkusystem / Spannung',
+  aufnahme_mass: 'Aufnahme / Maß',
+  zubehoer_system: 'Anschluss / System',
+  abmessung: 'Abmessung / Länge',
+  spezifikation: 'Ausführung / Größe',
+  raeumbreite: 'Räumbreite / Volumen',
+  prueftermin: 'Prüftermin / §57a',
+  zahnform: 'Zahnform / Klingentyp',
+  schaerfwinkel: 'Schärfwinkel',
+  tiefenbegrenzer: 'Tiefenbegrenzer',
+  kapazitaet: 'Kapazität / Energie',
+  einsatzzweck: 'Einsatzzweck',
+  teilenummer: 'Ersatzteil-Nr.'
+};
+
 export function getCategoriesByType(itemType: 'geraet' | 'zubehoer'): EquipmentCategoryDef[] {
   return EQUIPMENT_CATEGORIES.filter((c) => c.itemType === itemType);
 }
@@ -1014,5 +1097,28 @@ export function getCategoryDef(categoryId?: string): EquipmentCategoryDef | unde
 export function getCategoryLabel(categoryId?: string, itemType?: 'geraet' | 'zubehoer'): string {
   const found = getCategoryDef(categoryId);
   if (found) return found.label;
+  if (categoryId && categoryId.trim()) return categoryId.trim();
   return itemType === 'zubehoer' ? 'Allgemeines Zubehör' : 'Allgemeines Gerät';
 }
+
+export function getFunctionalGroupInfo(
+  categoryId?: string,
+  itemType?: 'geraet' | 'zubehoer'
+): FunctionalGroupInfo {
+  if (categoryId && FUNCTIONAL_GROUP_MAP[categoryId]) {
+    return FUNCTIONAL_GROUP_MAP[categoryId];
+  }
+  if (itemType === 'zubehoer') {
+    return { id: 'zubehoer', title: 'Zubehör & Verschleißteile', order: 29 };
+  }
+  return { id: 'milwaukee_elektro_bau', title: 'Milwaukee, Elektro & Allgemein', order: 19 };
+}
+
+export function getSpecFieldLabel(key: string, categoryId?: string): string {
+  const catDef = getCategoryDef(categoryId);
+  const fromCat = catDef?.fields.find((f) => f.key === key)?.label;
+  if (fromCat) return fromCat;
+  if (GLOBAL_SPEC_LABELS[key]) return GLOBAL_SPEC_LABELS[key];
+  return key.replace(/_/g, ' ').replace(/\b\w/g, (l) => l.toUpperCase());
+}
+

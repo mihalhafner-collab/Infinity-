@@ -612,13 +612,17 @@ class InfinityMcpDispatcher(
         val idFilter = args.optString("id", "").trim()
         val customerIdFilter = args.optString("customer_id", "").trim()
         val statusFilter = args.optString("status", "").trim()
+        val categoryFilter = args.optString("category", "").trim()
+        val itemTypeFilter = args.optString("item_type", "").trim()
+        val parentEqIdFilter = args.optString("parent_equipment_id", "").trim()
         val hasLcrFilter = args.has("is_lcr") && !args.isNull("is_lcr")
         val lcrFilter = args.optBoolean("is_lcr", false)
         val unbilledOnly = args.optBoolean("unbilled_only", false)
         val dateFrom = args.optString("date_from", "").trim()
         val dateTo = args.optString("date_to", "").trim()
         val search = args.optString("search", "").trim().lowercase(Locale.ROOT)
-        val limit = args.optInt("limit", 25).coerceIn(1, 500)
+        val defaultLimit = if (col == "equipments") 200 else 25
+        val limit = args.optInt("limit", defaultLimit).coerceIn(1, 500)
         val includePhotos = args.optBoolean("include_photos", false)
 
         val fieldsFilter = mutableListOf<String>()
@@ -648,6 +652,16 @@ class InfinityMcpDispatcher(
             }
             if (statusFilter.isNotEmpty() && !item.optString("status").equals(statusFilter, ignoreCase = true)) {
                 continue
+            }
+            if (categoryFilter.isNotEmpty() && !item.optString("category").equals(categoryFilter, ignoreCase = true)) {
+                continue
+            }
+            if (itemTypeFilter.isNotEmpty() && col == "equipments") {
+                val eqType = item.optString("item_type", "geraet")
+                if (!eqType.equals(itemTypeFilter, ignoreCase = true)) continue
+            }
+            if (parentEqIdFilter.isNotEmpty() && col == "equipments") {
+                if (optNullableString(item, "parent_equipment_id") != parentEqIdFilter) continue
             }
             if (hasLcrFilter && col == "workRecords" && item.optBoolean("is_lcr", false) != lcrFilter) {
                 continue
@@ -1223,19 +1237,82 @@ class InfinityMcpDispatcher(
                 if (nameVal.isEmpty()) {
                     throw IllegalArgumentException("Gerätename ('name') darf nicht leer sein.")
                 }
+
+                val reservedKeys = setOf(
+                    "id", "item_type", "category", "parent_equipment_id", "name", "model",
+                    "photo", "specs", "quantity", "notes", "status", "last_maintenance",
+                    "next_maintenance", "maintenance_plan", "interval_months", "history"
+                )
+                val mergedSpecs = JSONObject()
+                val prevSpecs = prev?.optJSONObject("specs")
+                if (prevSpecs != null) {
+                    val pk = prevSpecs.keys()
+                    while (pk.hasNext()) {
+                        val k = pk.next()
+                        val v = prevSpecs.optString(k, "").trim()
+                        if (v.isNotEmpty() && !prevSpecs.isNull(k)) {
+                            mergedSpecs.put(k, v)
+                        }
+                    }
+                }
+                val payloadSpecs = payload.optJSONObject("specs")
+                if (payloadSpecs != null) {
+                    val nk = payloadSpecs.keys()
+                    while (nk.hasNext()) {
+                        val k = nk.next()
+                        if (payloadSpecs.isNull(k) || payloadSpecs.optString(k, "").trim().isEmpty()) {
+                            mergedSpecs.remove(k)
+                        } else {
+                            mergedSpecs.put(k.trim(), payloadSpecs.optString(k, "").trim())
+                        }
+                    }
+                }
+                val payloadKeys = payload.keys()
+                while (payloadKeys.hasNext()) {
+                    val k = payloadKeys.next()
+                    if (!reservedKeys.contains(k)) {
+                        if (payload.isNull(k) || payload.optString(k, "").trim().isEmpty()) {
+                            mergedSpecs.remove(k)
+                        } else if (payload.optJSONObject(k) == null && payload.optJSONArray(k) == null) {
+                            mergedSpecs.put(k.trim(), payload.optString(k, "").trim())
+                        }
+                        record.remove(k)
+                    }
+                }
+
+                val parsedInterval = record.optInt("interval_months", 6).coerceAtLeast(1)
+                val lastMaintIso = assertIsoDate(record.optString("last_maintenance", today), "last_maintenance")
+                val nextMaintIso = if (payload.has("next_maintenance") && payload.optString("next_maintenance", "").trim().isNotEmpty()) {
+                    assertIsoDate(payload.optString("next_maintenance", ""), "next_maintenance")
+                } else if ((payload.has("last_maintenance") || payload.has("interval_months")) && !payload.has("next_maintenance")) {
+                    addDaysIso(lastMaintIso, parsedInterval * 30)
+                } else {
+                    assertIsoDate(record.optString("next_maintenance", addDaysIso(lastMaintIso, parsedInterval * 30)), "next_maintenance")
+                }
+
+                if (record.has("quantity") && !record.isNull("quantity") && record.optString("quantity", "").trim().isNotEmpty()) {
+                    record.put("quantity", record.optInt("quantity", 1).coerceAtLeast(0))
+                } else if (itemType == "zubehoer") {
+                    record.put("quantity", 1)
+                } else {
+                    record.put("quantity", JSONObject.NULL)
+                }
+
                 record.put("item_type", itemType)
                 record.put("category", record.optString("category", if (itemType == "zubehoer") "zub_kette_schiene" else "motorsaegen"))
-                if (!record.has("parent_equipment_id")) record.put("parent_equipment_id", JSONObject.NULL)
+                if (!record.has("parent_equipment_id") || record.optString("parent_equipment_id", "").trim().isEmpty()) {
+                    record.put("parent_equipment_id", JSONObject.NULL)
+                }
                 record.put("name", nameVal)
                 record.put("model", record.optString("model", ""))
                 if (!record.has("photo")) record.put("photo", JSONObject.NULL)
-                if (record.optJSONObject("specs") == null) record.put("specs", JSONObject())
+                record.put("specs", mergedSpecs)
                 record.put("notes", record.optString("notes", ""))
                 record.put("status", statusVal)
-                record.put("last_maintenance", assertIsoDate(record.optString("last_maintenance", today), "last_maintenance"))
-                record.put("next_maintenance", assertIsoDate(record.optString("next_maintenance", addDaysIso(today, 180)), "next_maintenance"))
+                record.put("last_maintenance", lastMaintIso)
+                record.put("next_maintenance", nextMaintIso)
                 record.put("maintenance_plan", record.optString("maintenance_plan", if (itemType == "zubehoer") "" else "Regelmäßige Prüfung"))
-                record.put("interval_months", record.optInt("interval_months", 6))
+                record.put("interval_months", parsedInterval)
                 if (record.optJSONArray("history") == null) record.put("history", JSONArray())
 
                 if (existingIdx >= 0) arr.put(existingIdx, record) else prependToArray(arr, record)
@@ -2447,6 +2524,9 @@ class InfinityMcpDispatcher(
                                 .put("id", JSONObject().put("type", "string"))
                                 .put("customer_id", JSONObject().put("type", "string"))
                                 .put("status", JSONObject().put("type", "string"))
+                                .put("category", JSONObject().put("type", "string"))
+                                .put("item_type", JSONObject().put("type", "string"))
+                                .put("parent_equipment_id", JSONObject().put("type", "string"))
                                 .put("is_lcr", JSONObject().put("type", "boolean"))
                                 .put("unbilled_only", JSONObject().put("type", "boolean"))
                                 .put("date_from", JSONObject().put("type", "string"))

@@ -531,6 +531,9 @@ export function queryCollection(params: {
   id?: string;
   customer_id?: string;
   status?: string;
+  category?: string;
+  item_type?: string;
+  parent_equipment_id?: string;
   is_lcr?: boolean;
   unbilled_only?: boolean;
   date_from?: string;
@@ -608,6 +611,17 @@ export function queryCollection(params: {
   }
   if (params.status) {
     items = items.filter((item) => String(item.status || '') === params.status);
+  }
+  if (params.category) {
+    items = items.filter((item) => String(item.category || '') === params.category);
+  }
+  if (params.item_type && params.collection === 'equipments') {
+    items = items.filter((item) => String(item.item_type || 'geraet') === params.item_type);
+  }
+  if (params.parent_equipment_id && params.collection === 'equipments') {
+    items = items.filter(
+      (item) => String(item.parent_equipment_id || '') === params.parent_equipment_id
+    );
   }
   if (typeof params.is_lcr === 'boolean' && params.collection === 'workRecords') {
     items = items.filter((item) => Boolean(item.is_lcr) === params.is_lcr);
@@ -1476,7 +1490,7 @@ function mutateUpsertOnSnapshotInner(
     merged.status = status;
   } else if (collection === 'equipments') {
     const itemType = merged.item_type === 'zubehoer' ? 'zubehoer' : 'geraet';
-    const status = String(merged.status || 'einsatzbereit');
+    const status = String(merged.status || 'einsatzbereit').toLowerCase();
     if (!['faellig', 'einsatzbereit', 'wartung'].includes(status)) {
       throw new Error('Ungültiger Gerätestatus: Erlaubt sind faellig, einsatzbereit, wartung.');
     }
@@ -1484,33 +1498,104 @@ function mutateUpsertOnSnapshotInner(
     if (!name) {
       throw new Error('Gerätename ("name") darf nicht leer sein.');
     }
-    merged.item_type = itemType;
-    merged.category = merged.category || (itemType === 'zubehoer' ? 'zub_kette_schiene' : 'motorsaegen');
-    merged.parent_equipment_id = merged.parent_equipment_id ?? null;
-    merged.name = name;
-    merged.model = String(merged.model || '');
-    merged.photo = merged.photo ?? null;
-    merged.specs = merged.specs && typeof merged.specs === 'object' ? merged.specs : {};
-    merged.quantity =
-      merged.quantity !== undefined
-        ? merged.quantity
+
+    // Merge specs from prev + payload.specs + any custom top-level string/number keys
+    const reservedEquipmentKeys = new Set([
+      'id',
+      'item_type',
+      'category',
+      'parent_equipment_id',
+      'name',
+      'model',
+      'photo',
+      'specs',
+      'quantity',
+      'notes',
+      'status',
+      'last_maintenance',
+      'next_maintenance',
+      'maintenance_plan',
+      'interval_months',
+      'history'
+    ]);
+    const prevSpecs =
+      prev?.specs && typeof prev.specs === 'object' && !Array.isArray(prev.specs)
+        ? (prev.specs as Record<string, unknown>)
+        : {};
+    const payloadSpecs =
+      payload.specs && typeof payload.specs === 'object' && !Array.isArray(payload.specs)
+        ? (payload.specs as Record<string, unknown>)
+        : {};
+    const mergedSpecs: Record<string, string> = {};
+    for (const [k, v] of Object.entries(prevSpecs)) {
+      if (v !== undefined && v !== null && String(v).trim() !== '') {
+        mergedSpecs[k] = String(v).trim();
+      }
+    }
+    for (const [k, v] of Object.entries(payloadSpecs)) {
+      if (v === null || v === undefined || String(v).trim() === '') {
+        delete mergedSpecs[k];
+      } else {
+        mergedSpecs[k.trim()] = String(v).trim();
+      }
+    }
+    for (const [k, v] of Object.entries(payload)) {
+      if (!reservedEquipmentKeys.has(k)) {
+        if (v === null || v === '') {
+          delete mergedSpecs[k];
+        } else if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
+          mergedSpecs[k.trim()] = String(v).trim();
+        }
+        delete merged[k];
+      }
+    }
+
+    const parsedInterval = Math.max(1, Math.round(Number(merged.interval_months) || 6));
+    const lastMaintIso = assertIsoDate(String(merged.last_maintenance || today), 'last_maintenance');
+    let nextMaintIso: string;
+    if (payload.next_maintenance !== undefined && String(payload.next_maintenance).trim() !== '') {
+      nextMaintIso = assertIsoDate(String(payload.next_maintenance), 'next_maintenance');
+    } else if (
+      (payload.last_maintenance !== undefined || payload.interval_months !== undefined) &&
+      payload.next_maintenance === undefined
+    ) {
+      nextMaintIso = addDaysIso(lastMaintIso, parsedInterval * 30);
+    } else {
+      nextMaintIso = assertIsoDate(
+        String(merged.next_maintenance || addDaysIso(lastMaintIso, parsedInterval * 30)),
+        'next_maintenance'
+      );
+    }
+
+    const rawQty = merged.quantity;
+    const normalizedQty =
+      rawQty !== undefined && rawQty !== null && String(rawQty).trim() !== ''
+        ? Math.max(0, Math.round(Number(rawQty) || 0))
         : itemType === 'zubehoer'
           ? 1
           : null;
+
+    merged.item_type = itemType;
+    merged.category = String(
+      merged.category || (itemType === 'zubehoer' ? 'zub_kette_schiene' : 'motorsaegen')
+    );
+    merged.parent_equipment_id = merged.parent_equipment_id ? String(merged.parent_equipment_id) : null;
+    merged.name = name;
+    merged.model = String(merged.model || '');
+    merged.photo = merged.photo ?? null;
+    merged.specs = mergedSpecs;
+    merged.quantity = normalizedQty;
     merged.notes = String(merged.notes || '');
     merged.status = status;
-    merged.last_maintenance = assertIsoDate(String(merged.last_maintenance || today), 'last_maintenance');
-    merged.next_maintenance = assertIsoDate(
-      String(merged.next_maintenance || addDaysIso(today, 180)),
-      'next_maintenance'
-    );
+    merged.last_maintenance = lastMaintIso;
+    merged.next_maintenance = nextMaintIso;
     merged.maintenance_plan =
       merged.maintenance_plan !== undefined
         ? String(merged.maintenance_plan)
         : itemType === 'zubehoer'
           ? ''
           : 'Regelmäßige Prüfung';
-    merged.interval_months = typeof merged.interval_months === 'number' ? merged.interval_months : 6;
+    merged.interval_months = parsedInterval;
     merged.history = Array.isArray(merged.history) ? merged.history : [];
   } else if (collection === 'materials') {
     const name = String(merged.name || '').trim();
@@ -2415,7 +2500,10 @@ export const MCP_TOOLS = [
           description:
             'Optionaler Filter auf eine Kunden-ID (liefert gezielt Kundenakte, Objekte, Termine, Arbeiten & Rechnungen dieses Kunden).'
         },
-        status: { type: 'string', description: 'Optionaler Status-Filter (z.B. unpaid, paid, geplant).' },
+        status: { type: 'string', description: 'Optionaler Status-Filter (z.B. unpaid, paid, geplant, einsatzbereit, faellig, wartung).' },
+        category: { type: 'string', description: 'Optionaler Kategorie-Filter (z.B. bei equipments oder materials).' },
+        item_type: { type: 'string', description: 'Optionaler Typ-Filter bei equipments ("geraet" oder "zubehoer").' },
+        parent_equipment_id: { type: 'string', description: 'Optionaler Filter auf zugeordnetes Hauptgerät bei equipments.' },
         is_lcr: {
           type: 'boolean',
           description: 'Bei workRecords: Filtert gezielt auf L.C.R.-Einträge (true) oder Nicht-L.C.R. (false).'
@@ -2426,7 +2514,7 @@ export const MCP_TOOLS = [
         },
         date_from: { type: 'string', description: 'Optionales Startdatum YYYY-MM-DD.' },
         date_to: { type: 'string', description: 'Optionales Enddatum YYYY-MM-DD.' },
-        search: { type: 'string', description: 'Freitextsuche über alle Felder.' },
+        search: { type: 'string', description: 'Freitextsuche über alle Felder (inkl. Technische Daten specs).' },
         fields: {
           type: 'array',
           items: { type: 'string' },
@@ -2480,7 +2568,8 @@ export const MCP_TOOLS = [
         record: {
           type: 'object',
           additionalProperties: true,
-          description: 'Datensatz-Felder bei op="upsert" (mit id = ändern, ohne id = neu anlegen).'
+          description:
+            'Datensatz-Felder bei op="upsert" (mit id = ändern, ohne id = neu anlegen). Bei collection="equipments" sind alle Felder direkt les- und änderbar: id, item_type ("geraet"|"zubehoer"), category, parent_equipment_id, name, model, status ("einsatzbereit"|"faellig"|"wartung"), quantity (Zahl), specs (Objekt mit beliebigen technischen Parametern, wird zusammengeführt), maintenance_plan, interval_months, last_maintenance, next_maintenance, notes, history.'
         },
         work_record_ids: {
           type: 'array',
@@ -2664,13 +2753,17 @@ function executeTargetedPixelQuery(args: Record<string, unknown>) {
       id: typeof args.id === 'string' ? args.id : undefined,
       customer_id: typeof args.customer_id === 'string' ? args.customer_id : undefined,
       status: typeof args.status === 'string' ? args.status : undefined,
+      category: typeof args.category === 'string' ? args.category : undefined,
+      item_type: typeof args.item_type === 'string' ? args.item_type : undefined,
+      parent_equipment_id:
+        typeof args.parent_equipment_id === 'string' ? args.parent_equipment_id : undefined,
       is_lcr: typeof args.is_lcr === 'boolean' ? args.is_lcr : undefined,
       unbilled_only: Boolean(args.unbilled_only),
       date_from: typeof args.date_from === 'string' ? args.date_from : undefined,
       date_to: typeof args.date_to === 'string' ? args.date_to : undefined,
       search: typeof args.search === 'string' ? args.search : undefined,
       fields,
-      limit,
+      limit: col === 'equipments' && args.limit === undefined ? 200 : limit,
       include_photos: Boolean(args.include_photos)
     });
   } else if (requestedCollections.length > 1) {
@@ -2682,13 +2775,17 @@ function executeTargetedPixelQuery(args: Record<string, unknown>) {
           id: typeof args.id === 'string' ? args.id : undefined,
           customer_id: typeof args.customer_id === 'string' ? args.customer_id : undefined,
           status: typeof args.status === 'string' ? args.status : undefined,
+          category: typeof args.category === 'string' ? args.category : undefined,
+          item_type: typeof args.item_type === 'string' ? args.item_type : undefined,
+          parent_equipment_id:
+            typeof args.parent_equipment_id === 'string' ? args.parent_equipment_id : undefined,
           is_lcr: typeof args.is_lcr === 'boolean' ? args.is_lcr : undefined,
           unbilled_only: Boolean(args.unbilled_only),
           date_from: typeof args.date_from === 'string' ? args.date_from : undefined,
           date_to: typeof args.date_to === 'string' ? args.date_to : undefined,
           search: typeof args.search === 'string' ? args.search : undefined,
           fields,
-          limit,
+          limit: col === 'equipments' && args.limit === undefined ? 200 : limit,
           include_photos: Boolean(args.include_photos)
         });
       }
