@@ -32,10 +32,17 @@ import {
 import { Invoice, PaymentItem } from '../../types/index.ts';
 
 function parseSignedDecimal(val: string): number {
-  const trimmed = val.trim();
+  const trimmed = val.trim().replace(/\s+/g, '');
   if (!trimmed) return 0;
   const isNeg = trimmed.startsWith('-');
-  const cleaned = trimmed.replace(',', '.').replace(/[^0-9.]/g, '');
+  let cleaned = '';
+  if (trimmed.includes(',')) {
+    cleaned = trimmed.replace(/\./g, '').replace(',', '.').replace(/[^0-9.]/g, '');
+  } else if (/^-?\d{1,3}(\.\d{3})+$/.test(trimmed) || (trimmed.match(/\./g) || []).length > 1) {
+    cleaned = trimmed.replace(/\./g, '').replace(/[^0-9]/g, '');
+  } else {
+    cleaned = trimmed.replace(/[^0-9.]/g, '');
+  }
   const parsed = parseFloat(cleaned);
   if (Number.isNaN(parsed)) return 0;
   return isNeg ? -parsed : parsed;

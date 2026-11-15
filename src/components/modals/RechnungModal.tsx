@@ -104,8 +104,20 @@ const MONTH_NAMES_DE = [
   'Dezember'
 ];
 
+function normalizeGermanDecimalString(raw: string): string {
+  const trimmed = raw.trim().replace(/\s+/g, '');
+  if (!trimmed) return '';
+  if (trimmed.includes(',')) {
+    return trimmed.replace(/\./g, '').replace(',', '.').replace(/[^0-9.]/g, '');
+  }
+  if (/^-?\d{1,3}(\.\d{3})+$/.test(trimmed) || (trimmed.match(/\./g) || []).length > 1) {
+    return trimmed.replace(/\./g, '').replace(/[^0-9]/g, '');
+  }
+  return trimmed.replace(/[^0-9.]/g, '');
+}
+
 function parsePositiveDecimal(raw: string): number {
-  const cleaned = raw.replace(',', '.').replace(/[^0-9.]/g, '');
+  const cleaned = normalizeGermanDecimalString(raw);
   const parsed = parseFloat(cleaned);
   return Number.isNaN(parsed) || parsed < 0 ? 0 : parsed;
 }
@@ -114,7 +126,7 @@ function parseSignedDecimalInput(raw: string): number {
   const trimmed = raw.trim();
   if (!trimmed) return 0;
   const isNeg = trimmed.startsWith('-');
-  const cleaned = trimmed.replace(',', '.').replace(/[^0-9.]/g, '');
+  const cleaned = normalizeGermanDecimalString(trimmed);
   const parsed = parseFloat(cleaned);
   if (Number.isNaN(parsed)) return 0;
   return isNeg ? -parsed : parsed;
@@ -1324,7 +1336,12 @@ export const RechnungModal: React.FC = () => {
                               }}
                               className="w-full h-10 px-2 bg-indigo-50 hover:bg-indigo-100 text-[#3138A0] font-bold text-[11px] rounded-xl border border-indigo-200 transition-colors"
                             >
-                              Summe ({calculatedReferenceSum.toFixed(0)} €)
+                              Summe (
+                              {calculatedReferenceSum.toLocaleString('de-DE', {
+                                minimumFractionDigits: 2,
+                                maximumFractionDigits: 2
+                              })}{' '}
+                              €)
                             </button>
                           </div>
                         </div>
