@@ -160,6 +160,8 @@ export const PlanungView: React.FC = () => {
     deleteAppointment,
     setSelectedCustomerId,
     setPrefilledWorkTitle,
+    selectedPlanungDate,
+    setSelectedPlanungDate,
     setActiveModal,
     navigate,
     registerLocalBackLayer,
@@ -169,15 +171,25 @@ export const PlanungView: React.FC = () => {
   const todayIso = useMemo(() => toLocalIsoDate(new Date()), []);
 
   const [activeTab, setActiveTab] = useState<'tag' | 'woche' | 'tour'>('tag');
-  const [selectedDate, setSelectedDate] = useState<string>(todayIso);
+  const [selectedDate, setSelectedDate] = useState<string>(
+    () => selectedPlanungDate || todayIso
+  );
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>('all');
 
   // Kompakter Monatskalender-Picker (Schnellwahl in der Daumenzone)
   const [isCalendarPickerOpen, setIsCalendarPickerOpen] = useState(false);
   const [calendarViewMonthIso, setCalendarViewMonthIso] = useState<string>(
-    () => `${todayIso.slice(0, 7)}-01`
+    () => `${(selectedPlanungDate || todayIso).slice(0, 7)}-01`
   );
   const [showAllUpcoming, setShowAllUpcoming] = useState(false);
+
+  useEffect(() => {
+    if (selectedPlanungDate) {
+      setSelectedDate(selectedPlanungDate);
+      setCalendarViewMonthIso(`${selectedPlanungDate.slice(0, 7)}-01`);
+      setSelectedPlanungDate(null);
+    }
+  }, [selectedPlanungDate, setSelectedPlanungDate]);
 
   // Horizontal-Swipe für die 7-Tage-Leiste (Roter Bereich)
   const swipeStartRef = useRef<{ x: number; y: number } | null>(null);

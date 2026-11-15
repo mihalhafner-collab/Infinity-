@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useApp, usePixelBackLayer } from '../../context/AppContext.tsx';
 import { Header } from '../common/Header.tsx';
 import { BottomActionBar } from '../common/BottomActionBar.tsx';
@@ -42,6 +42,13 @@ export const ArbeitenView: React.FC = () => {
   const [lockedNotice, setLockedNotice] = useState<string | null>(null);
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = 0;
+    }
+  }, [filterCustomer, statusFilter]);
 
   usePixelBackLayer(selectionMode, () => {
     setSelectionMode(false);
@@ -247,7 +254,10 @@ export const ArbeitenView: React.FC = () => {
       )}
 
       {/* Kompakte, übersichtliche Liste der Arbeitsaufzeichnungen */}
-      <div className="flex-1 min-h-0 overflow-y-auto px-3.5 py-2.5 space-y-2 overscroll-contain">
+      <div
+        ref={scrollRef}
+        className="flex-1 min-h-0 overflow-y-auto px-3.5 py-2.5 space-y-2 overscroll-contain"
+      >
         {filteredRecords.length === 0 ? (
           <div className="p-7 bg-white border border-slate-200 rounded-2xl text-center space-y-2.5 mt-2">
             <div className="w-11 h-11 rounded-full bg-indigo-50 text-[#3138A0] flex items-center justify-center mx-auto">

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useApp, usePixelBackLayer } from '../../context/AppContext.tsx';
 import { Header } from '../common/Header.tsx';
 import { BottomActionBar } from '../common/BottomActionBar.tsx';
@@ -65,6 +65,13 @@ export const AbrechnungView: React.FC = () => {
   } = useApp();
 
   const [mainTab, setMainTab] = useState<'rechnungen' | 'guv'>('rechnungen');
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = 0;
+    }
+  }, [mainTab, selectedInvoiceId]);
 
   useEffect(() => {
     if (activeModal === 'OPEN_GUV_TAB') {
@@ -269,7 +276,10 @@ export const AbrechnungView: React.FC = () => {
 
       {/* BELEG-DETAILANSICHT */}
       {selectedInvoice ? (
-        <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-4 text-xs text-slate-700 overscroll-contain">
+        <div
+          ref={scrollRef}
+          className="flex-1 min-h-0 overflow-y-auto p-4 space-y-4 text-xs text-slate-700 overscroll-contain"
+        >
           {/* Header Card */}
           <div className="p-4 bg-white border border-slate-200 rounded-2xl shadow-2xs space-y-2.5">
             <div className="flex items-start justify-between gap-2">
@@ -639,11 +649,17 @@ export const AbrechnungView: React.FC = () => {
         /* HAUPTANSICHT ABRECHNUNG & GEWINN/VERLUST: Ansicht oben, Bedienung unten */
         <>
           {mainTab === 'guv' ? (
-            <div className="flex-1 min-h-0 overflow-y-auto p-3 flex flex-col overscroll-contain">
+            <div
+              ref={scrollRef}
+              className="flex-1 min-h-0 overflow-y-auto p-3 flex flex-col overscroll-contain"
+            >
               <GuvPanel />
             </div>
           ) : (
-            <div className="flex-1 min-h-0 overflow-y-auto p-3.5 flex flex-col gap-3 overscroll-contain">
+            <div
+              ref={scrollRef}
+              className="flex-1 min-h-0 overflow-y-auto p-3.5 flex flex-col gap-3 overscroll-contain"
+            >
               {/* OBEN: Reine Übersichten (Kennzahlen, Unbezahlte Rechnungen, Alle Rechnungen) */}
               <div className="space-y-3">
                 <div className="grid grid-cols-3 gap-2">

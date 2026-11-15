@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useApp, usePixelBackLayer } from '../../context/AppContext.tsx';
 import { Header } from '../common/Header.tsx';
 import { BottomActionBar } from '../common/BottomActionBar.tsx';
 import { BottomNav } from '../common/BottomNav.tsx';
+import { SwipeToDeleteRow } from '../common/SwipeToDeleteRow.tsx';
 import { UndoToast } from '../common/UndoToast.tsx';
 import {
   MessageSquare,
@@ -41,7 +42,10 @@ export const VorgaengeView: React.FC = () => {
     customers,
     addOrder,
     updateOrdersStatusBatch,
+    deleteOrder,
     deleteOrdersBatch,
+    deleteInquiry,
+    deleteOffer,
     addAppointment,
     setSelectedCustomerId,
     setPrefilledWorkTitle,
@@ -51,6 +55,7 @@ export const VorgaengeView: React.FC = () => {
 
   const [orderSelectionMode, setOrderSelectionMode] = useState(false);
   const [selectedOrderIds, setSelectedOrderIds] = useState<string[]>([]);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   // Kompakter "+ Auftrag"-Dialog (damit auch mehrere Tätigkeiten direkt als Auftrag erfasst werden können)
   const [showNewOrderForm, setShowNewOrderForm] = useState(false);
@@ -65,6 +70,12 @@ export const VorgaengeView: React.FC = () => {
     setSelectedOrderIds([]);
   });
   usePixelBackLayer(showNewOrderForm, () => setShowNewOrderForm(false));
+
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = 0;
+    }
+  }, [currentScreen]);
 
   // Determine subview based on currentScreen
   let activeTab: 'anfragen' | 'angebote' | 'auftraege' = 'anfragen';
@@ -210,17 +221,15 @@ export const VorgaengeView: React.FC = () => {
 
       {/* Oben reine Ansicht, Bedienelemente im unteren Bereich */}
 
-      <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-3.5 overscroll-contain">
-        {/* Info Banner: REQ-025 Nachvollziehbare Vorgangskette */}
-        <div className="p-2.5 bg-indigo-50/60 border border-indigo-100 rounded-xl text-[11px] text-[#3138A0]">
-          Anfrage → Angebot → Auftrag sind getrennte bewusste Schritte (REQ-025). Aufträge lassen sich einzeln oder per Mehrfachauswahl bündeln.
-        </div>
-
+      <div
+        ref={scrollRef}
+        className="flex-1 min-h-0 overflow-y-auto px-3.5 py-2.5 space-y-2.5 overscroll-contain"
+      >
         {/* ANFRAGEN LISTE (M05, WF-010, ILL-012) */}
         {activeTab === 'anfragen' && (
-          <div className="space-y-2.5">
+          <div className="space-y-2">
             {inquiries.length === 0 ? (
-              <div className="p-8 bg-white border border-slate-200 rounded-2xl text-center space-y-2">
+              <div className="p-8 bg-white border border-slate-200 rounded-2xl text-center space-y-2 mt-1">
                 <div className="w-12 h-12 rounded-full bg-slate-100 text-slate-500 flex items-center justify-center mx-auto">
                   <MessageSquare size={22} />
                 </div>
@@ -233,46 +242,49 @@ export const VorgaengeView: React.FC = () => {
               inquiries.map((inq) => {
                 const cust = customers.find((c) => c.id === inq.customer_id);
                 return (
-                  <div
+                  <SwipeToDeleteRow
                     key={inq.id}
-                    className="p-3.5 bg-white border border-slate-200 rounded-2xl shadow-2xs space-y-2"
+                    onDelete={() => deleteInquiry(inq.id)}
+                    deleteLabel="Anfrage löschen"
                   >
-                    <div className="flex items-start justify-between">
-                      <div>
-                        <h4 className="text-sm font-bold text-slate-900 leading-tight">
-                          {inq.title}
-                        </h4>
-                        <p className="text-xs text-slate-500 mt-0.5">
-                          {cust?.name} · Wunsch: {inq.desired_date}
-                        </p>
+                    <div className="p-3 bg-white border border-slate-200 rounded-2xl shadow-2xs space-y-2">
+                      <div className="flex items-start justify-between">
+                        <div>
+                          <h4 className="text-[13px] font-bold text-slate-950 leading-tight">
+                            {inq.title}
+                          </h4>
+                          <p className="text-[11px] text-slate-500 mt-0.5">
+                            {cust?.name} · Wunsch: {inq.desired_date}
+                          </p>
+                        </div>
+                        <span
+                          className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${
+                            inq.status === 'neu'
+                              ? 'bg-fuchsia-50 text-[#9A1B8D]'
+                              : 'bg-emerald-50 text-[#2C7738]'
+                          }`}
+                        >
+                          {inq.status === 'neu' ? 'Neu' : 'Angenommen'}
+                        </span>
                       </div>
-                      <span
-                        className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${
-                          inq.status === 'neu'
-                            ? 'bg-fuchsia-50 text-[#9A1B8D]'
-                            : 'bg-emerald-50 text-[#2C7738]'
-                        }`}
-                      >
-                        {inq.status === 'neu' ? 'Neu' : 'Angenommen'}
-                      </span>
-                    </div>
 
-                    {inq.notes && (
-                      <p className="text-[11px] text-slate-600 bg-slate-50 p-2 rounded-lg italic">
-                        {inq.notes}
-                      </p>
-                    )}
+                      {inq.notes && (
+                        <p className="text-[11px] text-slate-600 bg-slate-50 p-2 rounded-lg italic">
+                          {inq.notes}
+                        </p>
+                      )}
 
-                    <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
-                      <button
-                        onClick={() => setTab('angebote')}
-                        className="px-3 py-1.5 bg-[#3138A0] text-white font-semibold text-xs rounded-xl shadow-2xs flex items-center gap-1.5 transition-colors"
-                      >
-                        <span>Angebot vorbereiten</span>
-                        <ArrowRight size={13} />
-                      </button>
+                      <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
+                        <button
+                          onClick={() => setTab('angebote')}
+                          className="px-3 py-1.5 bg-[#3138A0] text-white font-semibold text-xs rounded-xl shadow-2xs flex items-center gap-1.5 transition-colors"
+                        >
+                          <span>Angebot vorbereiten</span>
+                          <ArrowRight size={13} />
+                        </button>
+                      </div>
                     </div>
-                  </div>
+                  </SwipeToDeleteRow>
                 );
               })
             )}
@@ -281,9 +293,9 @@ export const VorgaengeView: React.FC = () => {
 
         {/* ANGEBOTE LISTE (M06, WF-011, ILL-012) */}
         {activeTab === 'angebote' && (
-          <div className="space-y-2.5">
+          <div className="space-y-2">
             {offers.length === 0 ? (
-              <div className="p-8 bg-white border border-slate-200 rounded-2xl text-center space-y-2">
+              <div className="p-8 bg-white border border-slate-200 rounded-2xl text-center space-y-2 mt-1">
                 <div className="w-12 h-12 rounded-full bg-slate-100 text-slate-500 flex items-center justify-center mx-auto">
                   <FileText size={22} />
                 </div>
@@ -296,46 +308,49 @@ export const VorgaengeView: React.FC = () => {
               offers.map((off) => {
                 const cust = customers.find((c) => c.id === off.customer_id);
                 return (
-                  <div
+                  <SwipeToDeleteRow
                     key={off.id}
-                    className="p-3.5 bg-white border border-slate-200 rounded-2xl shadow-2xs space-y-2.5"
+                    onDelete={() => deleteOffer(off.id)}
+                    deleteLabel="Angebot löschen"
                   >
-                    <div className="flex items-start justify-between">
-                      <div>
-                        <h4 className="text-sm font-bold text-slate-900 leading-tight">
-                          {off.title}
-                        </h4>
-                        <p className="text-xs text-slate-500 mt-0.5">
-                          {cust?.name} · {off.items.length} Positionen
-                        </p>
-                      </div>
-                      <span className="text-sm font-bold text-[#B4470B]">
-                        {off.total_amount.toFixed(2)} €
-                      </span>
-                    </div>
-
-                    <div className="bg-slate-50 p-2.5 rounded-xl space-y-1 text-xs">
-                      {off.items.map((it, idx) => (
-                        <div key={idx} className="flex justify-between text-slate-700">
-                          <span>{it.description}</span>
-                          <span className="font-semibold">{it.total.toFixed(2)} €</span>
+                    <div className="p-3 bg-white border border-slate-200 rounded-2xl shadow-2xs space-y-2">
+                      <div className="flex items-start justify-between">
+                        <div>
+                          <h4 className="text-[13px] font-bold text-slate-950 leading-tight">
+                            {off.title}
+                          </h4>
+                          <p className="text-[11px] text-slate-500 mt-0.5">
+                            {cust?.name} · {off.items.length} Positionen
+                          </p>
                         </div>
-                      ))}
-                    </div>
+                        <span className="text-[13px] font-bold text-[#B4470B] tabular-nums">
+                          {off.total_amount.toFixed(2)} €
+                        </span>
+                      </div>
 
-                    <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
-                      <span className="text-[11px] text-slate-400">
-                        Freigegeben · Gültig bis Monatsende
-                      </span>
-                      <button
-                        onClick={() => setTab('auftraege')}
-                        className="px-3 py-1.5 bg-[#2C7738] text-white font-semibold text-xs rounded-xl shadow-2xs flex items-center gap-1.5 transition-colors"
-                      >
-                        <CheckCircle2 size={13} />
-                        <span>Annahme dokumentieren</span>
-                      </button>
+                      <div className="bg-slate-50 p-2 rounded-xl space-y-1 text-xs">
+                        {off.items.map((it, idx) => (
+                          <div key={idx} className="flex justify-between text-slate-700">
+                            <span>{it.description}</span>
+                            <span className="font-semibold">{it.total.toFixed(2)} €</span>
+                          </div>
+                        ))}
+                      </div>
+
+                      <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
+                        <span className="text-[11px] text-slate-400">
+                          Freigegeben · Gültig bis Monatsende
+                        </span>
+                        <button
+                          onClick={() => setTab('auftraege')}
+                          className="px-3 py-1.5 bg-[#2C7738] text-white font-semibold text-xs rounded-xl shadow-2xs flex items-center gap-1.5 transition-colors"
+                        >
+                          <CheckCircle2 size={13} />
+                          <span>Annahme dokumentieren</span>
+                        </button>
+                      </div>
                     </div>
-                  </div>
+                  </SwipeToDeleteRow>
                 );
               })
             )}
@@ -344,9 +359,9 @@ export const VorgaengeView: React.FC = () => {
 
         {/* AUFTRÄGE LISTE (M07, WF-012, ILL-012 + Mehrfachauswahl) */}
         {activeTab === 'auftraege' && (
-          <div className="space-y-2.5">
+          <div className="space-y-2">
             {orders.length === 0 ? (
-              <div className="p-8 bg-white border border-slate-200 rounded-2xl text-center space-y-2">
+              <div className="p-8 bg-white border border-slate-200 rounded-2xl text-center space-y-2 mt-1">
                 <div className="w-12 h-12 rounded-full bg-slate-100 text-slate-500 flex items-center justify-center mx-auto">
                   <CheckSquare size={22} />
                 </div>
@@ -371,79 +386,87 @@ export const VorgaengeView: React.FC = () => {
                 const badge = getOrderStatusBadge(ord.status);
 
                 return (
-                  <div
+                  <SwipeToDeleteRow
                     key={ord.id}
-                    onClick={
-                      orderSelectionMode ? () => toggleOrderSelection(ord.id) : undefined
-                    }
-                    className={`p-3.5 bg-white border rounded-2xl shadow-2xs space-y-2.5 transition-all ${
-                      orderSelectionMode ? 'cursor-pointer active:scale-[0.99]' : ''
-                    } ${
-                      orderSelectionMode && isSelected
-                        ? 'border-[#3138A0] bg-indigo-50/25 ring-1 ring-[#3138A0]/20'
-                        : 'border-slate-200'
-                    }`}
+                    onDelete={() => deleteOrder(ord.id)}
+                    deleteLabel="Auftrag löschen"
+                    disabled={orderSelectionMode}
                   >
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="flex items-start gap-2.5 min-w-0">
-                        {orderSelectionMode && (
-                          <div
-                            className={`w-6 h-6 mt-0.5 rounded-lg border flex items-center justify-center shrink-0 transition-colors ${
-                              isSelected
-                                ? 'bg-[#3138A0] border-[#3138A0] text-white'
-                                : 'bg-white border-slate-300'
-                            }`}
-                          >
-                            {isSelected && <Check size={14} strokeWidth={3} />}
+                    <div
+                      onClick={
+                        orderSelectionMode ? () => toggleOrderSelection(ord.id) : undefined
+                      }
+                      className={`p-3 bg-white border rounded-2xl shadow-2xs space-y-2 transition-all ${
+                        orderSelectionMode ? 'cursor-pointer active:scale-[0.99]' : ''
+                      } ${
+                        orderSelectionMode && isSelected
+                          ? 'border-[#3138A0] bg-indigo-50/25 ring-1 ring-[#3138A0]/20'
+                          : 'border-slate-200'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex items-start gap-2.5 min-w-0">
+                          {orderSelectionMode && (
+                            <div
+                              className={`w-6 h-6 mt-0.5 rounded-lg border flex items-center justify-center shrink-0 transition-colors ${
+                                isSelected
+                                  ? 'bg-[#3138A0] border-[#3138A0] text-white'
+                                  : 'bg-white border-slate-300'
+                              }`}
+                            >
+                              {isSelected && <Check size={14} strokeWidth={3} />}
+                            </div>
+                          )}
+                          <div className="min-w-0">
+                            <h4 className="text-[13px] font-bold text-slate-950 leading-tight">
+                              {ord.title}
+                            </h4>
+                            <p className="text-[11px] text-slate-500 mt-0.5">
+                              {cust?.name || 'Kunde'}
+                            </p>
                           </div>
-                        )}
-                        <div className="min-w-0">
-                          <h4 className="text-sm font-bold text-slate-900 leading-tight">
-                            {ord.title}
-                          </h4>
-                          <p className="text-xs text-slate-500 mt-0.5">{cust?.name || 'Kunde'}</p>
                         </div>
+                        <span
+                          className={`text-[10px] font-bold px-2 py-0.5 rounded-md shrink-0 ${badge.cls}`}
+                        >
+                          {badge.label}
+                        </span>
                       </div>
-                      <span
-                        className={`text-[10px] font-bold px-2 py-0.5 rounded-md shrink-0 ${badge.cls}`}
-                      >
-                        {badge.label}
-                      </span>
+
+                      {ord.notes && (
+                        <p className="text-[11px] text-slate-600 bg-slate-50 p-2 rounded-lg italic">
+                          {ord.notes}
+                        </p>
+                      )}
+
+                      {!orderSelectionMode && (
+                        <div className="pt-2 border-t border-slate-100 grid grid-cols-2 gap-2">
+                          <button
+                            onClick={() => {
+                              setSelectedCustomerId(ord.customer_id);
+                              setActiveModal('TERMIN_ANLEGEN');
+                            }}
+                            className="h-9 bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-semibold rounded-xl flex items-center justify-center gap-1.5 transition-colors"
+                          >
+                            <CalendarPlus size={14} className="text-[#3138A0]" />
+                            <span>Termin anlegen</span>
+                          </button>
+
+                          <button
+                            onClick={() => {
+                              setSelectedCustomerId(ord.customer_id);
+                              setPrefilledWorkTitle(ord.title);
+                              setActiveModal('ARBEIT_NACHTRAGEN');
+                            }}
+                            className="h-9 bg-[#3138A0] hover:bg-[#272d82] text-white text-xs font-semibold rounded-xl flex items-center justify-center gap-1.5 transition-colors shadow-2xs"
+                          >
+                            <Clock size={14} />
+                            <span>Arbeit erfassen</span>
+                          </button>
+                        </div>
+                      )}
                     </div>
-
-                    {ord.notes && (
-                      <p className="text-[11px] text-slate-600 bg-slate-50 p-2 rounded-lg italic">
-                        {ord.notes}
-                      </p>
-                    )}
-
-                    {!orderSelectionMode && (
-                      <div className="pt-2 border-t border-slate-100 grid grid-cols-2 gap-2">
-                        <button
-                          onClick={() => {
-                            setSelectedCustomerId(ord.customer_id);
-                            setActiveModal('TERMIN_ANLEGEN');
-                          }}
-                          className="h-10 bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-semibold rounded-xl flex items-center justify-center gap-1.5 transition-colors"
-                        >
-                          <CalendarPlus size={14} className="text-[#3138A0]" />
-                          <span>Termin anlegen</span>
-                        </button>
-
-                        <button
-                          onClick={() => {
-                            setSelectedCustomerId(ord.customer_id);
-                            setPrefilledWorkTitle(ord.title);
-                            setActiveModal('ARBEIT_NACHTRAGEN');
-                          }}
-                          className="h-10 bg-[#3138A0] hover:bg-[#272d82] text-white text-xs font-semibold rounded-xl flex items-center justify-center gap-1.5 transition-colors shadow-2xs"
-                        >
-                          <Clock size={14} />
-                          <span>Arbeit erfassen</span>
-                        </button>
-                      </div>
-                    )}
-                  </div>
+                  </SwipeToDeleteRow>
                 );
               })
             )}
