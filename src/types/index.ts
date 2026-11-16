@@ -72,6 +72,8 @@ export interface Appointment {
   address: string | null;
   notes: string;
   tour_order: number;
+  created_at?: string;
+  updated_at?: string;
 }
 
 // DATA-04 & DATA-09: Verbrauchtes Material an einer Arbeit (PDF S. 82, M11)
@@ -163,6 +165,8 @@ export interface Invoice {
   open_refund_amount: number; // Stornierte bezahlte Rechnung bis Rückzahlung erfolgt
   sent_at?: string | null;
   sent_via?: string | null;
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface Inquiry {
@@ -172,6 +176,8 @@ export interface Inquiry {
   desired_date: string;
   notes: string;
   status: 'neu' | 'angebot_vorbereitet' | 'angenommen';
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface OfferItem {
@@ -189,6 +195,8 @@ export interface Offer {
   items: OfferItem[];
   total_amount: number;
   status: 'entwurf' | 'freigegeben' | 'angenommen' | 'abgelehnt';
+  created_at?: string;
+  updated_at?: string;
 }
 
 // DATA-04: Auftrag (PDF S. 79, M07)
@@ -230,6 +238,8 @@ export interface Equipment {
   maintenance_plan: string;
   interval_months: number;
   history: Array<{ date: string; note: string; plan: string }>;
+  created_at?: string;
+  updated_at?: string;
 }
 
 // DATA-04 / M11: Material (PDF S. 42 & S. 79)
@@ -264,6 +274,8 @@ export interface BusinessExpense {
   category: ExpenseCategory;
   useful_life_years?: number | null; // Für Anlagen > 1.000 € (AfA § 7 EStG, z.B. 5 Jahre)
   notes?: string;
+  created_at?: string;
+  updated_at?: string;
 }
 
 export type TaxCalculationMethod =

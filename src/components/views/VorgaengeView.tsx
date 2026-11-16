@@ -20,8 +20,12 @@ import {
 } from 'lucide-react';
 import { Order } from '../../types/index.ts';
 import { getTodayLocalIso } from '../../utils/invoicePdf.ts';
+import { CustomerSelectField } from '../common/CustomerSelectField.tsx';
 
 const QUICK_ORDER_ACTIVITIES = [
+  'Gartenpflege',
+  'Pflege der Außenanlage',
+  'Garten- und Außenanlagenreinigung',
   'Rasenpflege / Mähen',
   'Heckenschnitt & Formschnitt',
   'Baumpflege / Rückschnitt',
@@ -40,6 +44,7 @@ export const VorgaengeView: React.FC = () => {
     offers,
     orders,
     customers,
+    properties,
     addOrder,
     updateOrdersStatusBatch,
     deleteOrder,
@@ -60,6 +65,7 @@ export const VorgaengeView: React.FC = () => {
   // Kompakter "+ Auftrag"-Dialog (damit auch mehrere Tätigkeiten direkt als Auftrag erfasst werden können)
   const [showNewOrderForm, setShowNewOrderForm] = useState(false);
   const [newOrderCustomerId, setNewOrderCustomerId] = useState('');
+  const [newOrderPropertyId, setNewOrderPropertyId] = useState('');
   const [newOrderPickedActivities, setNewOrderPickedActivities] = useState<string[]>([]);
   const [newOrderCustomTitle, setNewOrderCustomTitle] = useState('');
   const [newOrderStatus, setNewOrderStatus] = useState<Order['status']>('in_arbeit');
@@ -91,7 +97,13 @@ export const VorgaengeView: React.FC = () => {
   };
 
   const openNewOrderSheet = () => {
-    setNewOrderCustomerId(customers[0]?.id || '');
+    const sorted = [...customers].sort((a, b) =>
+      (a.name || '').localeCompare(b.name || '', 'de', { sensitivity: 'base' })
+    );
+    const defaultCustId = sorted[0]?.id || '';
+    const custProps = properties.filter((p) => p.customer_id === defaultCustId);
+    setNewOrderCustomerId(defaultCustId);
+    setNewOrderPropertyId(custProps[0]?.id || '');
     setNewOrderPickedActivities([]);
     setNewOrderCustomTitle('');
     setNewOrderStatus('in_arbeit');
@@ -117,6 +129,7 @@ export const VorgaengeView: React.FC = () => {
     if (!newOrderCustomerId || !resolvedNewOrderTitle) return;
     addOrder({
       customer_id: newOrderCustomerId,
+      property_id: newOrderPropertyId || null,
       title: resolvedNewOrderTitle,
       status: newOrderStatus,
       notes: newOrderNotes.trim()
@@ -556,19 +569,38 @@ export const VorgaengeView: React.FC = () => {
             <div className="flex-1 overflow-y-auto py-3 space-y-3 text-xs text-slate-700 overscroll-contain">
               <div>
                 <label className="font-semibold text-slate-700 block mb-1">Kunde *</label>
-                <select
+                <CustomerSelectField
+                  customers={customers}
                   value={newOrderCustomerId}
-                  onChange={(e) => setNewOrderCustomerId(e.target.value)}
-                  className="w-full h-11 px-3 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-900 outline-hidden focus:border-[#3138A0]"
-                  required
-                >
-                  {customers.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
-                </select>
+                  onChange={(nextCustId) => {
+                    setNewOrderCustomerId(nextCustId);
+                    const nextProps = properties.filter((p) => p.customer_id === nextCustId);
+                    setNewOrderPropertyId(nextProps[0]?.id || '');
+                  }}
+                />
               </div>
+
+              {properties.some((p) => p.customer_id === newOrderCustomerId) && (
+                <div>
+                  <label className="font-semibold text-slate-700 block mb-1">
+                    Objekt / Einsatzort (optional)
+                  </label>
+                  <select
+                    value={newOrderPropertyId}
+                    onChange={(e) => setNewOrderPropertyId(e.target.value)}
+                    className="w-full h-10 px-3 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium text-slate-900 outline-hidden focus:border-[#3138A0]"
+                  >
+                    <option value="">Ohne Objektzuordnung</option>
+                    {properties
+                      .filter((p) => p.customer_id === newOrderCustomerId)
+                      .map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name} {p.address ? `– ${p.address}` : ''}
+                        </option>
+                      ))}
+                  </select>
+                </div>
+              )}
 
               <div>
                 <div className="flex items-center justify-between mb-1.5">

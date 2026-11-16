@@ -94,6 +94,22 @@ export const GeraetModal: React.FC = () => {
 
   const cameraInputRef = useRef<HTMLInputElement>(null);
 
+  const extractMatchingAccessorySpecs = (
+    parentSpecs: Record<string, string> | undefined,
+    accCategoryId: string
+  ): Record<string, string> => {
+    if (!parentSpecs) return {};
+    const accCat = getCategoryDef(accCategoryId);
+    const allowedKeys = new Set((accCat?.fields || []).map((f) => f.key));
+    const filtered: Record<string, string> = {};
+    for (const [k, v] of Object.entries(parentSpecs)) {
+      if (allowedKeys.has(k) && v !== undefined && v !== null && String(v).trim() !== '') {
+        filtered[k] = String(v).trim();
+      }
+    }
+    return filtered;
+  };
+
   const populateFromExisting = (item: NonNullable<typeof existingItem>) => {
     const eType = item.item_type || 'geraet';
     const defaultCat = eType === 'zubehoer' ? 'zub_kette_schiene' : 'motorsaegen';
@@ -104,7 +120,10 @@ export const GeraetModal: React.FC = () => {
     setName(item.name || '');
     setModel(item.model || '');
     setStatus(item.status || 'einsatzbereit');
-    setSpecs({ ...(item.specs || {}) });
+    const cleanExistingSpecs = { ...(item.specs || {}) };
+    delete cleanExistingSpecs.created_at;
+    delete cleanExistingSpecs.updated_at;
+    setSpecs(cleanExistingSpecs);
     setCustomSpecKey('');
     setCustomSpecVal('');
     setQuantityStr(item.quantity !== null && item.quantity !== undefined ? String(item.quantity) : '1');
@@ -158,7 +177,7 @@ export const GeraetModal: React.FC = () => {
       setName('');
       setModel('');
       setStatus('einsatzbereit');
-      setSpecs(preselectedParent?.specs ? { ...preselectedParent.specs } : {});
+      setSpecs(extractMatchingAccessorySpecs(preselectedParent?.specs, initCat));
       setCustomSpecKey('');
       setCustomSpecVal('');
       setQuantityStr('1');
@@ -189,20 +208,18 @@ export const GeraetModal: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeModal, selectedEquipmentId]);
 
+  // Synchronisiere Formularzustand im Hintergrund, solange Detailansicht schreibgeschützt offen ist
+  useEffect(() => {
+    if (isEditing && existingItem && !isEditMode) {
+      populateFromExisting(existingItem);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [existingItem?.updated_at, existingItem?.photo, existingItem?.last_maintenance, existingItem?.next_maintenance]);
+
   if (!isOpen) return null;
 
   const typeCategories = getCategoriesByType(itemType);
   const currentCatDef = getCategoryDef(category) || typeCategories[0];
-
-  // Kategorien nach Funktionsgruppe für das übersichtliche Select-Feld gruppieren
-  const categoriesByFunction = FUNCTIONAL_GROUPS.map((groupInfo) => ({
-    groupInfo,
-    cats: EQUIPMENT_CATEGORIES.filter(
-      (c) =>
-        c.itemType === itemType &&
-        getFunctionalGroupInfo(c.id, c.itemType).id === groupInfo.id
-    )
-  })).filter((g) => g.cats.length > 0);
 
   const handleSwitchType = (nextType: 'geraet' | 'zubehoer') => {
     setItemType(nextType);
@@ -234,7 +251,7 @@ export const GeraetModal: React.FC = () => {
     setParentEquipmentId(nextParentId);
     const parent = availableGeraete.find((g) => g.id === nextParentId);
     if (parent?.specs && Object.keys(specs).every((k) => !specs[k]?.trim())) {
-      setSpecs({ ...parent.specs });
+      setSpecs(extractMatchingAccessorySpecs(parent.specs, category));
     }
   };
 
@@ -269,10 +286,22 @@ export const GeraetModal: React.FC = () => {
   const handleAddCustomSpec = () => {
     const cleanKey = customSpecKey.trim();
     const cleanVal = customSpecVal.trim();
-    if (!cleanKey || !cleanVal) return;
-    setSpecs((prev) => ({ ...prev, [cleanKey]: cleanVal }));
-    setCustomSpecKey('');
-    setCustomSpecVal('');
+    if (cleanKey && cleanVal) {
+      setSpecs((prev) => ({ ...prev, [cleanKey]: cleanVal }));
+      setCustomSpecKey('');
+      setCustomSpecVal('');
+      return;
+    }
+    if (cleanKey && !cleanVal && cleanKey.includes(':')) {
+      const sepIdx = cleanKey.indexOf(':');
+      const k = cleanKey.slice(0, sepIdx).trim();
+      const v = cleanKey.slice(sepIdx + 1).trim();
+      if (k && v) {
+        setSpecs((prev) => ({ ...prev, [k]: v }));
+        setCustomSpecKey('');
+        setCustomSpecVal('');
+      }
+    }
   };
 
   const handleCancelEdit = () => {
@@ -291,12 +320,27 @@ export const GeraetModal: React.FC = () => {
 
     const cleanedSpecs: Record<string, string> = {};
     for (const [k, v] of Object.entries(specs)) {
-      if (v !== undefined && v !== null && String(v).trim()) {
-        cleanedSpecs[k.trim()] = String(v).trim();
+      const cleanK = k.trim();
+      if (
+        cleanK &&
+        cleanK !== 'created_at' &&
+        cleanK !== 'updated_at' &&
+        v !== undefined &&
+        v !== null &&
+        String(v).trim()
+      ) {
+        cleanedSpecs[cleanK] = String(v).trim();
       }
     }
     if (customSpecKey.trim() && customSpecVal.trim()) {
       cleanedSpecs[customSpecKey.trim()] = customSpecVal.trim();
+    } else if (customSpecKey.trim() && !customSpecVal.trim() && customSpecKey.includes(':')) {
+      const sepIdx = customSpecKey.indexOf(':');
+      const k = customSpecKey.slice(0, sepIdx).trim();
+      const v = customSpecKey.slice(sepIdx + 1).trim();
+      if (k && v) {
+        cleanedSpecs[k] = v;
+      }
     }
 
     const parsedQty = quantityStr.trim() === '' ? null : Math.max(0, parseInt(quantityStr, 10));
@@ -500,9 +544,9 @@ export const GeraetModal: React.FC = () => {
 
                 <div className="flex-1 min-w-0 grid grid-cols-2 gap-x-3 gap-y-2 text-[11px]">
                   <div>
-                    <span className="text-slate-400 block">Funktionsbereich</span>
+                    <span className="text-slate-400 block">Kategorie</span>
                     <span className="font-bold text-slate-800 truncate block">
-                      {funcGroup.title}
+                      {catDef?.label || funcGroup.title}
                     </span>
                   </div>
                   <div>
@@ -745,7 +789,10 @@ export const GeraetModal: React.FC = () => {
             </button>
             <button
               type="button"
-              onClick={() => setIsEditMode(true)}
+              onClick={() => {
+                populateFromExisting(existingItem);
+                setIsEditMode(true);
+              }}
               className="flex-1 h-11 bg-[#3138A0] hover:bg-[#272d82] active:scale-98 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 transition-all shadow-xs"
             >
               <Edit2 size={14} />
@@ -811,21 +858,17 @@ export const GeraetModal: React.FC = () => {
 
             <div className="col-span-7">
               <label className="font-semibold text-slate-700 block mb-1 text-[11px]">
-                Funktion / Kategorie
+                Kategorie
               </label>
               <select
                 value={currentCatDef?.id || category}
                 onChange={(e) => handleSelectCategory(e.target.value)}
                 className="w-full h-10 px-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-[#3138A0] outline-hidden text-xs font-bold text-slate-900"
               >
-                {categoriesByFunction.map(({ groupInfo, cats }) => (
-                  <optgroup key={groupInfo.id} label={groupInfo.title}>
-                    {cats.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.label}
-                      </option>
-                    ))}
-                  </optgroup>
+                {typeCategories.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.label}
+                  </option>
                 ))}
               </select>
             </div>
@@ -1004,6 +1047,12 @@ export const GeraetModal: React.FC = () => {
                   placeholder="Feld (z. B. Gewicht)"
                   value={customSpecKey}
                   onChange={(e) => setCustomSpecKey(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleAddCustomSpec();
+                    }
+                  }}
                   className="w-32 h-9 px-2.5 bg-white border border-slate-200 rounded-xl focus:border-[#3138A0] outline-hidden text-xs text-slate-900"
                 />
                 <input
@@ -1011,12 +1060,18 @@ export const GeraetModal: React.FC = () => {
                   placeholder="Wert (z. B. 4,9 kg)"
                   value={customSpecVal}
                   onChange={(e) => setCustomSpecVal(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleAddCustomSpec();
+                    }
+                  }}
                   className="flex-1 h-9 px-2.5 bg-white border border-slate-200 rounded-xl focus:border-[#3138A0] outline-hidden text-xs text-slate-900"
                 />
                 <button
                   type="button"
                   onClick={handleAddCustomSpec}
-                  disabled={!customSpecKey.trim() || !customSpecVal.trim()}
+                  disabled={!customSpecKey.trim() || (!customSpecVal.trim() && !customSpecKey.includes(':'))}
                   className="h-9 px-2.5 bg-indigo-50 hover:bg-indigo-100 disabled:opacity-40 text-[#3138A0] font-bold rounded-xl text-xs flex items-center justify-center shrink-0"
                 >
                   <Plus size={14} />

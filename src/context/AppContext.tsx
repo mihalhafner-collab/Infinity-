@@ -238,7 +238,13 @@ interface AppContextType {
   addEquipment: (eq: Partial<Equipment> & { name: string }) => Equipment;
   updateEquipment: (id: string, eq: Partial<Equipment>) => void;
   deleteEquipment: (id: string) => void;
-  recordMaintenance: (equipmentId: string, plan: string, note: string, nextDate: string) => void;
+  recordMaintenance: (
+    equipmentId: string,
+    plan: string,
+    note: string,
+    nextDate: string,
+    performedDate?: string
+  ) => void;
   addMaterial: (mat: Partial<Material>) => Material;
   updateMaterial: (id: string, mat: Partial<Material>) => void;
   deleteMaterial: (id: string) => void;
@@ -286,6 +292,20 @@ const STORAGE_KEY = 'eisbaer_app_clean_v1';
 const PENDING_SYNC_COUNT_KEY = `${STORAGE_KEY}_pending_sync_count`;
 const LAST_KNOWN_REV_KEY = `${STORAGE_KEY}_last_known_rev`;
 const LAST_SYNC_AT_KEY = `${STORAGE_KEY}_last_sync_at`;
+
+function safeSetLocalStorage(key: string, value: string, fallbackLightValue?: () => string): void {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    if (fallbackLightValue) {
+      try {
+        localStorage.setItem(key, fallbackLightValue());
+      } catch {
+        // Ignore browser localStorage quota exhaustion; NativeStoreManager & Cloud store full data
+      }
+    }
+  }
+}
 
 const initialCustomers: Customer[] = [];
 const initialProperties: CustomerProperty[] = [];
@@ -463,57 +483,73 @@ export const AppProvider: React.FC<{
     return localStorage.getItem(`${STORAGE_KEY}_lastBackupDate`) || null;
   });
 
-  // Sync to localStorage
+  // Sync to localStorage (quota-safe even with multiple high-res customer/equipment/property photos)
   useEffect(() => {
-    localStorage.setItem(`${STORAGE_KEY}_customers`, JSON.stringify(customers));
+    safeSetLocalStorage(
+      `${STORAGE_KEY}_customers`,
+      JSON.stringify(customers),
+      () => JSON.stringify(customers.map((c) => ({ ...c, photo: null })))
+    );
   }, [customers]);
 
   useEffect(() => {
-    localStorage.setItem(`${STORAGE_KEY}_properties`, JSON.stringify(properties));
+    safeSetLocalStorage(
+      `${STORAGE_KEY}_properties`,
+      JSON.stringify(properties),
+      () => JSON.stringify(properties.map((p) => ({ ...p, photos: [] })))
+    );
   }, [properties]);
 
   useEffect(() => {
-    localStorage.setItem(`${STORAGE_KEY}_appointments`, JSON.stringify(appointments));
+    safeSetLocalStorage(`${STORAGE_KEY}_appointments`, JSON.stringify(appointments));
   }, [appointments]);
 
   useEffect(() => {
-    localStorage.setItem(`${STORAGE_KEY}_workRecords`, JSON.stringify(workRecords));
+    safeSetLocalStorage(
+      `${STORAGE_KEY}_workRecords`,
+      JSON.stringify(workRecords),
+      () => JSON.stringify(workRecords.map((w) => ({ ...w, photos: [] })))
+    );
   }, [workRecords]);
 
   useEffect(() => {
-    localStorage.setItem(`${STORAGE_KEY}_invoices`, JSON.stringify(invoices));
+    safeSetLocalStorage(`${STORAGE_KEY}_invoices`, JSON.stringify(invoices));
   }, [invoices]);
 
   useEffect(() => {
-    localStorage.setItem(`${STORAGE_KEY}_equipments`, JSON.stringify(equipments));
+    safeSetLocalStorage(
+      `${STORAGE_KEY}_equipments`,
+      JSON.stringify(equipments),
+      () => JSON.stringify(equipments.map((e) => ({ ...e, photo: null })))
+    );
   }, [equipments]);
 
   useEffect(() => {
-    localStorage.setItem(`${STORAGE_KEY}_materials`, JSON.stringify(materials));
+    safeSetLocalStorage(`${STORAGE_KEY}_materials`, JSON.stringify(materials));
   }, [materials]);
 
   useEffect(() => {
-    localStorage.setItem(`${STORAGE_KEY}_inquiries`, JSON.stringify(inquiries));
+    safeSetLocalStorage(`${STORAGE_KEY}_inquiries`, JSON.stringify(inquiries));
   }, [inquiries]);
 
   useEffect(() => {
-    localStorage.setItem(`${STORAGE_KEY}_offers`, JSON.stringify(offers));
+    safeSetLocalStorage(`${STORAGE_KEY}_offers`, JSON.stringify(offers));
   }, [offers]);
 
   useEffect(() => {
-    localStorage.setItem(`${STORAGE_KEY}_orders`, JSON.stringify(orders));
+    safeSetLocalStorage(`${STORAGE_KEY}_orders`, JSON.stringify(orders));
   }, [orders]);
 
   useEffect(() => {
-    localStorage.setItem(`${STORAGE_KEY}_expenses`, JSON.stringify(expenses));
+    safeSetLocalStorage(`${STORAGE_KEY}_expenses`, JSON.stringify(expenses));
   }, [expenses]);
 
   useEffect(() => {
-    localStorage.setItem(`${STORAGE_KEY}_taxSettings`, JSON.stringify(taxSettings));
+    safeSetLocalStorage(`${STORAGE_KEY}_taxSettings`, JSON.stringify(taxSettings));
   }, [taxSettings]);
 
   useEffect(() => {
-    localStorage.setItem(`${STORAGE_KEY}_deletedIds`, JSON.stringify(deletedIds));
+    safeSetLocalStorage(`${STORAGE_KEY}_deletedIds`, JSON.stringify(deletedIds));
   }, [deletedIds]);
 
   // Live Bidirectional Sync mit Backend (für vollen lesenden & schreibenden MCP / ChatGPT-Plugin Zugriff)
@@ -566,14 +602,14 @@ export const AppProvider: React.FC<{
     }) => {
       if (typeof patch.pendingSyncCount === 'number') {
         pendingSyncCountRef.current = Math.max(0, patch.pendingSyncCount);
-        localStorage.setItem(PENDING_SYNC_COUNT_KEY, String(pendingSyncCountRef.current));
+        safeSetLocalStorage(PENDING_SYNC_COUNT_KEY, String(pendingSyncCountRef.current));
       }
       if (typeof patch.revision === 'number') {
         lastKnownRevisionRef.current = patch.revision;
-        localStorage.setItem(LAST_KNOWN_REV_KEY, String(patch.revision));
+        safeSetLocalStorage(LAST_KNOWN_REV_KEY, String(patch.revision));
       }
       if (patch.lastSyncAt) {
-        localStorage.setItem(LAST_SYNC_AT_KEY, patch.lastSyncAt);
+        safeSetLocalStorage(LAST_SYNC_AT_KEY, patch.lastSyncAt);
       }
       setAppSyncStatus((prev) => ({
         ...prev,
@@ -624,6 +660,11 @@ export const AppProvider: React.FC<{
     taxSettings,
     deletedIds
   });
+
+  const latestSnapshotRef = useRef<ReturnType<typeof buildCurrentSnapshot>>(buildCurrentSnapshot());
+  latestSnapshotRef.current = buildCurrentSnapshot();
+  const syncInFlightRef = useRef<boolean>(false);
+  const mutationDebouncePendingRef = useRef<boolean>(false);
 
   const normalizeRemoteSnapshot = (
     remote: Partial<ReturnType<typeof buildCurrentSnapshot>> | null | undefined
@@ -711,7 +752,7 @@ export const AppProvider: React.FC<{
         } else {
           const baseTime = existing.updated_at || '';
           const primTime = item.updated_at || '';
-          if (!baseTime || !primTime || primTime >= baseTime || isNativeAndroidApp()) {
+          if (!baseTime || (primTime && primTime >= baseTime)) {
             map.set(item.id, item);
           }
         }
@@ -887,6 +928,7 @@ export const AppProvider: React.FC<{
       }
 
       const countAtStart = pendingSyncCountRef.current;
+      syncInFlightRef.current = true;
       updateSyncMeta({ syncInFlight: true, online: true });
 
       const payloadStr = JSON.stringify({
@@ -928,6 +970,7 @@ export const AppProvider: React.FC<{
         }
 
         if (!res.ok) {
+          syncInFlightRef.current = false;
           updateSyncMeta({
             syncInFlight: false,
             lastSyncError: `Synchronisation ausstehend (HTTP ${res.status})`
@@ -947,6 +990,7 @@ export const AppProvider: React.FC<{
         const remaining = Math.max(0, pendingSyncCountRef.current - Math.max(1, countAtStart));
         const nowIso = new Date().toISOString();
 
+        syncInFlightRef.current = false;
         updateSyncMeta({
           pendingSyncCount: remaining,
           syncInFlight: false,
@@ -965,6 +1009,7 @@ export const AppProvider: React.FC<{
         }
         return true;
       } catch {
+        syncInFlightRef.current = false;
         updateSyncMeta({
           syncInFlight: false,
           online: typeof navigator !== 'undefined' ? navigator.onLine : false,
@@ -983,7 +1028,7 @@ export const AppProvider: React.FC<{
       configureNativeMcpSync(DEFAULT_INFINITY_CLOUD_URL, '');
       triggerNativeMcpSyncNow();
     }
-    const snap = buildCurrentSnapshot();
+    const snap = latestSnapshotRef.current;
     const snapJson = JSON.stringify(snap);
     await pushSnapshotToServer(
       snap,
@@ -992,23 +1037,7 @@ export const AppProvider: React.FC<{
         ? 'Manueller Abgleich von Primärquelle (Pixel 10 Pro)'
         : 'Manueller Abgleich aus Web-App'
     );
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    customers,
-    properties,
-    appointments,
-    workRecords,
-    invoices,
-    inquiries,
-    offers,
-    orders,
-    equipments,
-    materials,
-    expenses,
-    taxSettings,
-    deletedIds,
-    pushSnapshotToServer
-  ]);
+  }, [pushSnapshotToServer]);
 
   const refreshFromServer = useCallback(async () => {
     if (isNativeAndroidApp()) {
@@ -1018,7 +1047,7 @@ export const AppProvider: React.FC<{
     }
     updateSyncMeta({ syncInFlight: true });
     try {
-      const localSnap = buildCurrentSnapshot();
+      const localSnap = latestSnapshotRef.current;
       const store = await fetchBestRemoteStoreForWeb();
       if (!store) {
         updateSyncMeta({
@@ -1104,9 +1133,9 @@ export const AppProvider: React.FC<{
     let eventSource: EventSource | null = null;
 
     const pullLatestFromServerIfIdle = async () => {
-      if (cancelled) return;
+      if (cancelled || syncInFlightRef.current || mutationDebouncePendingRef.current) return;
       if (pendingSyncCountRef.current > 0) {
-        const currentSnap = buildCurrentSnapshot();
+        const currentSnap = latestSnapshotRef.current;
         await pushSnapshotToServer(
           currentSnap,
           JSON.stringify(currentSnap),
@@ -1117,9 +1146,11 @@ export const AppProvider: React.FC<{
         return;
       }
       const store = await fetchBestRemoteStoreForWeb();
-      if (!store || cancelled) return;
+      if (!store || cancelled || syncInFlightRef.current || mutationDebouncePendingRef.current) {
+        return;
+      }
 
-      const localSnap = buildCurrentSnapshot();
+      const localSnap = latestSnapshotRef.current;
       const hasLocalData = hasAnySnapshotRecords(localSnap);
       const hasRemoteData = hasAnySnapshotRecords(store.data);
 
@@ -1182,8 +1213,9 @@ export const AppProvider: React.FC<{
             typeof payload.revision === 'number' &&
             payload.revision !== lastKnownRevisionRef.current
           ) {
+            if (syncInFlightRef.current || mutationDebouncePendingRef.current) return;
             if (pendingSyncCountRef.current > 0) {
-              const currentSnap = buildCurrentSnapshot();
+              const currentSnap = latestSnapshotRef.current;
               await pushSnapshotToServer(
                 currentSnap,
                 JSON.stringify(currentSnap),
@@ -1201,7 +1233,7 @@ export const AppProvider: React.FC<{
 
     const initSync = async () => {
       try {
-        const localSnap = buildCurrentSnapshot();
+        const localSnap = latestSnapshotRef.current;
         const localJson = JSON.stringify(localSnap);
         if (!lastTrackedMutationJsonRef.current) {
           lastTrackedMutationJsonRef.current = localJson;
@@ -1356,7 +1388,9 @@ export const AppProvider: React.FC<{
       });
     }
 
+    mutationDebouncePendingRef.current = true;
     const timer = setTimeout(() => {
+      mutationDebouncePendingRef.current = false;
       void pushSnapshotToServer(
         snap,
         snapJson,
@@ -1364,7 +1398,10 @@ export const AppProvider: React.FC<{
       );
     }, 180);
 
-    return () => clearTimeout(timer);
+    return () => {
+      mutationDebouncePendingRef.current = false;
+      clearTimeout(timer);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     ownerAuthenticated,
@@ -1836,6 +1873,7 @@ export const AppProvider: React.FC<{
   // CRUD Implementations
   const addAppointment = (app: Partial<Appointment>): Appointment => {
     const todayIso = getTodayLocalIso();
+    const nowIso = new Date().toISOString();
     const targetDate = app.date || todayIso;
     const newApp: Appointment = {
       id: app.id || `app-${Date.now()}`,
@@ -1848,7 +1886,9 @@ export const AppProvider: React.FC<{
       property_id: app.property_id || null,
       address: app.address || null,
       notes: app.notes || '',
-      tour_order: appointments.filter(a => a.date === targetDate).length + 1
+      tour_order: appointments.filter(a => a.date === targetDate).length + 1,
+      created_at: app.created_at || nowIso,
+      updated_at: app.updated_at || nowIso
     };
     setAppointments(prev => [...prev, newApp]);
 
@@ -1861,7 +1901,11 @@ export const AppProvider: React.FC<{
           setAppointments((prev) =>
             prev.map((a) =>
               a.id === newApp.id
-                ? { ...a, notes: attachGoogleEventIdToNotes(a.notes, googleEventId) }
+                ? {
+                    ...a,
+                    notes: attachGoogleEventIdToNotes(a.notes, googleEventId),
+                    updated_at: new Date().toISOString()
+                  }
                 : a
             )
           );
@@ -1873,9 +1917,14 @@ export const AppProvider: React.FC<{
   };
 
   const updateAppointment = (id: string, updated: Partial<Appointment>) => {
+    const nowIso = new Date().toISOString();
     const existing = appointments.find((a) => a.id === id);
-    const merged: Appointment | null = existing ? { ...existing, ...updated } : null;
-    setAppointments(prev => prev.map(a => a.id === id ? { ...a, ...updated } : a));
+    const merged: Appointment | null = existing
+      ? { ...existing, ...updated, updated_at: nowIso }
+      : null;
+    setAppointments(prev =>
+      prev.map(a => (a.id === id ? { ...a, ...updated, updated_at: nowIso } : a))
+    );
 
     if (merged) {
       const gEventId = extractGoogleEventId(merged.notes);
@@ -1885,7 +1934,11 @@ export const AppProvider: React.FC<{
           setAppointments((prev) =>
             prev.map((a) =>
               a.id === id
-                ? { ...a, notes: attachGoogleEventIdToNotes(a.notes, newGoogleEventId) }
+                ? {
+                    ...a,
+                    notes: attachGoogleEventIdToNotes(a.notes, newGoogleEventId),
+                    updated_at: new Date().toISOString()
+                  }
                 : a
             )
           );
@@ -1916,6 +1969,7 @@ export const AppProvider: React.FC<{
       customer_number: resolvedCustNum,
       name: cust.name?.trim() || 'Neuer Kunde',
       company: cust.company || '',
+      photo: cust.photo ?? null,
       phone: cust.phone || '',
       email: cust.email || '',
       street: cust.street || '',
@@ -3211,9 +3265,16 @@ export const AppProvider: React.FC<{
 
   // Equipment & Zubehör
   const addEquipment = (eq: Partial<Equipment> & { name: string }): Equipment => {
+    const nowIso = new Date().toISOString();
     const itemType = eq.item_type || 'geraet';
     const intervalMonths = eq.interval_months || 6;
     const lastMaint = eq.last_maintenance || getTodayLocalIso();
+    const cleanSpecs: Record<string, string> = {};
+    for (const [k, v] of Object.entries(eq.specs || {})) {
+      if (k !== 'created_at' && k !== 'updated_at' && v !== undefined && v !== null && String(v).trim() !== '') {
+        cleanSpecs[k.trim()] = String(v).trim();
+      }
+    }
     const newEq: Equipment = {
       id: eq.id || `eq-${Date.now()}`,
       item_type: itemType,
@@ -3221,8 +3282,8 @@ export const AppProvider: React.FC<{
       parent_equipment_id: eq.parent_equipment_id || null,
       name: eq.name.trim(),
       model: eq.model || '',
-      photo: eq.photo || null,
-      specs: eq.specs || {},
+      photo: eq.photo ?? null,
+      specs: cleanSpecs,
       quantity: eq.quantity !== undefined ? eq.quantity : itemType === 'zubehoer' ? 1 : null,
       notes: eq.notes || '',
       status: eq.status || 'einsatzbereit',
@@ -3235,15 +3296,40 @@ export const AppProvider: React.FC<{
             ? ''
             : 'Regelmäßige Prüfung',
       interval_months: intervalMonths,
-      history: eq.history || []
+      history: eq.history || [],
+      created_at: eq.created_at || nowIso,
+      updated_at: eq.updated_at || nowIso
     };
     setEquipments(prev => [newEq, ...prev]);
     return newEq;
   };
 
   const updateEquipment = (id: string, patch: Partial<Equipment>) => {
+    const nowIso = new Date().toISOString();
     setEquipments(prev =>
-      prev.map(eq => (eq.id === id ? { ...eq, ...patch } : eq))
+      prev.map(eq => {
+        if (eq.id !== id) return eq;
+        const nextSpecs =
+          patch.specs !== undefined
+            ? Object.fromEntries(
+                Object.entries(patch.specs).filter(
+                  ([k, v]) =>
+                    k !== 'created_at' &&
+                    k !== 'updated_at' &&
+                    v !== undefined &&
+                    v !== null &&
+                    String(v).trim() !== ''
+                )
+              )
+            : eq.specs || {};
+        return {
+          ...eq,
+          ...patch,
+          specs: nextSpecs,
+          created_at: eq.created_at || nowIso,
+          updated_at: nowIso
+        };
+      })
     );
   };
 
@@ -3252,13 +3338,16 @@ export const AppProvider: React.FC<{
     if (!target) return;
     const prevSnapshot = [...equipments];
     const prevDeletedIds = { ...deletedIds };
+    const nowIso = new Date().toISOString();
 
     recordDeletedTombstones([['equipments', id]]);
     setEquipments(prev =>
       prev
         .filter(eq => eq.id !== id)
         .map(eq =>
-          eq.parent_equipment_id === id ? { ...eq, parent_equipment_id: null } : eq
+          eq.parent_equipment_id === id
+            ? { ...eq, parent_equipment_id: null, updated_at: nowIso }
+            : eq
         )
     );
     if (selectedEquipmentId === id) {
@@ -3277,21 +3366,32 @@ export const AppProvider: React.FC<{
     });
   };
 
-  const recordMaintenance = (equipmentId: string, plan: string, note: string, nextDate: string) => {
-    const todayIso = getTodayLocalIso();
-    setEquipments(prev => prev.map(eq => {
-      if (eq.id === equipmentId) {
-        return {
-          ...eq,
-          status: 'einsatzbereit',
-          last_maintenance: todayIso,
-          next_maintenance: nextDate,
-          maintenance_plan: plan,
-          history: [{ date: todayIso, note, plan }, ...eq.history]
-        };
-      }
-      return eq;
-    }));
+  const recordMaintenance = (
+    equipmentId: string,
+    plan: string,
+    note: string,
+    nextDate: string,
+    performedDate?: string
+  ) => {
+    const maintDate = performedDate?.trim() || getTodayLocalIso();
+    const nowIso = new Date().toISOString();
+    setEquipments(prev =>
+      prev.map(eq => {
+        if (eq.id === equipmentId) {
+          return {
+            ...eq,
+            status: 'einsatzbereit',
+            last_maintenance: maintDate,
+            next_maintenance: nextDate,
+            maintenance_plan: plan,
+            history: [{ date: maintDate, note, plan }, ...(eq.history || [])],
+            created_at: eq.created_at || nowIso,
+            updated_at: nowIso
+          };
+        }
+        return eq;
+      })
+    );
   };
 
   const addMaterial = (mat: Partial<Material>): Material => {
@@ -3339,6 +3439,7 @@ export const AppProvider: React.FC<{
   };
 
   const addExpense = (exp: Omit<BusinessExpense, 'id'> & { id?: string }): BusinessExpense => {
+    const nowIso = new Date().toISOString();
     const newExp: BusinessExpense = {
       id: exp.id || `exp-${Date.now()}`,
       date: exp.date || getTodayLocalIso(),
@@ -3346,13 +3447,16 @@ export const AppProvider: React.FC<{
       amount: Math.max(0, Math.round(exp.amount * 100) / 100),
       category: exp.category || 'sonstiges',
       useful_life_years: exp.useful_life_years ?? null,
-      notes: exp.notes?.trim() || ''
+      notes: exp.notes?.trim() || '',
+      created_at: exp.created_at || nowIso,
+      updated_at: exp.updated_at || nowIso
     };
     setExpenses(prev => [newExp, ...prev]);
     return newExp;
   };
 
   const updateExpense = (id: string, patch: Partial<BusinessExpense>) => {
+    const nowIso = new Date().toISOString();
     setExpenses(prev =>
       prev.map(e =>
         e.id === id
@@ -3362,7 +3466,9 @@ export const AppProvider: React.FC<{
               amount:
                 patch.amount !== undefined
                   ? Math.max(0, Math.round(patch.amount * 100) / 100)
-                  : e.amount
+                  : e.amount,
+              created_at: e.created_at || nowIso,
+              updated_at: nowIso
             }
           : e
       )
@@ -3413,7 +3519,7 @@ export const AppProvider: React.FC<{
       deletedIds
     };
     const jsonPayload = JSON.stringify(backupData);
-    localStorage.setItem('hausgarten_backup_file', jsonPayload);
+    safeSetLocalStorage('hausgarten_backup_file', jsonPayload);
 
     if (isNativeAndroidApp()) {
       try {
@@ -3421,7 +3527,7 @@ export const AppProvider: React.FC<{
         if (!res.ok) return false;
         const verifiedTime = res.isoTimestamp || nowIso;
         setLastBackupDate(verifiedTime);
-        localStorage.setItem(`${STORAGE_KEY}_lastBackupDate`, verifiedTime);
+        safeSetLocalStorage(`${STORAGE_KEY}_lastBackupDate`, verifiedTime);
         return true;
       } catch {
         return false;
@@ -3429,7 +3535,7 @@ export const AppProvider: React.FC<{
     }
 
     setLastBackupDate(nowIso);
-    localStorage.setItem(`${STORAGE_KEY}_lastBackupDate`, nowIso);
+    safeSetLocalStorage(`${STORAGE_KEY}_lastBackupDate`, nowIso);
     return true;
   };
 

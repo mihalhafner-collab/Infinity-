@@ -7,6 +7,7 @@ import {
   getAppointmentRange,
   suggestNextFreeAppointmentSlot
 } from '../../utils/appointmentConflict.ts';
+import { CustomerSelectField } from '../common/CustomerSelectField.tsx';
 
 export const TerminModal: React.FC = () => {
   const {
@@ -182,30 +183,24 @@ export const TerminModal: React.FC = () => {
           {/* Kunde (optional) */}
           <div>
             <label className="font-semibold text-slate-700 mb-1 flex items-center gap-1">
-              <User size={13} className="text-slate-500" />
+              <User size={13} className="text-[#3138A0]" />
               <span>
                 Kunde <span className="text-slate-400 font-normal">(optional)</span>
               </span>
             </label>
-            <select
+            <CustomerSelectField
+              customers={customers}
               value={customerId}
-              onChange={(e) => {
-                const nextId = e.target.value;
+              allowEmpty={true}
+              emptyLabel="Nicht zugeordnet (kein Kunde)"
+              onChange={(nextId) => {
                 setCustomerId(nextId);
                 const cust = customers.find((c) => c.id === nextId);
                 if (cust && !address && (cust.street || cust.city)) {
                   setAddress([cust.street, cust.city].filter(Boolean).join(', '));
                 }
               }}
-              className="w-full h-11 px-3 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-[#3138A0] outline-hidden text-sm text-slate-900"
-            >
-              <option value="">Nicht zugeordnet (kein Kunde)</option>
-              {customers.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name} {c.city ? `(${c.city})` : ''}
-                </option>
-              ))}
-            </select>
+            />
           </div>
 
           {/* Datum & Uhrzeit (optional) */}

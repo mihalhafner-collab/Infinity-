@@ -20,6 +20,15 @@ export const WartungModal: React.FC = () => {
   const [nextDate, setNextDate] = useState(() => addDaysIso(getTodayLocalIso(), 90));
   const [note, setNote] = useState('Sichtprüfung und Reinigung durchgeführt');
 
+  const computeNextMaintIso = (baseIso: string, months: number): string => {
+    const d = new Date(`${baseIso}T00:00:00`);
+    if (Number.isNaN(d.getTime())) {
+      return addDaysIso(getTodayLocalIso(), months * 30);
+    }
+    d.setMonth(d.getMonth() + months);
+    return d.toISOString().slice(0, 10);
+  };
+
   useEffect(() => {
     if (activeModal === 'WARTUNG_DOKUMENTIEREN') {
       const initial =
@@ -29,9 +38,7 @@ export const WartungModal: React.FC = () => {
       setPlan(initial?.maintenance_plan || 'Regelmäßige Prüfung & Reinigung');
       setDate(todayIso);
       const months = initial?.interval_months || 6;
-      const d = new Date(`${todayIso}T00:00:00`);
-      d.setMonth(d.getMonth() + months);
-      setNextDate(d.toISOString().slice(0, 10));
+      setNextDate(computeNextMaintIso(todayIso, months));
       setNote('Sichtprüfung und Wartung durchgeführt');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -41,7 +48,7 @@ export const WartungModal: React.FC = () => {
 
   const handleSave = () => {
     if (!equipmentId) return;
-    recordMaintenance(equipmentId, plan, note, nextDate);
+    recordMaintenance(equipmentId, plan.trim() || 'Wartung', note.trim(), nextDate, date);
     setActiveModal(null);
   };
 
@@ -87,9 +94,13 @@ export const WartungModal: React.FC = () => {
             <select
               value={equipmentId}
               onChange={(e) => {
-                setEquipmentId(e.target.value);
-                const eq = geraeteOnly.find((x) => x.id === e.target.value);
-                if (eq) setPlan(eq.maintenance_plan || 'Regelmäßige Prüfung');
+                const nextId = e.target.value;
+                setEquipmentId(nextId);
+                const eq = geraeteOnly.find((x) => x.id === nextId);
+                if (eq) {
+                  setPlan(eq.maintenance_plan || 'Regelmäßige Prüfung');
+                  setNextDate(computeNextMaintIso(date, eq.interval_months || 6));
+                }
               }}
               className="w-full h-11 px-3 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-[#3138A0] outline-hidden text-sm text-slate-900"
             >
@@ -122,7 +133,11 @@ export const WartungModal: React.FC = () => {
               <input
                 type="date"
                 value={date}
-                onChange={(e) => setDate(e.target.value)}
+                onChange={(e) => {
+                  const nextPerfDate = e.target.value;
+                  setDate(nextPerfDate);
+                  setNextDate(computeNextMaintIso(nextPerfDate, selectedEq?.interval_months || 6));
+                }}
                 className="w-full h-11 px-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-[#3138A0] outline-hidden text-xs text-slate-900"
               />
             </div>
