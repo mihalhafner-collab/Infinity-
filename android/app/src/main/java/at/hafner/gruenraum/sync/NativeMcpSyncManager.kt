@@ -902,7 +902,7 @@ class NativeMcpSyncManager(
         private const val KEY_LAST_SYNC_ISO = "last_sync_iso"
 
         private val COMPANION_WEB_ENDPOINTS = listOf(
-            "https://hafner-gruenraum-523881801839.europe-west1.run.app"
+            "https://infinity-hafner.ai.studio"
         )
     }
 }

@@ -499,7 +499,16 @@ function mergeArrayWithAndroidPrimary<T extends { id: string; updated_at?: strin
     byId.set(s.id, s);
   }
   for (const a of androidArr) {
-    byId.set(a.id, a);
+    const existing = byId.get(a.id);
+    if (!existing) {
+      byId.set(a.id, a);
+    } else {
+      const sTime = existing.updated_at || '';
+      const aTime = a.updated_at || '';
+      if (!sTime || !aTime || aTime >= sTime) {
+        byId.set(a.id, a);
+      }
+    }
   }
   return Array.from(byId.values());
 }
@@ -1228,11 +1237,7 @@ async function startServer() {
     };
 
     if (isAndroidPrimary) {
-      if (
-        baseRev < current.revision &&
-        hasSnapshotAnyRecords(current.data) &&
-        (current.lastActor === 'web' || current.lastActor === 'mcp')
-      ) {
+      if (hasSnapshotAnyRecords(current.data)) {
         shouldMerge = true;
         nextSnapshot = mergeSnapshotsWithAndroidPrimary(current.data, body.data);
       }

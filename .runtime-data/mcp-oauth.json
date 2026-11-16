@@ -1,0 +1,12 @@
+{
+  "webSessionSecret": "197ac381b916d3eab6523edb8e62f1f571efe77f9c04d7d72f8c994e52891361",
+  "clients": [],
+  "tokens": [],
+  "pendingAuthCodes": [],
+  "pendingPairingCodes": [],
+  "androidTelemetry": {
+    "lastSyncAt": "2026-11-15T21:48:14.774Z",
+    "lastDeviceModel": "Google Pixel 10 Pro",
+    "lastDirection": "pull"
+  }
+}
