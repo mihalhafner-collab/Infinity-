@@ -13,7 +13,7 @@ android {
         applicationId = "at.hafner.gruenraum"
         minSdk = 31
         targetSdk = 35
-        versionCode = 4
+        versionCode = 31
         versionName = "1.3.0"
 
         val envMcpUrl = System.getenv("MCP_SERVER_URL")?.trim()?.replace("\"", "").orEmpty()

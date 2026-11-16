@@ -1275,12 +1275,6 @@ export const AppProvider: React.FC<{
     const initSync = async () => {
       if (syncInFlightRef.current || mutationDebouncePendingRef.current) return;
       try {
-        const initialSnap = latestSnapshotRef.current;
-        const initialJson = JSON.stringify(initialSnap);
-        if (!lastTrackedMutationJsonRef.current) {
-          lastTrackedMutationJsonRef.current = initialJson;
-        }
-
         const store = await fetchBestRemoteStoreForWeb();
         if (syncInFlightRef.current || mutationDebouncePendingRef.current) {
           serverSyncInitializedRef.current = true;
@@ -1289,6 +1283,9 @@ export const AppProvider: React.FC<{
 
         const localSnap = latestSnapshotRef.current;
         const localJson = JSON.stringify(localSnap);
+        if (!lastTrackedMutationJsonRef.current) {
+          lastTrackedMutationJsonRef.current = localJson;
+        }
 
         if (!store || cancelled) {
           if (pendingSyncCountRef.current > 0) {
@@ -1963,7 +1960,7 @@ export const AppProvider: React.FC<{
                 ? {
                     ...a,
                     notes: attachGoogleEventIdToNotes(a.notes, googleEventId),
-                    updated_at: new Date().toISOString()
+                    updated_at: nextMonotonicIso(a.updated_at)
                   }
                 : a
             )
@@ -1996,7 +1993,7 @@ export const AppProvider: React.FC<{
                 ? {
                     ...a,
                     notes: attachGoogleEventIdToNotes(a.notes, newGoogleEventId),
-                    updated_at: new Date().toISOString()
+                    updated_at: nextMonotonicIso(a.updated_at)
                   }
                 : a
             )
@@ -2082,7 +2079,7 @@ export const AppProvider: React.FC<{
       setWorkRecords(prev =>
         prev.map(w =>
           w.customer_id === id && !w.settlement_id
-            ? { ...w, billing_customer_id: nextBillingCustId }
+            ? { ...w, billing_customer_id: nextBillingCustId, updated_at: nextMonotonicIso(w.updated_at) }
             : w
         )
       );
@@ -2771,7 +2768,7 @@ export const AppProvider: React.FC<{
       setCustomers((prev) =>
         prev.map((c) =>
           c.id === effectiveCustomerId
-            ? { ...c, customer_number: resolvedCustomerNum, updated_at: new Date().toISOString() }
+            ? { ...c, customer_number: resolvedCustomerNum, updated_at: nextMonotonicIso(c.updated_at) }
             : c
         )
       );
@@ -2853,7 +2850,7 @@ export const AppProvider: React.FC<{
               is_lcr: false,
               billing_customer_id:
                 w.customer_id !== customerId ? customerId : w.billing_customer_id,
-              updated_at: new Date().toISOString()
+              updated_at: nextMonotonicIso(w.updated_at)
             }
           : w
       )
@@ -2937,14 +2934,14 @@ export const AppProvider: React.FC<{
                 ...w,
                 settlement_id: invoiceId,
                 is_lcr: false,
-                updated_at: new Date().toISOString()
+                updated_at: nextMonotonicIso(w.updated_at)
               };
             }
             if (!nextSet.has(w.id) && (w.settlement_id === invoiceId || prevSet.has(w.id))) {
               return {
                 ...w,
                 settlement_id: null,
-                updated_at: new Date().toISOString()
+                updated_at: nextMonotonicIso(w.updated_at)
               };
             }
             return w;
@@ -3376,6 +3373,7 @@ export const AppProvider: React.FC<{
                     k !== 'updated_at' &&
                     k !== 'has_photo' &&
                     k !== 'photo_count' &&
+                    k !== 'remove_photo' &&
                     v !== undefined &&
                     v !== null &&
                     String(v).trim() !== ''
