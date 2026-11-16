@@ -6,6 +6,7 @@ import { BottomNav } from '../common/BottomNav.tsx';
 import { UndoToast } from '../common/UndoToast.tsx';
 import { SwipeToDeleteRow } from '../common/SwipeToDeleteRow.tsx';
 import { CollapsibleCard } from '../common/CollapsibleCard.tsx';
+import { CustomerSelectField } from '../common/CustomerSelectField.tsx';
 import {
   User,
   Phone,
@@ -419,7 +420,7 @@ export const KundenView: React.FC = () => {
                     className="p-3 bg-white border border-slate-200 rounded-2xl shadow-2xs hover:border-[#3138A0] active:bg-slate-50 transition-colors cursor-pointer flex items-center justify-between gap-2.5"
                   >
                     {/* Linker Informationsbereich: Direktes Profilbild (Kamera/Galerie) + Name + Status + Adresse */}
-                    <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                    <div className="flex items-center gap-3 min-w-0 flex-1">
                       {c.photo ? (
                         <button
                           type="button"
@@ -431,7 +432,7 @@ export const KundenView: React.FC = () => {
                               name: c.name
                             });
                           }}
-                          className="w-12 h-12 rounded-2xl overflow-hidden border border-slate-200 shrink-0 bg-slate-100 shadow-2xs"
+                          className="w-16 h-16 rounded-2xl overflow-hidden border border-slate-200 shrink-0 bg-slate-100 shadow-2xs"
                           title="Profilbild vergrößern oder ändern"
                         >
                           <img
@@ -447,13 +448,13 @@ export const KundenView: React.FC = () => {
                             e.stopPropagation();
                             setPhotoSourceCustomer(c);
                           }}
-                          className="w-12 h-12 rounded-2xl bg-indigo-50/80 hover:bg-indigo-100 border border-dashed border-indigo-200 flex flex-col items-center justify-center text-[#3138A0] shrink-0 transition-colors relative"
+                          className="w-16 h-16 rounded-2xl bg-indigo-50/80 hover:bg-indigo-100 border border-dashed border-indigo-200 flex flex-col items-center justify-center text-[#3138A0] shrink-0 transition-colors relative"
                           title="Profilbild direkt über Kamera oder Galerie hinzufügen"
                         >
-                          <span className="font-bold text-xs leading-none">
+                          <span className="font-bold text-sm leading-none">
                             {c.name.slice(0, 2).toUpperCase()}
                           </span>
-                          <Camera size={11} className="mt-0.5 opacity-80" />
+                          <Camera size={13} className="mt-1 opacity-80" />
                         </button>
                       )}
 
@@ -831,8 +832,8 @@ export const KundenView: React.FC = () => {
       >
         {/* Kompakte, übersichtliche Kunden-Kurzinfo am Kopf der Kundenakte */}
         <div className="p-3 bg-white border border-slate-200 rounded-2xl shadow-2xs space-y-2">
-          <div className="flex items-start justify-between gap-2">
-            <div className="flex items-center gap-2.5 min-w-0">
+          <div className="flex items-start justify-between gap-2.5">
+            <div className="flex items-center gap-3 min-w-0">
               {currentCustomer.photo ? (
                 <button
                   type="button"
@@ -843,7 +844,7 @@ export const KundenView: React.FC = () => {
                       name: currentCustomer.name
                     })
                   }
-                  className="w-12 h-12 rounded-2xl overflow-hidden border border-slate-200 shrink-0 bg-slate-100 shadow-2xs"
+                  className="w-20 h-20 rounded-2xl overflow-hidden border border-slate-200 shrink-0 bg-slate-100 shadow-xs"
                   title="Profilbild vergrößern oder ändern"
                 >
                   <img
@@ -856,13 +857,13 @@ export const KundenView: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setPhotoSourceCustomer(currentCustomer)}
-                  className="w-12 h-12 rounded-2xl bg-indigo-50/80 hover:bg-indigo-100 border border-dashed border-indigo-200 flex flex-col items-center justify-center text-[#3138A0] shrink-0 transition-colors"
+                  className="w-20 h-20 rounded-2xl bg-indigo-50/80 hover:bg-indigo-100 border border-dashed border-indigo-200 flex flex-col items-center justify-center text-[#3138A0] shrink-0 transition-colors"
                   title="Profilbild direkt über Kamera oder Galerie hinzufügen"
                 >
-                  <span className="font-bold text-xs leading-none">
+                  <span className="font-bold text-base leading-none">
                     {currentCustomer.name.slice(0, 2).toUpperCase()}
                   </span>
-                  <Camera size={11} className="mt-0.5 opacity-80" />
+                  <Camera size={15} className="mt-1 opacity-80" />
                 </button>
               )}
 
@@ -1311,17 +1312,14 @@ export const KundenView: React.FC = () => {
                       <label className="text-[10px] font-bold uppercase tracking-wide text-[#3138A0] block">
                         Abrechnung über Kunde:
                       </label>
-                      <select
+                      <CustomerSelectField
+                        customers={otherCustomers}
+                        allCustomersForNumbers={customers}
                         value={divergentRecipient?.id || ''}
-                        onChange={(e) => handleChangeBillingCustomer(e.target.value)}
-                        className="w-full h-10 px-2.5 bg-white border border-indigo-200 rounded-xl focus:border-[#3138A0] outline-hidden text-xs font-semibold text-slate-900"
-                      >
-                        {otherCustomers.map((oc) => (
-                          <option key={oc.id} value={oc.id}>
-                            {oc.name} {oc.city ? `(${oc.city})` : ''}
-                          </option>
-                        ))}
-                      </select>
+                        onChange={(nextId) => handleChangeBillingCustomer(nextId)}
+                        showSubBillingHint={false}
+                        compact={true}
+                      />
                     </div>
                   )}
                 </div>
@@ -2033,17 +2031,14 @@ export const KundenView: React.FC = () => {
                     <label className="text-[11px] text-slate-600 block">
                       Abrechnung erfolgt über Kunde:
                     </label>
-                    <select
+                    <CustomerSelectField
+                      customers={otherCustomers}
+                      allCustomersForNumbers={customers}
                       value={divergentRecipient?.id || ''}
-                      onChange={(e) => handleChangeBillingCustomer(e.target.value)}
-                      className="w-full h-10 px-2.5 bg-white border border-indigo-200 rounded-xl focus:border-[#3138A0] outline-hidden text-xs font-bold text-[#3138A0]"
-                    >
-                      {otherCustomers.map((oc) => (
-                        <option key={oc.id} value={oc.id}>
-                          {oc.name} {oc.city ? `(${oc.city})` : ''}
-                        </option>
-                      ))}
-                    </select>
+                      onChange={(nextId) => handleChangeBillingCustomer(nextId)}
+                      showSubBillingHint={false}
+                      compact={true}
+                    />
                   </div>
                 ) : (
                   <div className="flex items-center justify-between">

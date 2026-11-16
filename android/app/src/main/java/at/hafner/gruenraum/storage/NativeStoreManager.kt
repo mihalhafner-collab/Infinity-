@@ -438,7 +438,7 @@ class NativeStoreManager(context: Context) {
                 } else {
                     val prevUpdated = prev.optString("updated_at", "")
                     val newUpdated = item.optString("updated_at", "")
-                    if (prevUpdated.isEmpty() || newUpdated.isEmpty() || newUpdated >= prevUpdated) {
+                    if (prevUpdated.isEmpty() || (newUpdated.isNotEmpty() && newUpdated >= prevUpdated)) {
                         byId[id] = item
                     }
                 }

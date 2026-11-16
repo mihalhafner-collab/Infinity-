@@ -5,6 +5,7 @@ import {
   resolveCustomerNumber
 } from '../../utils/invoicePdf.ts';
 import { compressImageFile } from '../../utils/imageCompress.ts';
+import { CustomerSelectField } from '../common/CustomerSelectField.tsx';
 import {
   X,
   User,
@@ -188,16 +189,16 @@ export const KundeModal: React.FC = () => {
         {/* Form Body */}
         <div className="flex-1 overflow-y-auto py-3 space-y-3.5 text-xs text-slate-700">
           {/* Profilbild direkt über Kamera oder Galerie */}
-          <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-2xl flex items-center gap-2.5">
+          <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-2xl flex items-center gap-3">
             {photo ? (
               <img
                 src={photo}
                 alt="Profilbild"
-                className="w-12 h-12 rounded-2xl object-cover border border-slate-200 shrink-0 bg-white"
+                className="w-16 h-16 rounded-2xl object-cover border border-slate-200 shrink-0 bg-white shadow-2xs"
               />
             ) : (
-              <div className="w-12 h-12 rounded-2xl bg-indigo-50 border border-indigo-100 flex items-center justify-center text-[#3138A0] font-bold text-xs shrink-0">
-                {name.trim() ? name.trim().slice(0, 2).toUpperCase() : <User size={18} />}
+              <div className="w-16 h-16 rounded-2xl bg-indigo-50 border border-indigo-100 flex items-center justify-center text-[#3138A0] font-bold text-sm shrink-0">
+                {name.trim() ? name.trim().slice(0, 2).toUpperCase() : <User size={22} />}
               </div>
             )}
 
@@ -406,17 +407,14 @@ export const KundeModal: React.FC = () => {
                     <label className="text-[11px] font-semibold text-slate-700 block mb-1">
                       Abrechnung über Kunde auswählen *
                     </label>
-                    <select
+                    <CustomerSelectField
+                      customers={selectableBillingCustomers}
+                      allCustomersForNumbers={customers}
                       value={billingCustomerId}
-                      onChange={(e) => setBillingCustomerId(e.target.value)}
-                      className="w-full h-10 px-2.5 bg-white border border-[#3138A0]/50 rounded-xl focus:border-[#3138A0] outline-hidden text-xs font-semibold text-slate-900"
-                    >
-                      {selectableBillingCustomers.map((bc) => (
-                        <option key={bc.id} value={bc.id}>
-                          {bc.name} {bc.city ? `(${bc.city})` : ''}
-                        </option>
-                      ))}
-                    </select>
+                      onChange={(nextId) => setBillingCustomerId(nextId)}
+                      showSubBillingHint={false}
+                      compact={true}
+                    />
                   </div>
                 )}
               </div>

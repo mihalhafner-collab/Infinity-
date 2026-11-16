@@ -505,7 +505,7 @@ function mergeArrayWithAndroidPrimary<T extends { id: string; updated_at?: strin
     } else {
       const sTime = existing.updated_at || '';
       const aTime = a.updated_at || '';
-      if (!sTime || !aTime || aTime >= sTime) {
+      if (!sTime || (aTime && aTime >= sTime)) {
         byId.set(a.id, a);
       }
     }

@@ -7,6 +7,7 @@ import { UndoToast } from '../common/UndoToast.tsx';
 import { SwipeToDeleteRow } from '../common/SwipeToDeleteRow.tsx';
 import { InvoicePaperPreview } from '../common/InvoicePaperPreview.tsx';
 import { CollapsibleCard } from '../common/CollapsibleCard.tsx';
+import { CustomerSelectField } from '../common/CustomerSelectField.tsx';
 import { GuvPanel } from './GuvPanel.tsx';
 import {
   detectRecipientSalutation,
@@ -1037,13 +1038,13 @@ export const AbrechnungView: React.FC = () => {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-2.5">
+              <div className="space-y-2.5">
                 <div>
                   <label className="font-semibold block mb-1">Kunde</label>
-                  <select
+                  <CustomerSelectField
+                    customers={customers}
                     value={editCustomerId}
-                    onChange={(e) => {
-                      const cid = e.target.value;
+                    onChange={(cid) => {
                       setEditCustomerId(cid);
                       const found = customers.find((c) => c.id === cid);
                       if (found) {
@@ -1055,18 +1056,11 @@ export const AbrechnungView: React.FC = () => {
                         setEditIntroText((prev) => replaceIntroSalutation(prev, nextSalutation));
                       }
                     }}
-                    className="w-full h-11 px-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-[#3138A0] outline-hidden text-xs font-medium text-slate-900"
-                  >
-                    {customers.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name}
-                      </option>
-                    ))}
-                  </select>
+                  />
                 </div>
 
                 <div>
-                  <label className="font-semibold block mb-1">Rechnungsempfänger</label>
+                  <label className="font-semibold block mb-1">Rechnungsempfänger (Name auf Beleg)</label>
                   <input
                     type="text"
                     value={editBillingName}

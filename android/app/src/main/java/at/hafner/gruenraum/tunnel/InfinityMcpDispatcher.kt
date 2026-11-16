@@ -1241,7 +1241,8 @@ class InfinityMcpDispatcher(
                 val reservedKeys = setOf(
                     "id", "item_type", "category", "parent_equipment_id", "name", "model",
                     "photo", "specs", "quantity", "notes", "status", "last_maintenance",
-                    "next_maintenance", "maintenance_plan", "interval_months", "history"
+                    "next_maintenance", "maintenance_plan", "interval_months", "history",
+                    "created_at", "updated_at"
                 )
                 val mergedSpecs = JSONObject()
                 val prevSpecs = prev?.optJSONObject("specs")
@@ -1249,6 +1250,7 @@ class InfinityMcpDispatcher(
                     val pk = prevSpecs.keys()
                     while (pk.hasNext()) {
                         val k = pk.next()
+                        if (k == "created_at" || k == "updated_at") continue
                         val v = prevSpecs.optString(k, "").trim()
                         if (v.isNotEmpty() && !prevSpecs.isNull(k)) {
                             mergedSpecs.put(k, v)
@@ -1260,7 +1262,7 @@ class InfinityMcpDispatcher(
                     val nk = payloadSpecs.keys()
                     while (nk.hasNext()) {
                         val k = nk.next()
-                        if (payloadSpecs.isNull(k) || payloadSpecs.optString(k, "").trim().isEmpty()) {
+                        if (k == "created_at" || k == "updated_at" || payloadSpecs.isNull(k) || payloadSpecs.optString(k, "").trim().isEmpty()) {
                             mergedSpecs.remove(k)
                         } else {
                             mergedSpecs.put(k.trim(), payloadSpecs.optString(k, "").trim())
@@ -1314,6 +1316,8 @@ class InfinityMcpDispatcher(
                 record.put("maintenance_plan", record.optString("maintenance_plan", if (itemType == "zubehoer") "" else "Regelmäßige Prüfung"))
                 record.put("interval_months", parsedInterval)
                 if (record.optJSONArray("history") == null) record.put("history", JSONArray())
+                record.put("created_at", prev?.optString("created_at")?.takeIf { it.isNotEmpty() } ?: nowIso)
+                record.put("updated_at", nowIso)
 
                 if (existingIdx >= 0) arr.put(existingIdx, record) else prependToArray(arr, record)
             }
@@ -1683,6 +1687,7 @@ class InfinityMcpDispatcher(
         eq.put("next_maintenance", nextDate)
         eq.put("maintenance_plan", plan)
         eq.put("history", newHistory)
+        eq.put("updated_at", Instant.now().toString())
 
         return JSONObject()
             .put("ok", true)

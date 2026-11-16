@@ -28,7 +28,7 @@ export const EQUIPMENT_CATEGORIES: EquipmentCategoryDef[] = [
   // ================= 1. SCHNITT & BAUMPFLEGE =================
   {
     id: 'motorsaegen',
-    label: 'Motorsägen & Hochentaster',
+    label: 'Motorsäge',
     itemType: 'geraet',
     group: 'garten',
     presetNames: [
@@ -85,7 +85,7 @@ export const EQUIPMENT_CATEGORIES: EquipmentCategoryDef[] = [
   },
   {
     id: 'heckenschere',
-    label: 'Heckenscheren & Strauchschnitt',
+    label: 'Heckenschere',
     itemType: 'geraet',
     group: 'garten',
     presetNames: [
@@ -95,7 +95,7 @@ export const EQUIPMENT_CATEGORIES: EquipmentCategoryDef[] = [
       'Gardena Akku-Gras- & Strauchschere (ComfortCut)',
       'Mechanische Profi-Heckenschere (Okatsune / ARS)'
     ],
-    defaultMaintenancePlan: 'Messerbalken reinigen, harzlösen, schärfen & Getriebe fetten',
+    defaultMaintenancePlan: 'Messerbalken reinigen, entharzen, schärfen & Getriebe fetten',
     defaultIntervalMonths: 6,
     namePlaceholder: 'z. B. STIHL HLA 86 / HS 82 R / Milwaukee M18 FHET60',
     modelPlaceholder: 'z. B. HS 82 R / 60 cm',
@@ -121,7 +121,7 @@ export const EQUIPMENT_CATEGORIES: EquipmentCategoryDef[] = [
   },
   {
     id: 'felco_silky_schnitt',
-    label: 'Handsägen & Scheren (Felco / Silky)',
+    label: 'Handsäge & Schere',
     itemType: 'geraet',
     group: 'garten',
     presetNames: [
@@ -141,7 +141,7 @@ export const EQUIPMENT_CATEGORIES: EquipmentCategoryDef[] = [
       'Silky Hayauchi / Hayate (Teleskop-Gestängesäge)',
       'Teleskop-Baumschere / Raupenschere'
     ],
-    defaultMaintenancePlan: 'Klinge harzlösen, mit Diamantstein (Felco 903) schärfen, Gelenk ölen & nachstellen, Sägeblatt prüfen',
+    defaultMaintenancePlan: 'Klinge entharzen, mit Diamantstein (Felco 903) schärfen, Gelenk ölen & nachstellen, Sägeblatt prüfen',
     defaultIntervalMonths: 3,
     namePlaceholder: 'z. B. Felco 2 / Silky Zubat 330 / Silky Gomboy',
     modelPlaceholder: 'z. B. Blattlänge 330 mm / Zahnung 7,5 / Ersatzklinge 2/3',
@@ -170,7 +170,7 @@ export const EQUIPMENT_CATEGORIES: EquipmentCategoryDef[] = [
   // ================= 2. RASEN, WIESE & BODENPFLEGE =================
   {
     id: 'rasenmaeher',
-    label: 'Rasenmäher & Mulcher',
+    label: 'Rasenmäher',
     itemType: 'geraet',
     group: 'garten',
     presetNames: [
@@ -196,7 +196,7 @@ export const EQUIPMENT_CATEGORIES: EquipmentCategoryDef[] = [
       },
       {
         key: 'messer_typ',
-        label: 'Messerlänge / Artikelnr.',
+        label: 'Messerlänge / Artikel-Nr.',
         placeholder: 'z. B. 52 cm Highlift'
       },
       {
@@ -214,7 +214,7 @@ export const EQUIPMENT_CATEGORIES: EquipmentCategoryDef[] = [
   },
   {
     id: 'freischneider',
-    label: 'Freischneider & Trimmer',
+    label: 'Freischneider',
     itemType: 'geraet',
     group: 'garten',
     presetNames: [
@@ -257,7 +257,7 @@ export const EQUIPMENT_CATEGORIES: EquipmentCategoryDef[] = [
   },
   {
     id: 'vertikutierer_boden',
-    label: 'Vertikutierer & Bodenfräsen',
+    label: 'Vertikutierer',
     itemType: 'geraet',
     group: 'garten',
     presetNames: [
@@ -298,7 +298,7 @@ export const EQUIPMENT_CATEGORIES: EquipmentCategoryDef[] = [
   // ================= 3. LAUB, BEWÄSSERUNG & HANDGERÄTE =================
   {
     id: 'blaeser_sonstige',
-    label: 'Laubbläser, Sauger & Häcksler',
+    label: 'Laubbläser',
     itemType: 'geraet',
     group: 'garten',
     presetNames: [
@@ -312,7 +312,7 @@ export const EQUIPMENT_CATEGORIES: EquipmentCategoryDef[] = [
     defaultMaintenancePlan: 'Sichtprüfung, Filter reinigen, Häckselmesser / Verschleißteile kontrollieren',
     defaultIntervalMonths: 6,
     namePlaceholder: 'z. B. STIHL BGA 200 / BR 800 / Milwaukee M18 FBL',
-    modelPlaceholder: 'z. B. Seriennr. / Typ',
+    modelPlaceholder: 'z. B. Serien-Nr. / Typ',
     fields: [
       {
         key: 'hauptmass',
@@ -334,7 +334,7 @@ export const EQUIPMENT_CATEGORIES: EquipmentCategoryDef[] = [
   },
   {
     id: 'bewaesserung_spritze',
-    label: 'Bewässerung, Pumpen & Spritzen',
+    label: 'Bewässerung',
     itemType: 'geraet',
     group: 'garten',
     presetNames: [
@@ -390,7 +390,7 @@ export const EQUIPMENT_CATEGORIES: EquipmentCategoryDef[] = [
   },
   {
     id: 'handwerkzeuge_garten',
-    label: 'Besen, Rechen & Handgeräte',
+    label: 'Handgerät',
     itemType: 'geraet',
     group: 'garten',
     presetNames: [
@@ -451,7 +451,7 @@ export const EQUIPMENT_CATEGORIES: EquipmentCategoryDef[] = [
   // ================= 4. MULTITOOL, ELEKTRO, REINIGUNG & BAU =================
   {
     id: 'milwaukee_geraete',
-    label: 'Multitool & Akku-System (Milwaukee)',
+    label: 'Multitool',
     itemType: 'geraet',
     group: 'allgemein',
     presetNames: [
@@ -501,7 +501,7 @@ export const EQUIPMENT_CATEGORIES: EquipmentCategoryDef[] = [
   },
   {
     id: 'elektrowerkzeuge_allgemein',
-    label: 'Elektro- & Montagewerkzeuge',
+    label: 'Elektrowerkzeug',
     itemType: 'geraet',
     group: 'allgemein',
     presetNames: [
@@ -540,7 +540,7 @@ export const EQUIPMENT_CATEGORIES: EquipmentCategoryDef[] = [
   },
   {
     id: 'reinigung_kehrmaschine',
-    label: 'Reinigung & Kehrmaschinen',
+    label: 'Reinigung',
     itemType: 'geraet',
     group: 'allgemein',
     presetNames: [
@@ -577,7 +577,7 @@ export const EQUIPMENT_CATEGORIES: EquipmentCategoryDef[] = [
   },
   {
     id: 'bau_pflaster_geraete',
-    label: 'Bau-, Pflaster- & Erdgeräte',
+    label: 'Baugerät',
     itemType: 'geraet',
     group: 'allgemein',
     presetNames: [
@@ -610,7 +610,7 @@ export const EQUIPMENT_CATEGORIES: EquipmentCategoryDef[] = [
   },
   {
     id: 'leitern_allgemein',
-    label: 'Leitern & Gerüste',
+    label: 'Leiter',
     itemType: 'geraet',
     group: 'allgemein',
     presetNames: [
@@ -679,7 +679,7 @@ export const EQUIPMENT_CATEGORIES: EquipmentCategoryDef[] = [
   },
   {
     id: 'fahrzeug_anhaenger',
-    label: 'Fahrzeuge & Anhänger',
+    label: 'Anhänger',
     itemType: 'geraet',
     group: 'allgemein',
     presetNames: [
@@ -711,7 +711,7 @@ export const EQUIPMENT_CATEGORIES: EquipmentCategoryDef[] = [
   // ================= 5. ZUBEHÖR & VERSCHLEISSTEILE =================
   {
     id: 'zub_kette_schiene',
-    label: 'Ketten, Schwerter & Sägeblätter',
+    label: 'Kette & Schwert',
     itemType: 'zubehoer',
     group: 'zubehoer',
     presetNames: [
@@ -766,7 +766,7 @@ export const EQUIPMENT_CATEGORIES: EquipmentCategoryDef[] = [
   },
   {
     id: 'zub_feilen_schaerfen',
-    label: 'Feilen, Schärfer & Pflege',
+    label: 'Feile & Schärfer',
     itemType: 'zubehoer',
     group: 'zubehoer',
     presetNames: [
@@ -810,7 +810,7 @@ export const EQUIPMENT_CATEGORIES: EquipmentCategoryDef[] = [
   },
   {
     id: 'zub_faden_messer',
-    label: 'Mähfäden, Köpfe & Messer',
+    label: 'Faden & Messer',
     itemType: 'zubehoer',
     group: 'zubehoer',
     presetNames: [
@@ -847,11 +847,11 @@ export const EQUIPMENT_CATEGORIES: EquipmentCategoryDef[] = [
   },
   {
     id: 'zub_bewaesserung_gardena',
-    label: 'Bewässerungs- & Gardena-Zubehör',
+    label: 'Bewässerungszubehör',
     itemType: 'zubehoer',
     group: 'zubehoer',
     presetNames: [
-      'Gardena Hahnverbinder / Schlauchstück / Wasserstop (1/2" & 3/4")',
+      'Gardena Hahnverbinder / Schlauchstück / Wasserstopp (1/2" & 3/4")',
       'Gardena Profi-System Kupplung / Übergangsstück (3/4")',
       'Gardena 2-Wege- / 4-Wege-Verteiler',
       'Gardena Reparator / L-Stück / Y-Stück',
@@ -885,13 +885,13 @@ export const EQUIPMENT_CATEGORIES: EquipmentCategoryDef[] = [
       {
         key: 'spezifikation',
         label: 'Ausführung / Details',
-        placeholder: 'z. B. Mit Wasserstop / Messing / 10er Pack Dichtungen'
+        placeholder: 'z. B. Mit Wasserstopp / Messing / 10er-Pack Dichtungen'
       }
     ]
   },
   {
     id: 'zub_akku_ladung',
-    label: 'Akkus & Ladegeräte',
+    label: 'Akku & Ladegerät',
     itemType: 'zubehoer',
     group: 'zubehoer',
     presetNames: [
@@ -933,7 +933,7 @@ export const EQUIPMENT_CATEGORIES: EquipmentCategoryDef[] = [
   },
   {
     id: 'zub_bohrer_trennscheiben',
-    label: 'Bohrer, Bits & Trennscheiben',
+    label: 'Bohrer & Scheibe',
     itemType: 'zubehoer',
     group: 'zubehoer',
     presetNames: [
@@ -963,7 +963,7 @@ export const EQUIPMENT_CATEGORIES: EquipmentCategoryDef[] = [
   },
   {
     id: 'zub_filter_psa_sonstiges',
-    label: 'Betriebsstoffe, Filter & PSA',
+    label: 'Betriebsstoff & PSA',
     itemType: 'zubehoer',
     group: 'zubehoer',
     presetNames: [
@@ -1042,18 +1042,26 @@ const FUNCTIONAL_GROUP_MAP: Record<string, FunctionalGroupInfo> = {
 
 const GLOBAL_SPEC_LABELS: Record<string, string> = {
   feilen_durchmesser: 'Feilen-Ø',
+  feilen_ø: 'Feilen-Ø',
   kettenteilung: 'Kettenteilung',
   ketten_teilung: 'Kettenteilung',
   nutbreite: 'Treibgliedstärke / Nut',
   ketten_treibgliedstaerke: 'Treibgliedstärke',
+  ketten_treibgliedstärke: 'Treibgliedstärke',
   treibgliedstaerke: 'Treibgliedstärke',
+  treibgliedstärke: 'Treibgliedstärke',
   treibglieder: 'Treibglieder (TG)',
+  treibglieder_tg: 'Treibglieder (TG)',
   schwertlaenge: 'Schwert- / Messerlänge',
+  schwertlänge: 'Schwert- / Messerlänge',
   schienenlaenge: 'Schienenlänge',
+  schienenlänge: 'Schienenlänge',
   kettengeschwindigkeit: 'Kettengeschwindigkeit',
   kette: 'Kette',
-  ketten_bestellnummer: 'Ketten-Bestellnr.',
-  milwaukee_ketten_ersatzteilnummer: 'Ersatzteil-Nr. (Kette)',
+  ketten_bestellnummer: 'Ketten-Bestellnummer',
+  milwaukee_ketten_ersatzteilnummer: 'Ketten-Ersatzteilnummer',
+  ersatzteilnummer: 'Ersatzteilnummer',
+  bestellnummer: 'Bestellnummer',
   artikelnummer: 'Artikelnummer',
   seriennummer: 'Seriennummer',
   baujahr: 'Baujahr',
@@ -1085,6 +1093,7 @@ const GLOBAL_SPEC_LABELS: Record<string, string> = {
   prueftermin: 'Prüftermin / §57a',
   zahnform: 'Zahnform / Klingentyp',
   schaerfwinkel: 'Schärfwinkel',
+  schärfwinkel: 'Schärfwinkel',
   tiefenbegrenzer: 'Tiefenbegrenzer',
   kapazitaet: 'Kapazität / Energie',
   einsatzzweck: 'Einsatzzweck',
@@ -1124,10 +1133,18 @@ export function getSpecFieldLabel(key: string, categoryId?: string): string {
   const catDef = getCategoryDef(categoryId);
   const fromCat = catDef?.fields.find((f) => f.key === key)?.label;
   if (fromCat) return fromCat;
-  const normalizedKey = key.trim().toLowerCase();
-  if (GLOBAL_SPEC_LABELS[key]) return GLOBAL_SPEC_LABELS[key];
+
+  const trimmed = key.trim();
+  const normalizedKey = trimmed
+    .toLowerCase()
+    .replace(/[()]/g, '')
+    .replace(/[\s/-]+/g, '_');
+
+  if (GLOBAL_SPEC_LABELS[trimmed]) return GLOBAL_SPEC_LABELS[trimmed];
+  if (GLOBAL_SPEC_LABELS[trimmed.toLowerCase()]) return GLOBAL_SPEC_LABELS[trimmed.toLowerCase()];
   if (GLOBAL_SPEC_LABELS[normalizedKey]) return GLOBAL_SPEC_LABELS[normalizedKey];
-  return key
+
+  return trimmed
     .replace(/_/g, ' ')
     .replace(/laenge/gi, 'länge')
     .replace(/staerke/gi, 'stärke')
@@ -1135,8 +1152,22 @@ export function getSpecFieldLabel(key: string, categoryId?: string): string {
     .replace(/schaerf/gi, 'schärf')
     .replace(/saege/gi, 'säge')
     .replace(/geraet/gi, 'gerät')
+    .replace(/zubehoer/gi, 'zubehör')
     .replace(/oel/gi, 'öl')
-    .replace(/\b\w/g, (l) => l.toUpperCase());
+    .replace(/pruef/gi, 'prüf')
+    .replace(/hoehe/gi, 'höhe')
+    .replace(/ausfuehrung/gi, 'ausführung')
+    .replace(/kapazitaet/gi, 'kapazität')
+    .replace(/raeumbreite/gi, 'räumbreite')
+    .replace(/verschleissteil/gi, 'verschleißteil')
+    .replace(/hauptmass/gi, 'hauptmaß')
+    .replace(/fuellmenge/gi, 'füllmenge')
+    .replace(/zaehne/gi, 'zähne')
+    .replace(/buerste/gi, 'bürste')
+    .replace(/duese/gi, 'düse')
+    .replace(/duenger/gi, 'dünger')
+    .replace(/(^|[\s/-])([a-zäöüß])/g, (_, sep: string, ch: string) => sep + ch.toUpperCase());
 }
+
 
 

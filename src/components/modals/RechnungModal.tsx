@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { InvoiceLineItem, WorkRecord, useApp } from '../../context/AppContext.tsx';
 import { InvoicePaperPreview } from '../common/InvoicePaperPreview.tsx';
 import { CollapsibleCard } from '../common/CollapsibleCard.tsx';
+import { CustomerSelectField } from '../common/CustomerSelectField.tsx';
 import {
   DEFAULT_INVOICE_INTRO_TEXT,
   DEFAULT_PAUSCHAL_INTRO_TEXT,
@@ -1749,8 +1750,8 @@ export const RechnungModal: React.FC = () => {
             <div className="mt-auto pt-2.5 border-t border-slate-100 space-y-3">
               {/* Empfänger (automatisch erkannt) & aus Kundenkonto übernommene Kundennummer + direkte Ansprache */}
               <div className="space-y-2">
-                <div className="grid grid-cols-12 gap-2">
-                  <div className="col-span-8">
+                <div className="space-y-2">
+                  <div>
                     <label className="font-semibold text-slate-700 mb-1 flex items-center justify-between gap-1">
                       <span className="flex items-center gap-1">
                         <User size={13} className="text-[#3138A0]" />
@@ -1760,35 +1761,23 @@ export const RechnungModal: React.FC = () => {
                         Auto erkannt
                       </span>
                     </label>
-                    <select
+                    <CustomerSelectField
+                      customers={customers}
                       value={selectedCustomerId}
-                      onChange={(e) => applyRecipientSelection(e.target.value, true)}
-                      className="w-full h-11 px-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-[#3138A0] outline-hidden text-xs text-slate-900 font-semibold"
-                    >
-                      {customers.map((c) => {
-                        const cNum =
-                          c.customer_number?.trim() || resolveCustomerNumber(c.id, customers);
-                        const subVia = getCustomerBillingRecipient(c, customers);
-                        return (
-                          <option key={c.id} value={c.id}>
-                            {c.name} (#{cNum})
-                            {subVia ? ` → über ${subVia.name}` : c.city ? ` · ${c.city}` : ''}
-                          </option>
-                        );
-                      })}
-                    </select>
+                      onChange={(nextCustId) => applyRecipientSelection(nextCustId, true)}
+                    />
                   </div>
 
-                  <div className="col-span-4">
-                    <label className="font-semibold text-slate-700 block mb-1 truncate">
-                      Kunden-Nr.
-                    </label>
-                    <div className="flex items-center h-11 bg-slate-50 border border-slate-200 rounded-xl overflow-hidden focus-within:bg-white focus-within:border-[#3138A0]">
+                  <div className="flex items-center justify-between gap-2 px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl">
+                    <span className="text-xs font-semibold text-slate-600">
+                      Kunden-Nr. auf Rechnung
+                    </span>
+                    <div className="flex items-center h-9 w-36 bg-white border border-slate-200 rounded-xl overflow-hidden focus-within:border-[#3138A0]">
                       <button
                         type="button"
                         onClick={() => stepCustomerNumber(-1)}
                         aria-label="Kundennummer verringern"
-                        className="w-7 h-full flex items-center justify-center text-slate-600 hover:bg-slate-200/70 active:bg-slate-200 shrink-0 border-r border-slate-200/80"
+                        className="w-8 h-full flex items-center justify-center text-slate-600 hover:bg-slate-100 active:bg-slate-200 shrink-0 border-r border-slate-200/80"
                       >
                         <Minus size={13} />
                       </button>
@@ -1803,7 +1792,7 @@ export const RechnungModal: React.FC = () => {
                         type="button"
                         onClick={() => stepCustomerNumber(1)}
                         aria-label="Kundennummer erhöhen"
-                        className="w-7 h-full flex items-center justify-center text-[#3138A0] hover:bg-indigo-50 active:bg-indigo-100 shrink-0 border-l border-slate-200/80"
+                        className="w-8 h-full flex items-center justify-center text-[#3138A0] hover:bg-indigo-50 active:bg-indigo-100 shrink-0 border-l border-slate-200/80"
                       >
                         <Plus size={13} />
                       </button>

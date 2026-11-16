@@ -921,7 +921,9 @@ function mutateUpsertOnSnapshotInner(
       tour_order:
         typeof payload.tour_order === 'number'
           ? payload.tour_order
-          : (prev?.tour_order ?? next.appointments.filter((a) => a.date === date).length + 1)
+          : (prev?.tour_order ?? next.appointments.filter((a) => a.date === date).length + 1),
+      created_at: prev?.created_at || nowIso,
+      updated_at: nowIso
     };
     if (existingIdx >= 0) next.appointments[existingIdx] = record;
     else next.appointments.push(record);
@@ -1303,7 +1305,9 @@ function mutateUpsertOnSnapshotInner(
         payments: nextPayments,
         status: nextStatus,
         open_refund_amount:
-          patch.open_refund_amount !== undefined ? Number(patch.open_refund_amount) : nextOpenRefund
+          patch.open_refund_amount !== undefined ? Number(patch.open_refund_amount) : nextOpenRefund,
+        created_at: existing.created_at || nowIso,
+        updated_at: nowIso
       };
       next.invoices[existingIdx] = updatedInv;
       return {
@@ -1375,7 +1379,9 @@ function mutateUpsertOnSnapshotInner(
       payments: Array.isArray(payload.payments) ? (payload.payments as PaymentItem[]) : [],
       open_refund_amount: Number(payload.open_refund_amount || 0),
       sent_at: (payload.sent_at as string | null) ?? null,
-      sent_via: (payload.sent_via as string | null) ?? null
+      sent_via: (payload.sent_via as string | null) ?? null,
+      created_at: nowIso,
+      updated_at: nowIso
     };
     if (!newInv.is_storno && newInv.status !== 'cancelled' && workRecordIds.length > 0) {
       const boundSet = new Set(workRecordIds);
@@ -1458,6 +1464,8 @@ function mutateUpsertOnSnapshotInner(
     merged.desired_date = assertIsoDate(String(merged.desired_date || today), 'desired_date');
     merged.notes = String(merged.notes || '');
     merged.status = status;
+    merged.created_at = prev?.created_at || nowIso;
+    merged.updated_at = nowIso;
   } else if (collection === 'offers') {
     const custId = String(merged.customer_id || '').trim();
     if (!custId || !next.customers.some((c) => c.id === custId)) {
@@ -1488,6 +1496,8 @@ function mutateUpsertOnSnapshotInner(
         ? round2(Number(payload.total_amount))
         : round2(items.reduce((s, i) => s + i.total, 0));
     merged.status = status;
+    merged.created_at = prev?.created_at || nowIso;
+    merged.updated_at = nowIso;
   } else if (collection === 'equipments') {
     const itemType = merged.item_type === 'zubehoer' ? 'zubehoer' : 'geraet';
     const status = String(merged.status || 'einsatzbereit').toLowerCase();
@@ -1516,7 +1526,9 @@ function mutateUpsertOnSnapshotInner(
       'next_maintenance',
       'maintenance_plan',
       'interval_months',
-      'history'
+      'history',
+      'created_at',
+      'updated_at'
     ]);
     const prevSpecs =
       prev?.specs && typeof prev.specs === 'object' && !Array.isArray(prev.specs)
@@ -1528,12 +1540,18 @@ function mutateUpsertOnSnapshotInner(
         : {};
     const mergedSpecs: Record<string, string> = {};
     for (const [k, v] of Object.entries(prevSpecs)) {
-      if (v !== undefined && v !== null && String(v).trim() !== '') {
+      if (
+        k !== 'created_at' &&
+        k !== 'updated_at' &&
+        v !== undefined &&
+        v !== null &&
+        String(v).trim() !== ''
+      ) {
         mergedSpecs[k] = String(v).trim();
       }
     }
     for (const [k, v] of Object.entries(payloadSpecs)) {
-      if (v === null || v === undefined || String(v).trim() === '') {
+      if (k === 'created_at' || k === 'updated_at' || v === null || v === undefined || String(v).trim() === '') {
         delete mergedSpecs[k];
       } else {
         mergedSpecs[k.trim()] = String(v).trim();
@@ -1597,6 +1615,8 @@ function mutateUpsertOnSnapshotInner(
           : 'Regelmäßige Prüfung';
     merged.interval_months = parsedInterval;
     merged.history = Array.isArray(merged.history) ? merged.history : [];
+    merged.created_at = prev?.created_at || nowIso;
+    merged.updated_at = nowIso;
   } else if (collection === 'materials') {
     const name = String(merged.name || '').trim();
     if (!name) {
@@ -1634,6 +1654,8 @@ function mutateUpsertOnSnapshotInner(
         ? null
         : Math.max(2, Math.min(20, Math.round(Number(merged.useful_life_years))));
     merged.notes = String(merged.notes || '').trim();
+    merged.created_at = prev?.created_at || nowIso;
+    merged.updated_at = nowIso;
   }
 
   if (existingIdx >= 0) arr[existingIdx] = merged;
@@ -2349,7 +2371,8 @@ export function recordMaintenanceAdminAction(
     last_maintenance: maintDate,
     next_maintenance: nextDate,
     maintenance_plan: plan,
-    history: [{ date: maintDate, note, plan }, ...(eq.history || [])]
+    history: [{ date: maintDate, note, plan }, ...(eq.history || [])],
+    updated_at: new Date().toISOString()
   };
 
   const saved = saveStore(next, actor, `Wartung für Gerät "${eq.name}" dokumentiert`);

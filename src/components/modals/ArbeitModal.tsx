@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useApp } from '../../context/AppContext.tsx';
+import { useApp, usePixelBackLayer } from '../../context/AppContext.tsx';
 import {
   X,
   Clock,
@@ -23,11 +23,15 @@ import {
 } from 'lucide-react';
 import { UsedMaterial } from '../../types/index.ts';
 import { getCustomerBillingRecipient } from '../../utils/invoicePdf.ts';
+import { CustomerSelectField } from '../common/CustomerSelectField.tsx';
 
 const ACTIVITY_GROUPS = [
   {
     group: 'Garten & Grünanlage',
     items: [
+      'Gartenpflege',
+      'Pflege der Außenanlage',
+      'Garten- und Außenanlagenreinigung',
       'Rasenpflege / Mähen',
       'Heckenschnitt',
       'Strauch- & Baumschnitt',
@@ -242,7 +246,7 @@ function HorizontalWheelPicker<T>({
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerUp}
-        className={`w-full h-full overflow-x-auto no-scrollbar flex items-center px-[calc(50%-36px)] touch-pan-x cursor-grab active:cursor-grabbing ${
+        className={`w-full h-full overflow-x-auto no-scrollbar flex items-center px-[calc(50%-36px)] touch-manipulation cursor-grab active:cursor-grabbing ${
           isMouseDragging ? 'snap-none' : 'snap-x snap-mandatory'
         }`}
       >
@@ -385,8 +389,17 @@ export const ArbeitModal: React.FC = () => {
   const [notes, setNotes] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
 
+  const [activeTimeField, setActiveTimeField] = useState<'start' | 'end' | null>(null);
+  const [clockStep, setClockStep] = useState<'hour' | 'minute'>('hour');
+  const [draftHour, setDraftHour] = useState<number>(7);
+  const [draftMinute, setDraftMinute] = useState<number>(0);
+  const [isClockDragging, setIsClockDragging] = useState(false);
+
   const titleInputRef = useRef<HTMLInputElement>(null);
   const rateInputRef = useRef<HTMLInputElement>(null);
+  const clockDialRef = useRef<HTMLDivElement>(null);
+
+  usePixelBackLayer(activeTimeField !== null, () => setActiveTimeField(null));
 
   const existingRecord = isEditing
     ? workRecords.find((w) => w.id === selectedWorkRecordId)
@@ -397,6 +410,8 @@ export const ArbeitModal: React.FC = () => {
   useEffect(() => {
     setConfirmDelete(false);
     setActivityPickerOpen(false);
+    setActiveTimeField(null);
+    setClockStep('hour');
     if (isEditing && existingRecord) {
       const recTitle = existingRecord.title || '';
       const parts = recTitle
@@ -564,15 +579,39 @@ export const ArbeitModal: React.FC = () => {
     setIsCustomRate(false);
   };
 
-  const handleStartTimeChange = (newStart: string) => {
-    const prevSpan = parseTimeToMinutes(endTime) - parseTimeToMinutes(startTime);
-    const keepSpan = prevSpan > 0 ? prevSpan : 60;
-    setStartTime(newStart);
+  const openClockPicker = (field: 'start' | 'end', timeValue?: string) => {
+    const val = timeValue ?? (field === 'start' ? startTime : endTime);
+    const [hStr = '07', mStr = '00'] = val.split(':');
+    setDraftHour(parseInt(hStr, 10) || 0);
+    setDraftMinute(parseInt(mStr, 10) || 0);
+    setClockStep('hour');
+    setActiveTimeField(field);
+  };
 
-    const newStartMin = parseTimeToMinutes(newStart);
-    const currentEndMin = parseTimeToMinutes(endTime);
-    if (newStartMin >= currentEndMin) {
-      setEndTime(minutesToTimeString(newStartMin + keepSpan));
+  const handleConfirmClockPicker = () => {
+    const formatted = `${String(draftHour).padStart(2, '0')}:${String(draftMinute).padStart(2, '0')}`;
+    if (activeTimeField === 'start') {
+      const prevSpan = parseTimeToMinutes(endTime) - parseTimeToMinutes(startTime);
+      const keepSpan = prevSpan > 0 ? prevSpan : 60;
+      setStartTime(formatted);
+
+      const newStartMin = parseTimeToMinutes(formatted);
+      const currentEndMin = parseTimeToMinutes(endTime);
+      let nextEndStr = endTime;
+      if (newStartMin >= currentEndMin) {
+        nextEndStr = minutesToTimeString(newStartMin + keepSpan);
+        setEndTime(nextEndStr);
+      }
+
+      if (!isEditing) {
+        // Automatisch zur Endzeitanzeige springen (17:00 bleibt voreingestellt)
+        openClockPicker('end', nextEndStr);
+      } else {
+        setActiveTimeField(null);
+      }
+    } else if (activeTimeField === 'end') {
+      setEndTime(formatted);
+      setActiveTimeField(null);
     }
   };
 
@@ -820,7 +859,10 @@ export const ArbeitModal: React.FC = () => {
         )}
 
         {/* Body */}
-        <div className="flex-1 overflow-y-auto py-3 space-y-3.5 text-xs text-slate-700">
+        <div
+          className="flex-1 min-h-0 overflow-y-auto overscroll-contain touch-pan-y py-3 space-y-3.5 text-xs text-slate-700"
+          style={{ WebkitOverflowScrolling: 'touch' }}
+        >
           {/* Tätigkeit / Arbeiten (Mehrfachauswahl + Freitext + Aufträge) */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">
@@ -887,7 +929,7 @@ export const ArbeitModal: React.FC = () => {
                 </button>
 
                 {activityPickerOpen && (
-                  <div className="p-2.5 border-t border-slate-200 space-y-2.5 bg-slate-50/90 max-h-56 overflow-y-auto">
+                  <div className="p-2.5 border-t border-slate-200 space-y-2.5 bg-slate-50/90">
                     <div className="flex items-center justify-between text-[10px] text-slate-500 px-0.5">
                       <span>Mehrere Arbeiten per Antippen kombinierbar</span>
                       {selectedActivities.length > 0 && (
@@ -973,31 +1015,31 @@ export const ArbeitModal: React.FC = () => {
             )}
           </div>
 
-          {/* Kunde & Datum */}
-          <div className="grid grid-cols-2 gap-2.5">
-            <div>
-              <label className="font-semibold text-slate-700 mb-1 flex items-center gap-1">
-                <User size={13} className="text-slate-500" />
-                <span>Kunde</span>
-              </label>
-              <select
-                value={customerId}
-                onChange={(e) => {
-                  const nextCustId = e.target.value;
-                  setCustomerId(nextCustId);
-                  const nextProps = properties.filter((p) => p.customer_id === nextCustId);
-                  setPropertyId(nextProps[0]?.id || '');
-                }}
-                className="w-full h-11 px-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-[#3138A0] outline-hidden text-xs text-slate-900 font-medium"
-              >
-                {customers.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name} {c.city ? `(${c.city})` : ''}
-                  </option>
-                ))}
-              </select>
-            </div>
+          {/* Kunde (volle Breite mit Profilbild, Kunden-Nr., Ort & Schnellsuche) */}
+          <div>
+            <label className="font-semibold text-slate-700 mb-1 flex items-center gap-1">
+              <User size={13} className="text-[#3138A0]" />
+              <span>Kunde</span>
+            </label>
+            <CustomerSelectField
+              customers={customers}
+              value={customerId}
+              onChange={(nextCustId) => {
+                setCustomerId(nextCustId);
+                const nextProps = properties.filter((p) => p.customer_id === nextCustId);
+                setPropertyId(nextProps[0]?.id || '');
+              }}
+            />
+          </div>
 
+          {/* Datum & optional Objekt / Einsatzort */}
+          <div
+            className={
+              properties.some((p) => p.customer_id === customerId)
+                ? 'grid grid-cols-2 gap-2.5'
+                : ''
+            }
+          >
             <div>
               <label className="font-semibold text-slate-700 mb-1 flex items-center gap-1">
                 <Calendar size={13} className="text-slate-500" />
@@ -1010,6 +1052,29 @@ export const ArbeitModal: React.FC = () => {
                 className="w-full h-11 px-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-[#3138A0] outline-hidden text-xs text-slate-900 font-medium"
               />
             </div>
+
+            {properties.some((p) => p.customer_id === customerId) && (
+              <div>
+                <label className="font-semibold text-slate-700 mb-1 flex items-center gap-1">
+                  <Home size={13} className="text-[#3138A0]" />
+                  <span>Objekt / Einsatzort</span>
+                </label>
+                <select
+                  value={propertyId}
+                  onChange={(e) => setPropertyId(e.target.value)}
+                  className="w-full h-11 px-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-[#3138A0] outline-hidden text-xs text-slate-900 font-medium"
+                >
+                  <option value="">Ohne Objektzuordnung</option>
+                  {properties
+                    .filter((p) => p.customer_id === customerId)
+                    .map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name} {p.address ? `– ${p.address}` : ''}
+                      </option>
+                    ))}
+                </select>
+              </div>
+            )}
           </div>
 
           {/* Kurze übersichtliche Warnung bei vorhandenen Aufzeichnungen am gewählten Tag */}
@@ -1083,29 +1148,6 @@ export const ArbeitModal: React.FC = () => {
             </div>
           )}
 
-          {/* Objekt-Zuordnung (wenn Kunde Objekte besitzt) */}
-          {properties.some((p) => p.customer_id === customerId) && (
-            <div>
-              <label className="font-semibold text-slate-700 mb-1 flex items-center gap-1">
-                <Home size={13} className="text-[#3138A0]" />
-                <span>Objekt / Einsatzort</span>
-              </label>
-              <select
-                value={propertyId}
-                onChange={(e) => setPropertyId(e.target.value)}
-                className="w-full h-11 px-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-[#3138A0] outline-hidden text-xs text-slate-900 font-medium"
-              >
-                <option value="">Ohne Objektzuordnung</option>
-                {properties
-                  .filter((p) => p.customer_id === customerId)
-                  .map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name} {p.address ? `– ${p.address}` : ''}
-                    </option>
-                  ))}
-              </select>
-            </div>
-          )}
 
           {/* Hinweis bei aktivem abweichendem Rechnungsempfänger (Sub) */}
           {activeDivergentRecipient && (
@@ -1154,35 +1196,259 @@ export const ArbeitModal: React.FC = () => {
                 <label className="text-[11px] font-semibold text-slate-600 block mb-1">
                   Von (Beginn)
                 </label>
-                <input
-                  type="time"
-                  step="300"
-                  value={startTime}
-                  onChange={(e) => handleStartTimeChange(e.target.value)}
-                  className={`w-full h-11 px-3 bg-white border rounded-xl outline-hidden text-sm font-semibold text-slate-900 ${
+                <button
+                  type="button"
+                  onClick={() => openClockPicker('start')}
+                  className={`w-full h-11 px-3 bg-white border rounded-xl outline-hidden text-sm font-semibold text-slate-900 flex items-center justify-between transition-colors ${
                     hasCollision
                       ? 'border-red-300 focus:border-[#B42318]'
-                      : 'border-slate-200 focus:border-[#3138A0]'
+                      : activeTimeField === 'start'
+                        ? 'border-[#3138A0] ring-2 ring-[#3138A0]/20'
+                        : 'border-slate-200 focus:border-[#3138A0]'
                   }`}
-                />
+                >
+                  <span className="tabular-nums">{startTime}</span>
+                  <Clock size={15} className="text-slate-500" />
+                </button>
               </div>
               <div>
                 <label className="text-[11px] font-semibold text-slate-600 block mb-1">
                   Bis (Ende)
                 </label>
-                <input
-                  type="time"
-                  step="300"
-                  value={endTime}
-                  onChange={(e) => setEndTime(e.target.value)}
-                  className={`w-full h-11 px-3 bg-white border rounded-xl outline-hidden text-sm font-semibold text-slate-900 ${
+                <button
+                  type="button"
+                  onClick={() => openClockPicker('end')}
+                  className={`w-full h-11 px-3 bg-white border rounded-xl outline-hidden text-sm font-semibold text-slate-900 flex items-center justify-between transition-colors ${
                     hasCollision
                       ? 'border-red-300 focus:border-[#B42318]'
-                      : 'border-slate-200 focus:border-[#3138A0]'
+                      : activeTimeField === 'end'
+                        ? 'border-[#3138A0] ring-2 ring-[#3138A0]/20'
+                        : 'border-slate-200 focus:border-[#3138A0]'
                   }`}
-                />
+                >
+                  <span className="tabular-nums">{endTime}</span>
+                  <Clock size={15} className="text-slate-500" />
+                </button>
               </div>
             </div>
+
+            {/* Optische Pixel-Uhrzeitauswahl (Zifferblatt) mit automatischem Sprung von Beginn -> Ende (17:00) */}
+            {activeTimeField !== null && (() => {
+              const OUTER_HOURS = [0, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23];
+              const INNER_HOURS = [12, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
+              const MINUTES_RING = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55];
+
+              const DIAL_SIZE = 248;
+              const CENTER = DIAL_SIZE / 2;
+              const OUTER_R = 96;
+              const INNER_R = 60;
+
+              const getAngleCoords = (index12: number, radius: number) => {
+                const rad = ((index12 * 30 - 90) * Math.PI) / 180;
+                return {
+                  x: CENTER + radius * Math.cos(rad),
+                  y: CENTER + radius * Math.sin(rad)
+                };
+              };
+
+              const isInnerHour = draftHour >= 1 && draftHour <= 12;
+              const selectedHandPos =
+                clockStep === 'hour'
+                  ? getAngleCoords(draftHour % 12, isInnerHour ? INNER_R : OUTER_R)
+                  : getAngleCoords(Math.round(draftMinute / 5) % 12, OUTER_R);
+
+              const updateFromPointer = (clientX: number, clientY: number) => {
+                const el = clockDialRef.current;
+                if (!el) return;
+                const rect = el.getBoundingClientRect();
+                const dx = clientX - (rect.left + rect.width / 2);
+                const dy = clientY - (rect.top + rect.height / 2);
+                const dist = Math.hypot(dx, dy);
+                const deg = ((Math.atan2(dy, dx) * 180) / Math.PI + 90 + 360) % 360;
+                const sector = Math.round(deg / 30) % 12;
+
+                if (clockStep === 'hour') {
+                  const innerThreshold = (OUTER_R + INNER_R) / 2;
+                  if (dist < innerThreshold) {
+                    setDraftHour(sector === 0 ? 12 : sector);
+                  } else {
+                    setDraftHour(sector === 0 ? 0 : sector + 12);
+                  }
+                } else {
+                  setDraftMinute((sector * 5) % 60);
+                }
+              };
+
+              return (
+                <div
+                  onClick={() => setActiveTimeField(null)}
+                  className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4 animate-fade-in"
+                >
+                  <div
+                    onClick={(e) => e.stopPropagation()}
+                    className="w-full max-w-[312px] bg-white rounded-3xl shadow-2xl p-5 space-y-4 border border-slate-100"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
+                        {activeTimeField === 'start'
+                          ? 'Beginn (Startzeit) wählen'
+                          : 'Ende (Endzeit) wählen'}
+                      </span>
+                      {!isEditing && (
+                        <span className="px-2 py-0.5 rounded-full bg-indigo-50 text-[#3138A0] text-[10px] font-bold">
+                          {activeTimeField === 'start' ? '1 / 2' : '2 / 2'}
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Digitale Stunden : Minuten Anzeige oben */}
+                    <div className="flex items-center justify-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setClockStep('hour')}
+                        className={`w-20 h-14 rounded-2xl text-3xl font-bold tabular-nums transition-all ${
+                          clockStep === 'hour'
+                            ? 'bg-indigo-100 text-[#3138A0] ring-2 ring-[#3138A0]'
+                            : 'bg-slate-100 text-slate-700 hover:bg-slate-200/70'
+                        }`}
+                      >
+                        {String(draftHour).padStart(2, '0')}
+                      </button>
+                      <span className="text-3xl font-bold text-slate-400 pb-1">:</span>
+                      <button
+                        type="button"
+                        onClick={() => setClockStep('minute')}
+                        className={`w-20 h-14 rounded-2xl text-3xl font-bold tabular-nums transition-all ${
+                          clockStep === 'minute'
+                            ? 'bg-indigo-100 text-[#3138A0] ring-2 ring-[#3138A0]'
+                            : 'bg-slate-100 text-slate-700 hover:bg-slate-200/70'
+                        }`}
+                      >
+                        {String(draftMinute).padStart(2, '0')}
+                      </button>
+                    </div>
+
+                    {/* Analoges 24h-Zifferblatt */}
+                    <div
+                      ref={clockDialRef}
+                      onPointerDown={(e) => {
+                        e.currentTarget.setPointerCapture(e.pointerId);
+                        setIsClockDragging(true);
+                        updateFromPointer(e.clientX, e.clientY);
+                      }}
+                      onPointerMove={(e) => {
+                        if (!isClockDragging) return;
+                        updateFromPointer(e.clientX, e.clientY);
+                      }}
+                      onPointerUp={(e) => {
+                        if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+                          e.currentTarget.releasePointerCapture(e.pointerId);
+                        }
+                        setIsClockDragging(false);
+                        updateFromPointer(e.clientX, e.clientY);
+                        if (clockStep === 'hour') {
+                          setClockStep('minute');
+                        }
+                      }}
+                      style={{ width: DIAL_SIZE, height: DIAL_SIZE }}
+                      className="relative mx-auto rounded-full bg-slate-100 select-none touch-none cursor-pointer"
+                    >
+                      {/* Zeiger + Mittelpunkt + Auswahlkreis */}
+                      <svg
+                        width={DIAL_SIZE}
+                        height={DIAL_SIZE}
+                        className="absolute inset-0 pointer-events-none"
+                      >
+                        <line
+                          x1={CENTER}
+                          y1={CENTER}
+                          x2={selectedHandPos.x}
+                          y2={selectedHandPos.y}
+                          stroke="#3138A0"
+                          strokeWidth="2.5"
+                        />
+                        <circle cx={CENTER} cy={CENTER} r="4" fill="#3138A0" />
+                        <circle
+                          cx={selectedHandPos.x}
+                          cy={selectedHandPos.y}
+                          r="18"
+                          fill="#3138A0"
+                        />
+                      </svg>
+
+                      {clockStep === 'hour' ? (
+                        <>
+                          {OUTER_HOURS.map((h, idx) => {
+                            const pos = getAngleCoords(idx, OUTER_R);
+                            const isSel = draftHour === h;
+                            return (
+                              <span
+                                key={`outer-${h}`}
+                                style={{ left: pos.x, top: pos.y }}
+                                className={`absolute -translate-x-1/2 -translate-y-1/2 text-xs font-bold tabular-nums pointer-events-none ${
+                                  isSel ? 'text-white' : 'text-slate-800'
+                                }`}
+                              >
+                                {String(h).padStart(2, '0')}
+                              </span>
+                            );
+                          })}
+                          {INNER_HOURS.map((h, idx) => {
+                            const pos = getAngleCoords(idx, INNER_R);
+                            const isSel = draftHour === h;
+                            return (
+                              <span
+                                key={`inner-${h}`}
+                                style={{ left: pos.x, top: pos.y }}
+                                className={`absolute -translate-x-1/2 -translate-y-1/2 text-[11px] font-semibold tabular-nums pointer-events-none ${
+                                  isSel ? 'text-white font-bold' : 'text-slate-500'
+                                }`}
+                              >
+                                {h}
+                              </span>
+                            );
+                          })}
+                        </>
+                      ) : (
+                        MINUTES_RING.map((m, idx) => {
+                          const pos = getAngleCoords(idx, OUTER_R);
+                          const isSel = draftMinute === m;
+                          return (
+                            <span
+                              key={`min-${m}`}
+                              style={{ left: pos.x, top: pos.y }}
+                              className={`absolute -translate-x-1/2 -translate-y-1/2 text-xs font-bold tabular-nums pointer-events-none ${
+                                isSel ? 'text-white' : 'text-slate-800'
+                              }`}
+                            >
+                              {String(m).padStart(2, '0')}
+                            </span>
+                          );
+                        })
+                      )}
+                    </div>
+
+                    {/* Dialog-Aktionen unten */}
+                    <div className="flex items-center justify-end gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => setActiveTimeField(null)}
+                        className="px-4 h-10 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 transition-colors"
+                      >
+                        Abbrechen
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleConfirmClockPicker}
+                        className="px-5 h-10 rounded-xl bg-[#3138A0] hover:bg-[#272d82] active:scale-98 text-white text-xs font-bold shadow-xs transition-all"
+                      >
+                        OK
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
 
             <div>
               <div className="flex items-center justify-between mb-1.5">

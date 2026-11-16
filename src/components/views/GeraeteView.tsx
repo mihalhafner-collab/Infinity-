@@ -48,6 +48,7 @@ export const GeraeteView: React.FC = () => {
     }
   }, [activeTab, selectedCategoryFilter]);
 
+  usePixelBackLayer(selectedCategoryFilter !== 'all', () => setSelectedCategoryFilter('all'));
   usePixelBackLayer(Boolean(previewPhoto), () => setPreviewPhoto(null));
   usePixelBackLayer(Boolean(photoSourceEq), () => setPhotoSourceEq(null));
 
@@ -109,20 +110,19 @@ export const GeraeteView: React.FC = () => {
 
     const groups: Array<{
       key: string;
-      functionTitle: string;
+      categoryId: string;
       categoryLabel: string;
       items: Equipment[];
     }> = [];
 
     for (const eq of sorted) {
-      const funcInfo = getFunctionalGroupInfo(eq.category, eq.item_type);
+      const catId = eq.category || eq.item_type || 'geraet';
       const catLabel = getCategoryLabel(eq.category, eq.item_type);
-      const groupKey = `${funcInfo.id}::${eq.category || eq.item_type || 'geraet'}`;
-      let existing = groups.find((g) => g.key === groupKey);
+      let existing = groups.find((g) => g.categoryId === catId);
       if (!existing) {
         existing = {
-          key: groupKey,
-          functionTitle: funcInfo.title,
+          key: catId,
+          categoryId: catId,
           categoryLabel: catLabel,
           items: []
         };
@@ -171,9 +171,22 @@ export const GeraeteView: React.FC = () => {
   return (
     <div className="flex-1 min-h-0 flex flex-col h-full bg-[#F8F9FA] overflow-hidden relative">
       <Header
-        title="Geräte & Zubehör"
-        subtitle="Nach Funktion geordnet · Antippen für Details"
+        title={
+          selectedCategoryFilter !== 'all'
+            ? getCategoryLabel(selectedCategoryFilter)
+            : 'Geräte & Zubehör'
+        }
+        subtitle={
+          selectedCategoryFilter !== 'all'
+            ? 'Kategorie gewählt · Zurück für Geräteübersicht'
+            : 'Nach Einzelkategorie geordnet · Antippen für Details'
+        }
         showBack
+        onBack={
+          selectedCategoryFilter !== 'all'
+            ? () => setSelectedCategoryFilter('all')
+            : undefined
+        }
       />
 
       <UndoToast />
@@ -220,14 +233,33 @@ export const GeraeteView: React.FC = () => {
         ) : (
           groupedByFunction.map((group) => (
             <div key={group.key} className="space-y-1.5">
-              {/* Klare, einzeilige Funktions-Überschrift */}
+              {/* Klare Einzelkategorie-Überschrift */}
               <div className="flex items-center justify-between px-1 pt-0.5">
-                <span className="text-[11px] font-bold uppercase tracking-wider text-[#3138A0] truncate">
+                <button
+                  type="button"
+                  onClick={() =>
+                    setSelectedCategoryFilter((prev) =>
+                      prev === group.categoryId ? 'all' : group.categoryId
+                    )
+                  }
+                  className="text-xs font-bold uppercase tracking-wider text-[#3138A0] truncate text-left hover:underline"
+                >
                   {group.categoryLabel}
-                </span>
-                <span className="px-1.5 py-0.5 rounded-md bg-slate-200/70 text-[10px] font-bold text-slate-600 tabular-nums shrink-0">
-                  {group.items.length}
-                </span>
+                </button>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  {selectedCategoryFilter !== 'all' && (
+                    <button
+                      type="button"
+                      onClick={() => setSelectedCategoryFilter('all')}
+                      className="px-2 py-0.5 rounded-md bg-indigo-50 text-[#3138A0] text-[10px] font-bold"
+                    >
+                      Alle zeigen
+                    </button>
+                  )}
+                  <span className="px-1.5 py-0.5 rounded-md bg-slate-200/70 text-[10px] font-bold text-slate-600 tabular-nums">
+                    {group.items.length}
+                  </span>
+                </div>
               </div>
 
               <div className="space-y-2">
@@ -494,13 +526,15 @@ export const GeraeteView: React.FC = () => {
                   : 'bg-slate-50 text-slate-600 border-slate-200'
               }`}
             >
-              Alle Kategorien
+              Alle
             </button>
             {usedCategoryIds.map((catId) => (
               <button
                 key={catId}
                 type="button"
-                onClick={() => setSelectedCategoryFilter(catId)}
+                onClick={() =>
+                  setSelectedCategoryFilter((prev) => (prev === catId ? 'all' : catId))
+                }
                 className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold shrink-0 border transition-colors ${
                   selectedCategoryFilter === catId
                     ? 'bg-slate-800 text-white border-slate-800'
