@@ -243,8 +243,11 @@ export const GeraetModal: React.FC = () => {
     if (!file) return;
     setIsUploadingPhoto(true);
     try {
-      const compressed = await compressImageFile(file, 480, 0.76);
+      const compressed = await compressImageFile(file, 760, 0.82);
       setPhoto(compressed);
+      if (isEditing && existingItem && !isEditMode) {
+        updateEquipment(existingItem.id, { photo: compressed });
+      }
     } finally {
       setIsUploadingPhoto(false);
       e.target.value = '';
@@ -441,64 +444,90 @@ export const GeraetModal: React.FC = () => {
 
           {/* Read-Only Content */}
           <div className="flex-1 overflow-y-auto py-3 space-y-3 text-xs text-slate-700 overscroll-contain">
-            {/* Bild + Basisdaten */}
-            <div className="p-3 bg-slate-50 border border-slate-200 rounded-2xl flex items-center gap-3">
-              {existingItem.photo ? (
+            {/* Großes Gerätefoto + Basisdaten zur optimalen Erkennbarkeit */}
+            <div className="p-3 bg-slate-50 border border-slate-200 rounded-2xl space-y-2.5">
+              {existingItem.photo && enlargePhoto && (
                 <button
                   type="button"
-                  onClick={() => setEnlargePhoto((prev) => !prev)}
-                  className="shrink-0 focus:outline-hidden"
-                  title="Foto vergrößern"
+                  onClick={() => setEnlargePhoto(false)}
+                  className="w-full focus:outline-hidden"
+                  title="Foto verkleinern"
                 >
                   <img
                     src={existingItem.photo}
                     alt={existingItem.name}
-                    className={`${
-                      enlargePhoto ? 'w-36 h-36' : 'w-16 h-16'
-                    } rounded-xl object-cover border border-slate-200 bg-white shadow-2xs transition-all`}
+                    className="w-full max-h-64 rounded-2xl object-contain bg-white border border-slate-200 p-1 shadow-xs transition-all"
                   />
                 </button>
-              ) : (
-                <div
-                  className={`w-14 h-14 rounded-xl flex items-center justify-center shrink-0 border ${
-                    isZubehoer
-                      ? 'bg-indigo-50/70 border-indigo-100 text-[#3138A0]'
-                      : 'bg-emerald-50/70 border-emerald-100 text-[#2C7738]'
-                  }`}
-                >
-                  {isZubehoer ? <Package size={22} /> : <Wrench size={22} />}
-                </div>
               )}
 
-              <div className="flex-1 min-w-0 grid grid-cols-2 gap-x-3 gap-y-1.5 text-[11px]">
-                <div>
-                  <span className="text-slate-400 block">Funktionsbereich</span>
-                  <span className="font-bold text-slate-800 truncate block">
-                    {funcGroup.title}
-                  </span>
-                </div>
-                <div>
-                  <span className="text-slate-400 block">Bestand / Anzahl</span>
-                  <span className="font-bold text-slate-800">
-                    {existingItem.quantity ?? 1} Stk.
-                  </span>
-                </div>
-                {parentDevice && (
-                  <div className="col-span-2 pt-0.5">
-                    <span className="text-slate-400 block">Zugeordnetes Hauptgerät</span>
+              <div className="flex items-center gap-3">
+                {existingItem.photo ? (
+                  !enlargePhoto && (
                     <button
                       type="button"
-                      onClick={() => setSelectedEquipmentId(parentDevice.id)}
-                      className="font-bold text-[#3138A0] hover:underline flex items-center gap-1 text-left"
+                      onClick={() => setEnlargePhoto(true)}
+                      className="shrink-0 focus:outline-hidden"
+                      title="Gerätefoto groß anzeigen"
                     >
-                      <Link2 size={11} />
-                      <span>
-                        {parentDevice.name}
-                        {parentDevice.model ? ` (${parentDevice.model})` : ''}
-                      </span>
+                      <img
+                        src={existingItem.photo}
+                        alt={existingItem.name}
+                        className="w-24 h-24 rounded-2xl object-cover border border-slate-200 bg-white shadow-2xs transition-all"
+                      />
                     </button>
-                  </div>
+                  )
+                ) : (
+                  <label
+                    className={`w-24 h-24 rounded-2xl flex flex-col items-center justify-center shrink-0 border border-dashed cursor-pointer transition-colors ${
+                      isZubehoer
+                        ? 'bg-indigo-50/70 border-indigo-200 text-[#3138A0]'
+                        : 'bg-emerald-50/70 border-emerald-200 text-[#2C7738]'
+                    }`}
+                    title="Gerätefoto direkt aufnehmen"
+                  >
+                    <Camera size={22} />
+                    <span className="text-[10px] font-bold mt-1">Foto +</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      capture="environment"
+                      onChange={handlePhotoUpload}
+                      className="hidden"
+                    />
+                  </label>
                 )}
+
+                <div className="flex-1 min-w-0 grid grid-cols-2 gap-x-3 gap-y-2 text-[11px]">
+                  <div>
+                    <span className="text-slate-400 block">Funktionsbereich</span>
+                    <span className="font-bold text-slate-800 truncate block">
+                      {funcGroup.title}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-slate-400 block">Bestand / Anzahl</span>
+                    <span className="font-bold text-slate-800">
+                      {existingItem.quantity ?? 1} Stk.
+                    </span>
+                  </div>
+                  {parentDevice && (
+                    <div className="col-span-2 pt-0.5">
+                      <span className="text-slate-400 block">Zugeordnetes Hauptgerät</span>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedEquipmentId(parentDevice.id)}
+                        className="font-bold text-[#3138A0] hover:underline flex items-center gap-1 text-left"
+                      >
+                        <Link2 size={11} />
+                        <span>
+                          {parentDevice.name}
+                          {parentDevice.model ? ` (${parentDevice.model})` : ''}
+                        </span>
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
 
@@ -1083,17 +1112,17 @@ export const GeraetModal: React.FC = () => {
             />
           </div>
 
-          {/* 6. Profilfoto (kompakt) */}
-          <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-2xl flex items-center gap-2.5">
+          {/* 6. Gerätefoto (deutlich vergrößert zur besseren Erkennbarkeit) */}
+          <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-2xl flex items-center gap-3">
             {photo ? (
               <img
                 src={photo}
                 alt="Foto"
-                className="w-11 h-11 rounded-xl object-cover border border-slate-200 shrink-0"
+                className="w-16 h-16 rounded-2xl object-cover border border-slate-200 shrink-0 bg-white"
               />
             ) : (
-              <div className="w-11 h-11 rounded-xl bg-white border border-slate-200 flex items-center justify-center text-slate-400 shrink-0">
-                <Camera size={18} />
+              <div className="w-16 h-16 rounded-2xl bg-white border border-slate-200 flex items-center justify-center text-slate-400 shrink-0">
+                <Camera size={22} />
               </div>
             )}
 

@@ -24,9 +24,9 @@
   }
 
   /* Kalibriert für Google Pixel 10 Pro (6.3" Super Actua OLED, 1280×2856 px, ~412–428dp, 20:9):
-     Alle rem-basierten Schriften, Abstände, Buttons und Touch-Ziele skalieren harmonisch größer. */
+     Alle rem-basierten Schriften, Abstände, Buttons, Icons und Touch-Ziele skalieren harmonisch größer. */
   html {
-    font-size: clamp(16.5px, 4.25vw, 18px);
+    font-size: clamp(17.5px, 4.5vw, 19px);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
@@ -34,7 +34,7 @@
 
   @media (min-width: 640px) {
     html {
-      font-size: 17.5px;
+      font-size: 18.5px;
     }
   }
 
@@ -54,7 +54,7 @@
   input,
   select,
   textarea {
-    font-size: max(0.95rem, 16px);
+    font-size: max(0.96rem, 16.5px);
   }
 }
 
@@ -78,20 +78,20 @@
   visibility: hidden;
 }
 
-/* Klare Mindestschriftgrößen auf dem Pixel 10 Pro (ausgenommen A4-Rechnungsblattvorschau) */
+/* Leicht vergrößerte Mindestschriftgrößen auf dem Pixel 10 Pro (ausgenommen A4-Rechnungsblattvorschau) */
 .pixel-app-shell .text-\[9px\]:not(.invoice-a4-sheet):not(.invoice-a4-sheet *) {
-  font-size: 0.7rem;
-  line-height: 1.32;
+  font-size: 0.74rem;
+  line-height: 1.34;
 }
 
 .pixel-app-shell .text-\[10px\]:not(.invoice-a4-sheet):not(.invoice-a4-sheet *) {
-  font-size: 0.74rem;
-  line-height: 1.36;
+  font-size: 0.78rem;
+  line-height: 1.38;
 }
 
 .pixel-app-shell .text-\[11px\]:not(.invoice-a4-sheet):not(.invoice-a4-sheet *) {
-  font-size: 0.78rem;
-  line-height: 1.4;
+  font-size: 0.82rem;
+  line-height: 1.42;
 }
 
 /* Custom scrollbars that look sleek on mobile & desktop */

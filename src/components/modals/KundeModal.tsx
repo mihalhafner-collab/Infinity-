@@ -4,6 +4,7 @@ import {
   computeNextCustomerNumber,
   resolveCustomerNumber
 } from '../../utils/invoicePdf.ts';
+import { compressImageFile } from '../../utils/imageCompress.ts';
 import {
   X,
   User,
@@ -15,7 +16,9 @@ import {
   Trash2,
   Hash,
   Minus,
-  Plus
+  Plus,
+  Camera,
+  ImagePlus
 } from 'lucide-react';
 
 export const KundeModal: React.FC = () => {
@@ -39,6 +42,7 @@ export const KundeModal: React.FC = () => {
   const [customerNumber, setCustomerNumber] = useState('');
   const [name, setName] = useState('');
   const [company, setCompany] = useState('');
+  const [photo, setPhoto] = useState<string | null>(null);
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
   const [street, setStreet] = useState('');
@@ -63,6 +67,7 @@ export const KundeModal: React.FC = () => {
       );
       setName(existingCustomer.name || '');
       setCompany(existingCustomer.company || '');
+      setPhoto(existingCustomer.photo || null);
       setPhone(existingCustomer.phone || '');
       setEmail(existingCustomer.email || '');
       setStreet(existingCustomer.street || '');
@@ -79,6 +84,7 @@ export const KundeModal: React.FC = () => {
       setCustomerNumber(computeNextCustomerNumber(customers));
       setName('');
       setCompany('');
+      setPhoto(null);
       setPhone('');
       setEmail('');
       setStreet('');
@@ -95,6 +101,17 @@ export const KundeModal: React.FC = () => {
 
   const effectiveBillingId =
     hasDivergentBilling && billingCustomerId ? billingCustomerId : null;
+
+  const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const compressed = await compressImageFile(file, 640, 0.8);
+      setPhoto(compressed);
+    } finally {
+      e.target.value = '';
+    }
+  };
 
   const stepCustomerNum = (delta: number) => {
     const trimmed = customerNumber.trim();
@@ -122,6 +139,7 @@ export const KundeModal: React.FC = () => {
           : computeNextCustomerNumber(customers)),
       name: name.trim(),
       company: company.trim() || 'Privatkunde',
+      photo,
       phone: phone.trim(),
       email: email.trim(),
       street: street.trim(),
@@ -156,7 +174,7 @@ export const KundeModal: React.FC = () => {
               {isEditing ? 'Stammdaten bearbeiten' : 'Neuen Kunden anlegen'}
             </h2>
             <p className="text-[11px] text-slate-500">
-              Stammdaten, Kundennummer & Kontakt
+              Stammdaten, Profilbild, Kundennummer & Kontakt
             </p>
           </div>
           <button
@@ -169,6 +187,57 @@ export const KundeModal: React.FC = () => {
 
         {/* Form Body */}
         <div className="flex-1 overflow-y-auto py-3 space-y-3.5 text-xs text-slate-700">
+          {/* Profilbild direkt über Kamera oder Galerie */}
+          <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-2xl flex items-center gap-2.5">
+            {photo ? (
+              <img
+                src={photo}
+                alt="Profilbild"
+                className="w-12 h-12 rounded-2xl object-cover border border-slate-200 shrink-0 bg-white"
+              />
+            ) : (
+              <div className="w-12 h-12 rounded-2xl bg-indigo-50 border border-indigo-100 flex items-center justify-center text-[#3138A0] font-bold text-xs shrink-0">
+                {name.trim() ? name.trim().slice(0, 2).toUpperCase() : <User size={18} />}
+              </div>
+            )}
+
+            <div className="flex-1 flex items-center gap-1.5">
+              <label className="flex-1 h-10 px-2.5 bg-white hover:bg-slate-100 border border-slate-200 text-slate-800 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs">
+                <Camera size={14} className="text-[#3138A0]" />
+                <span>Kamera</span>
+                <input
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  onChange={handlePhotoUpload}
+                  className="hidden"
+                />
+              </label>
+
+              <label className="flex-1 h-10 px-2.5 bg-white hover:bg-slate-100 border border-slate-200 text-slate-800 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs">
+                <ImagePlus size={14} className="text-[#3138A0]" />
+                <span>Galerie</span>
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={handlePhotoUpload}
+                  className="hidden"
+                />
+              </label>
+
+              {photo && (
+                <button
+                  type="button"
+                  onClick={() => setPhoto(null)}
+                  className="w-10 h-10 bg-red-50 hover:bg-red-100 text-[#B42318] rounded-xl flex items-center justify-center shrink-0"
+                  title="Profilbild entfernen"
+                >
+                  <Trash2 size={14} />
+                </button>
+              )}
+            </div>
+          </div>
+
           <div className="grid grid-cols-12 gap-2">
             <div className="col-span-8">
               <label className="font-semibold text-slate-700 block mb-1 flex items-center gap-1">

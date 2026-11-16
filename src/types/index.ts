@@ -26,6 +26,7 @@ export interface Customer {
   customer_number?: string;
   name: string;
   company?: string;
+  photo?: string | null;
   phone: string;
   email: string;
   street: string;
