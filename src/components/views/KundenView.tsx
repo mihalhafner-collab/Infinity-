@@ -36,6 +36,7 @@ import {
   Trash2,
   Layers
 } from 'lucide-react';
+import { Customer } from '../../types/index.ts';
 import { compressImageFile } from '../../utils/imageCompress.ts';
 import {
   formatDateDE,
@@ -121,6 +122,12 @@ export const KundenView: React.FC = () => {
   const [allInvoicesExpanded, setAllInvoicesExpanded] = useState(true);
   const [confirmDeleteCustomer, setConfirmDeleteCustomer] = useState(false);
   const [previewPhoto, setPreviewPhoto] = useState<string | null>(null);
+  const [photoSourceCustomer, setPhotoSourceCustomer] = useState<Customer | null>(null);
+  const [previewCustomerPhoto, setPreviewCustomerPhoto] = useState<{
+    customerId: string;
+    src: string;
+    name: string;
+  } | null>(null);
   const [showCombinedAmounts, setShowCombinedAmounts] = useState(false);
   const [workStatusFilter, setWorkStatusFilter] = useState<'all' | 'open' | 'billed' | 'lcr'>('all');
   const [appointmentFilter, setAppointmentFilter] = useState<'all' | 'upcoming' | 'past'>('all');
@@ -133,6 +140,141 @@ export const KundenView: React.FC = () => {
 
   usePixelBackLayer(confirmDeleteCustomer, () => setConfirmDeleteCustomer(false));
   usePixelBackLayer(Boolean(previewPhoto), () => setPreviewPhoto(null));
+  usePixelBackLayer(Boolean(photoSourceCustomer), () => setPhotoSourceCustomer(null));
+  usePixelBackLayer(Boolean(previewCustomerPhoto), () => setPreviewCustomerPhoto(null));
+
+  const handleCustomerPhotoUpload = async (
+    customerId: string,
+    e: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const compressed = await compressImageFile(file, 640, 0.8);
+      updateCustomer(customerId, { photo: compressed });
+      setPhotoSourceCustomer(null);
+      setPreviewCustomerPhoto((prev) =>
+        prev && prev.customerId === customerId ? { ...prev, src: compressed } : prev
+      );
+    } finally {
+      e.target.value = '';
+    }
+  };
+
+  const customerPhotoOverlays = (
+    <>
+      {photoSourceCustomer && (
+        <div className="absolute inset-0 z-50 bg-black/45 backdrop-blur-2xs flex flex-col justify-end animate-fade-in">
+          <div className="flex-1" onClick={() => setPhotoSourceCustomer(null)} />
+          <div className="bg-white rounded-t-3xl border-t border-slate-200 shadow-2xl p-4 space-y-3 animate-slide-up">
+            <div className="w-11 h-1.5 bg-slate-300 rounded-full mx-auto -mt-1" />
+            <div className="flex items-center justify-between">
+              <div className="min-w-0">
+                <h3 className="text-base font-bold text-slate-950 truncate">
+                  Profilbild hinzufügen
+                </h3>
+                <p className="text-xs text-slate-600 truncate">{photoSourceCustomer.name}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPhotoSourceCustomer(null)}
+                className="w-10 h-10 rounded-full hover:bg-slate-100 flex items-center justify-center text-slate-600"
+                aria-label="Schließen"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="space-y-2 pt-1">
+              <label className="w-full h-12 px-4 bg-[#3138A0] hover:bg-[#272d82] active:scale-98 text-white font-bold rounded-2xl text-sm flex items-center justify-center gap-2.5 shadow-xs transition-all cursor-pointer">
+                <Camera size={18} />
+                <span>Mit Kamera aufnehmen</span>
+                <input
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  onChange={(e) => handleCustomerPhotoUpload(photoSourceCustomer.id, e)}
+                  className="hidden"
+                />
+              </label>
+
+              <label className="w-full h-12 px-4 bg-slate-100 hover:bg-slate-200 active:scale-98 text-slate-900 font-bold rounded-2xl text-sm flex items-center justify-center gap-2.5 transition-all cursor-pointer">
+                <ImagePlus size={18} className="text-[#3138A0]" />
+                <span>Aus Galerie wählen</span>
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => handleCustomerPhotoUpload(photoSourceCustomer.id, e)}
+                  className="hidden"
+                />
+              </label>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {previewCustomerPhoto && (
+        <div
+          onClick={() => setPreviewCustomerPhoto(null)}
+          className="absolute inset-0 z-50 bg-black/85 flex flex-col items-center justify-center p-4 animate-fade-in"
+        >
+          <button
+            type="button"
+            onClick={() => setPreviewCustomerPhoto(null)}
+            className="absolute top-4 right-4 w-11 h-11 rounded-full bg-white/15 text-white flex items-center justify-center hover:bg-white/25 transition-colors"
+            aria-label="Schließen"
+          >
+            <X size={22} />
+          </button>
+          <img
+            src={previewCustomerPhoto.src}
+            alt={previewCustomerPhoto.name}
+            className="max-w-full max-h-[65%] rounded-2xl object-contain shadow-2xl"
+          />
+          <span className="mt-3 text-base font-bold text-white">{previewCustomerPhoto.name}</span>
+
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="mt-4 flex items-center gap-2 w-full max-w-[340px]"
+          >
+            <label className="flex-1 h-11 px-3 bg-[#3138A0] hover:bg-[#272d82] text-white font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 cursor-pointer shadow-md transition-colors">
+              <Camera size={15} />
+              <span>Kamera</span>
+              <input
+                type="file"
+                accept="image/*"
+                capture="environment"
+                onChange={(e) => handleCustomerPhotoUpload(previewCustomerPhoto.customerId, e)}
+                className="hidden"
+              />
+            </label>
+            <label className="flex-1 h-11 px-3 bg-white/15 hover:bg-white/25 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 cursor-pointer transition-colors">
+              <ImagePlus size={15} />
+              <span>Galerie</span>
+              <input
+                type="file"
+                accept="image/*"
+                onChange={(e) => handleCustomerPhotoUpload(previewCustomerPhoto.customerId, e)}
+                className="hidden"
+              />
+            </label>
+            <button
+              type="button"
+              onClick={() => {
+                updateCustomer(previewCustomerPhoto.customerId, { photo: null });
+                setPreviewCustomerPhoto(null);
+              }}
+              className="w-11 h-11 bg-red-500/80 hover:bg-red-600 text-white rounded-xl flex items-center justify-center shrink-0 transition-colors"
+              title="Profilbild entfernen"
+              aria-label="Profilbild entfernen"
+            >
+              <Trash2 size={16} />
+            </button>
+          </div>
+        </div>
+      )}
+    </>
+  );
 
   useEffect(() => {
     setConfirmDeleteCustomer(false);
@@ -211,7 +353,7 @@ export const KundenView: React.FC = () => {
           title="Kunden"
           subtitle={
             customers.length > 0
-              ? `${filteredCustomerList.length} von ${customers.length} Kunden · Weit nach links wischen löscht`
+              ? `${filteredCustomerList.length} von ${customers.length} Kunden · Profilbild antippen für Foto`
               : '0 Kunden'
           }
         />
@@ -274,13 +416,46 @@ export const KundenView: React.FC = () => {
                       setActiveTab('objekte');
                       setSelectedCustomerId(c.id);
                     }}
-                    className="p-3 bg-white border border-slate-200 rounded-2xl shadow-2xs hover:border-[#3138A0] active:bg-slate-50 transition-colors cursor-pointer flex items-center justify-between gap-2"
+                    className="p-3 bg-white border border-slate-200 rounded-2xl shadow-2xs hover:border-[#3138A0] active:bg-slate-50 transition-colors cursor-pointer flex items-center justify-between gap-2.5"
                   >
-                    {/* Linker Informationsbereich: Avatar + Name + Status-Badges + Adresse */}
-                    <div className="flex items-start gap-2.5 min-w-0 flex-1">
-                      <div className="w-10 h-10 rounded-xl bg-indigo-50 border border-indigo-100 flex items-center justify-center text-[#3138A0] font-bold text-xs shrink-0 mt-0.5">
-                        {c.name.slice(0, 2).toUpperCase()}
-                      </div>
+                    {/* Linker Informationsbereich: Direktes Profilbild (Kamera/Galerie) + Name + Status + Adresse */}
+                    <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                      {c.photo ? (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setPreviewCustomerPhoto({
+                              customerId: c.id,
+                              src: c.photo!,
+                              name: c.name
+                            });
+                          }}
+                          className="w-12 h-12 rounded-2xl overflow-hidden border border-slate-200 shrink-0 bg-slate-100 shadow-2xs"
+                          title="Profilbild vergrößern oder ändern"
+                        >
+                          <img
+                            src={c.photo}
+                            alt={c.name}
+                            className="w-full h-full object-cover"
+                          />
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setPhotoSourceCustomer(c);
+                          }}
+                          className="w-12 h-12 rounded-2xl bg-indigo-50/80 hover:bg-indigo-100 border border-dashed border-indigo-200 flex flex-col items-center justify-center text-[#3138A0] shrink-0 transition-colors relative"
+                          title="Profilbild direkt über Kamera oder Galerie hinzufügen"
+                        >
+                          <span className="font-bold text-xs leading-none">
+                            {c.name.slice(0, 2).toUpperCase()}
+                          </span>
+                          <Camera size={11} className="mt-0.5 opacity-80" />
+                        </button>
+                      )}
 
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-1.5 flex-wrap">
@@ -387,6 +562,8 @@ export const KundenView: React.FC = () => {
             })
           )}
         </div>
+
+        {customerPhotoOverlays}
 
         {/* Untere Leiste fixiert (Pixel 10 Pro Daumenzone: Schnellfilter direkt links neben Lupe & Plus) */}
         <div className="shrink-0 w-full mt-auto bg-white border-t border-slate-200/80 z-20 shadow-md">
@@ -655,23 +832,58 @@ export const KundenView: React.FC = () => {
         {/* Kompakte, übersichtliche Kunden-Kurzinfo am Kopf der Kundenakte */}
         <div className="p-3 bg-white border border-slate-200 rounded-2xl shadow-2xs space-y-2">
           <div className="flex items-start justify-between gap-2">
-            <div className="min-w-0">
-              <div className="flex items-center gap-1.5 flex-wrap">
-                <span className="px-1.5 py-0.5 rounded-md bg-slate-100 text-slate-700 text-[10px] font-mono font-bold">
-                  Kd.-Nr. {currentCustomer.customer_number?.trim() || resolveCustomerNumber(currentCustomer.id, customers)}
-                </span>
-                <span className="text-xs font-bold text-slate-900 truncate">
-                  {customerFullAddress || 'Keine Rechnungsanschrift hinterlegt'}
-                </span>
-                {divergentRecipient && (
-                  <span className="px-1.5 py-0.5 rounded-md bg-indigo-50 text-[#3138A0] text-[10px] font-bold">
-                    Sub → {divergentRecipient.name}
+            <div className="flex items-center gap-2.5 min-w-0">
+              {currentCustomer.photo ? (
+                <button
+                  type="button"
+                  onClick={() =>
+                    setPreviewCustomerPhoto({
+                      customerId: currentCustomer.id,
+                      src: currentCustomer.photo!,
+                      name: currentCustomer.name
+                    })
+                  }
+                  className="w-12 h-12 rounded-2xl overflow-hidden border border-slate-200 shrink-0 bg-slate-100 shadow-2xs"
+                  title="Profilbild vergrößern oder ändern"
+                >
+                  <img
+                    src={currentCustomer.photo}
+                    alt={currentCustomer.name}
+                    className="w-full h-full object-cover"
+                  />
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setPhotoSourceCustomer(currentCustomer)}
+                  className="w-12 h-12 rounded-2xl bg-indigo-50/80 hover:bg-indigo-100 border border-dashed border-indigo-200 flex flex-col items-center justify-center text-[#3138A0] shrink-0 transition-colors"
+                  title="Profilbild direkt über Kamera oder Galerie hinzufügen"
+                >
+                  <span className="font-bold text-xs leading-none">
+                    {currentCustomer.name.slice(0, 2).toUpperCase()}
                   </span>
-                )}
-              </div>
-              <div className="text-[11px] text-slate-500 mt-0.5 flex items-center gap-2 flex-wrap">
-                <span>Tel.: {currentCustomer.phone || '–'}</span>
-                {currentCustomer.email && <span>· {currentCustomer.email}</span>}
+                  <Camera size={11} className="mt-0.5 opacity-80" />
+                </button>
+              )}
+
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="px-1.5 py-0.5 rounded-md bg-slate-100 text-slate-700 text-[10px] font-mono font-bold">
+                    Kd.-Nr. {currentCustomer.customer_number?.trim() || resolveCustomerNumber(currentCustomer.id, customers)}
+                  </span>
+                  <span className="text-xs font-bold text-slate-900 truncate">
+                    {customerFullAddress || 'Keine Rechnungsanschrift hinterlegt'}
+                  </span>
+                  {divergentRecipient && (
+                    <span className="px-1.5 py-0.5 rounded-md bg-indigo-50 text-[#3138A0] text-[10px] font-bold">
+                      Sub → {divergentRecipient.name}
+                    </span>
+                  )}
+                </div>
+                <div className="text-[11px] text-slate-500 mt-0.5 flex items-center gap-2 flex-wrap">
+                  <span>Tel.: {currentCustomer.phone || '–'}</span>
+                  {currentCustomer.email && <span>· {currentCustomer.email}</span>}
+                </div>
               </div>
             </div>
 
@@ -2009,6 +2221,8 @@ export const KundenView: React.FC = () => {
           </div>
         )}
       </div>
+
+      {customerPhotoOverlays}
 
       {/* Fullscreen Photo Preview inside PixelFrame */}
       {previewPhoto && (

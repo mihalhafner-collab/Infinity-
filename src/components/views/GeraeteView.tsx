@@ -157,7 +157,7 @@ export const GeraeteView: React.FC = () => {
     const file = e.target.files?.[0];
     if (!file) return;
     try {
-      const compressed = await compressImageFile(file, 480, 0.76);
+      const compressed = await compressImageFile(file, 760, 0.82);
       updateEquipment(eqId, { photo: compressed });
       setPhotoSourceEq(null);
       setPreviewPhoto((prev) =>
@@ -230,7 +230,7 @@ export const GeraeteView: React.FC = () => {
                 </span>
               </div>
 
-              <div className="space-y-1.5">
+              <div className="space-y-2">
                 {group.items.map((eq) => {
                   const isZubehoer = eq.item_type === 'zubehoer';
                   const isDue = !isZubehoer && eq.status === 'faellig';
@@ -251,10 +251,10 @@ export const GeraeteView: React.FC = () => {
                     >
                       <div
                         onClick={() => handleOpenDetail(eq.id)}
-                        className="px-3 py-2.5 bg-white border border-slate-200 hover:border-[#3138A0]/50 active:bg-slate-50/70 rounded-2xl shadow-2xs transition-colors cursor-pointer flex items-center justify-between gap-2.5"
+                        className="p-3 bg-white border border-slate-200 hover:border-[#3138A0]/50 active:bg-slate-50/70 rounded-2xl shadow-2xs transition-colors cursor-pointer flex items-center justify-between gap-3"
                       >
-                        <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                          {/* Profilfoto (Antippen öffnet Foto-Vorschau / Kamera) */}
+                        <div className="flex items-center gap-3 min-w-0 flex-1">
+                          {/* Deutlich vergrößertes Gerätefoto zur besseren Erkennbarkeit */}
                           {eq.photo ? (
                             <button
                               type="button"
@@ -266,8 +266,8 @@ export const GeraeteView: React.FC = () => {
                                   title: eq.name
                                 });
                               }}
-                              className="w-11 h-11 rounded-xl overflow-hidden border border-slate-200 shrink-0 bg-slate-100 shadow-2xs"
-                              title="Foto vergrößern"
+                              className="w-16 h-16 rounded-2xl overflow-hidden border border-slate-200 shrink-0 bg-white shadow-2xs"
+                              title="Gerätefoto vergrößern"
                             >
                               <img
                                 src={eq.photo}
@@ -282,34 +282,34 @@ export const GeraeteView: React.FC = () => {
                                 e.stopPropagation();
                                 setPhotoSourceEq(eq);
                               }}
-                              className={`w-11 h-11 rounded-xl border border-dashed flex flex-col items-center justify-center shrink-0 transition-colors ${
+                              className={`w-16 h-16 rounded-2xl border border-dashed flex flex-col items-center justify-center shrink-0 transition-colors ${
                                 isZubehoer
                                   ? 'bg-indigo-50/50 border-indigo-200 text-[#3138A0]'
                                   : isDue
                                     ? 'bg-fuchsia-50 border-fuchsia-200 text-[#9A1B8D]'
                                     : 'bg-emerald-50/60 border-emerald-200 text-[#2C7738]'
                               }`}
-                              title="Foto hinzufügen"
+                              title="Gerätefoto hinzufügen"
                             >
-                              <Camera size={14} />
-                              <span className="text-[8px] font-bold mt-0.5">Foto</span>
+                              <Camera size={18} />
+                              <span className="text-[9px] font-bold mt-0.5">Foto</span>
                             </button>
                           )}
 
                           {/* Kompakte Hauptinfo (Details erst nach Antippen) */}
                           <div className="min-w-0 flex-1">
-                            <h3 className="text-sm font-bold text-slate-900 leading-tight truncate">
+                            <h3 className="text-sm font-bold text-slate-900 leading-snug truncate">
                               {eq.name}
                             </h3>
 
                             {eq.model && (
-                              <p className="text-xs font-medium text-slate-500 truncate mt-0.5">
+                              <p className="text-xs font-medium text-slate-600 truncate mt-0.5">
                                 {eq.model}
                               </p>
                             )}
 
                             {/* Status, Bestand & Wartungstermin kompakt in einer Zeile */}
-                            <div className="flex items-center gap-1.5 flex-wrap mt-1">
+                            <div className="flex items-center gap-1.5 flex-wrap mt-1.5">
                               {!isZubehoer ? (
                                 <span
                                   className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md ${
@@ -348,7 +348,7 @@ export const GeraeteView: React.FC = () => {
 
                               {!isZubehoer && eq.next_maintenance && (
                                 <span className="text-[11px] text-slate-500 inline-flex items-center gap-1 tabular-nums">
-                                  <Calendar size={10} className="text-slate-400" />
+                                  <Calendar size={11} className="text-slate-400" />
                                   <span>{eq.next_maintenance}</span>
                                 </span>
                               )}
@@ -369,7 +369,7 @@ export const GeraeteView: React.FC = () => {
                           </div>
                         </div>
 
-                        <ChevronRight size={17} className="text-slate-400 shrink-0" />
+                        <ChevronRight size={18} className="text-slate-400 shrink-0" />
                       </div>
                     </SwipeToDeleteRow>
                   );
@@ -389,7 +389,7 @@ export const GeraeteView: React.FC = () => {
             <div className="flex items-center justify-between">
               <div className="min-w-0">
                 <h3 className="text-base font-bold text-slate-950 truncate">
-                  Profilfoto hinzufügen
+                  Gerätefoto hinzufügen
                 </h3>
                 <p className="text-xs text-slate-600 truncate">{photoSourceEq.name}</p>
               </div>
@@ -448,7 +448,7 @@ export const GeraeteView: React.FC = () => {
           <img
             src={previewPhoto.src}
             alt={previewPhoto.title}
-            className="max-w-full max-h-[68%] rounded-2xl object-contain shadow-2xl"
+            className="w-full max-h-[74%] rounded-2xl object-contain bg-white/5 shadow-2xl"
           />
           <span className="mt-3 text-base font-bold text-white">{previewPhoto.title}</span>
 
