@@ -20,8 +20,7 @@ import { Equipment } from '../../types/index.ts';
 import { compressImageFile } from '../../utils/imageCompress.ts';
 import {
   getCategoryLabel,
-  getFunctionalGroupInfo,
-  getSpecFieldLabel
+  getFunctionalGroupInfo
 } from '../../utils/equipmentConfig.ts';
 
 export const GeraeteView: React.FC = () => {
@@ -169,29 +168,6 @@ export const GeraeteView: React.FC = () => {
     }
   };
 
-  const renderSpecBadges = (eq: Equipment) => {
-    const specMap = eq.specs || {};
-    const entries = Object.entries(specMap).filter(([, val]) => val && String(val).trim().length > 0);
-    if (entries.length === 0) return null;
-
-    return (
-      <div className="flex flex-wrap gap-1 pt-0.5">
-        {entries.map(([key, val]) => {
-          const shortLabel = getSpecFieldLabel(key, eq.category);
-          return (
-            <span
-              key={key}
-              className="px-2 py-0.5 rounded-md text-[11px] bg-slate-50 border border-slate-200/90 text-slate-700 font-medium inline-flex items-center gap-1"
-            >
-              <span className="text-[10px] text-slate-400 font-semibold">{shortLabel}:</span>
-              <span className="font-semibold text-slate-800">{val}</span>
-            </span>
-          );
-        })}
-      </div>
-    );
-  };
-
   return (
     <div className="flex-1 min-h-0 flex flex-col h-full bg-[#F8F9FA] overflow-hidden relative">
       <Header
@@ -205,7 +181,7 @@ export const GeraeteView: React.FC = () => {
       {/* Content List */}
       <div
         ref={scrollRef}
-        className="flex-1 min-h-0 overflow-y-auto px-3.5 py-3 space-y-4 overscroll-contain"
+        className="flex-1 min-h-0 overflow-y-auto px-3.5 py-2.5 space-y-3.5 overscroll-contain"
       >
         {groupedByFunction.length === 0 ? (
           <div className="p-6 bg-white border border-slate-200 rounded-2xl text-center space-y-3 shadow-2xs">
@@ -243,24 +219,18 @@ export const GeraeteView: React.FC = () => {
           </div>
         ) : (
           groupedByFunction.map((group) => (
-            <div key={group.key} className="space-y-2">
-              {/* Funktions- & Kategorie-Überschrift */}
-              <div className="flex items-center justify-between px-1">
-                <div className="flex items-center gap-1.5 min-w-0">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-[#3138A0] shrink-0">
-                    {group.functionTitle}
-                  </span>
-                  <span className="text-slate-300">·</span>
-                  <span className="text-xs font-bold text-slate-700 truncate">
-                    {group.categoryLabel}
-                  </span>
-                </div>
-                <span className="text-[11px] font-semibold text-slate-400 tabular-nums shrink-0">
+            <div key={group.key} className="space-y-1.5">
+              {/* Klare, einzeilige Funktions-Überschrift */}
+              <div className="flex items-center justify-between px-1 pt-0.5">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-[#3138A0] truncate">
+                  {group.categoryLabel}
+                </span>
+                <span className="px-1.5 py-0.5 rounded-md bg-slate-200/70 text-[10px] font-bold text-slate-600 tabular-nums shrink-0">
                   {group.items.length}
                 </span>
               </div>
 
-              <div className="space-y-2">
+              <div className="space-y-1.5">
                 {group.items.map((eq) => {
                   const isZubehoer = eq.item_type === 'zubehoer';
                   const isDue = !isZubehoer && eq.status === 'faellig';
@@ -281,139 +251,125 @@ export const GeraeteView: React.FC = () => {
                     >
                       <div
                         onClick={() => handleOpenDetail(eq.id)}
-                        className="p-3 bg-white border border-slate-200 hover:border-[#3138A0]/50 active:bg-slate-50/70 rounded-2xl shadow-2xs transition-colors cursor-pointer space-y-2"
+                        className="px-3 py-2.5 bg-white border border-slate-200 hover:border-[#3138A0]/50 active:bg-slate-50/70 rounded-2xl shadow-2xs transition-colors cursor-pointer flex items-center justify-between gap-2.5"
                       >
-                        <div className="flex items-start justify-between gap-2.5">
-                          <div className="flex items-start gap-2.5 min-w-0 flex-1">
-                            {/* Profilfoto (Antippen öffnet Foto-Vorschau / Kamera) */}
-                            {eq.photo ? (
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setPreviewPhoto({
-                                    eqId: eq.id,
-                                    src: eq.photo!,
-                                    title: eq.name
-                                  });
-                                }}
-                                className="w-12 h-12 rounded-xl overflow-hidden border border-slate-200 shrink-0 bg-slate-100 shadow-2xs"
-                                title="Foto vergrößern"
-                              >
-                                <img
-                                  src={eq.photo}
-                                  alt={eq.name}
-                                  className="w-full h-full object-cover"
-                                />
-                              </button>
-                            ) : (
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setPhotoSourceEq(eq);
-                                }}
-                                className={`w-12 h-12 rounded-xl border border-dashed flex flex-col items-center justify-center shrink-0 transition-colors ${
-                                  isZubehoer
-                                    ? 'bg-indigo-50/50 border-indigo-200 text-[#3138A0]'
-                                    : isDue
-                                      ? 'bg-fuchsia-50 border-fuchsia-200 text-[#9A1B8D]'
-                                      : 'bg-emerald-50/60 border-emerald-200 text-[#2C7738]'
-                                }`}
-                                title="Foto hinzufügen"
-                              >
-                                <Camera size={15} />
-                                <span className="text-[8px] font-bold mt-0.5">Foto</span>
-                              </button>
+                        <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                          {/* Profilfoto (Antippen öffnet Foto-Vorschau / Kamera) */}
+                          {eq.photo ? (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setPreviewPhoto({
+                                  eqId: eq.id,
+                                  src: eq.photo!,
+                                  title: eq.name
+                                });
+                              }}
+                              className="w-11 h-11 rounded-xl overflow-hidden border border-slate-200 shrink-0 bg-slate-100 shadow-2xs"
+                              title="Foto vergrößern"
+                            >
+                              <img
+                                src={eq.photo}
+                                alt={eq.name}
+                                className="w-full h-full object-cover"
+                              />
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setPhotoSourceEq(eq);
+                              }}
+                              className={`w-11 h-11 rounded-xl border border-dashed flex flex-col items-center justify-center shrink-0 transition-colors ${
+                                isZubehoer
+                                  ? 'bg-indigo-50/50 border-indigo-200 text-[#3138A0]'
+                                  : isDue
+                                    ? 'bg-fuchsia-50 border-fuchsia-200 text-[#9A1B8D]'
+                                    : 'bg-emerald-50/60 border-emerald-200 text-[#2C7738]'
+                              }`}
+                              title="Foto hinzufügen"
+                            >
+                              <Camera size={14} />
+                              <span className="text-[8px] font-bold mt-0.5">Foto</span>
+                            </button>
+                          )}
+
+                          {/* Kompakte Hauptinfo (Details erst nach Antippen) */}
+                          <div className="min-w-0 flex-1">
+                            <h3 className="text-sm font-bold text-slate-900 leading-tight truncate">
+                              {eq.name}
+                            </h3>
+
+                            {eq.model && (
+                              <p className="text-xs font-medium text-slate-500 truncate mt-0.5">
+                                {eq.model}
+                              </p>
                             )}
 
-                            {/* Hauptinfo */}
-                            <div className="min-w-0 flex-1">
-                              <div className="flex items-start justify-between gap-2">
-                                <h3 className="text-sm font-bold text-slate-900 leading-snug">
-                                  {eq.name}
-                                </h3>
-                              </div>
-
-                              {eq.model && (
-                                <p className="text-xs font-medium text-slate-600 mt-0.5">
-                                  {eq.model}
-                                </p>
+                            {/* Status, Bestand & Wartungstermin kompakt in einer Zeile */}
+                            <div className="flex items-center gap-1.5 flex-wrap mt-1">
+                              {!isZubehoer ? (
+                                <span
+                                  className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md ${
+                                    isDue
+                                      ? 'bg-fuchsia-50 text-[#9A1B8D]'
+                                      : isInMaint
+                                        ? 'bg-amber-50 text-[#B4470B]'
+                                        : 'bg-emerald-50 text-[#2C7738]'
+                                  }`}
+                                >
+                                  {isDue
+                                    ? 'Wartung fällig'
+                                    : isInMaint
+                                      ? 'In Wartung'
+                                      : 'Einsatzbereit'}
+                                </span>
+                              ) : (
+                                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-indigo-50 text-[#3138A0]">
+                                  Zubehör
+                                </span>
                               )}
 
-                              {/* Status, Bestand & Wartungstermin kompakt in einer Zeile */}
-                              <div className="flex items-center gap-1.5 flex-wrap mt-1">
-                                {!isZubehoer ? (
+                              {eq.quantity !== null &&
+                                eq.quantity !== undefined &&
+                                (isZubehoer || eq.quantity > 1) && (
                                   <span
-                                    className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md ${
-                                      isDue
-                                        ? 'bg-fuchsia-50 text-[#9A1B8D]'
-                                        : isInMaint
-                                          ? 'bg-amber-50 text-[#B4470B]'
-                                          : 'bg-emerald-50 text-[#2C7738]'
+                                    className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md tabular-nums ${
+                                      eq.quantity === 0
+                                        ? 'bg-red-50 text-[#B42318]'
+                                        : 'bg-slate-100 text-slate-700'
                                     }`}
                                   >
-                                    {isDue
-                                      ? 'Wartung fällig'
-                                      : isInMaint
-                                        ? 'In Wartung'
-                                        : 'Einsatzbereit'}
-                                  </span>
-                                ) : (
-                                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-indigo-50 text-[#3138A0]">
-                                    Zubehör
+                                    {eq.quantity} Stk.
                                   </span>
                                 )}
 
-                                {eq.quantity !== null &&
-                                  eq.quantity !== undefined &&
-                                  (isZubehoer || eq.quantity > 1) && (
-                                    <span
-                                      className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md tabular-nums ${
-                                        eq.quantity === 0
-                                          ? 'bg-red-50 text-[#B42318]'
-                                          : 'bg-slate-100 text-slate-700'
-                                      }`}
-                                    >
-                                      {eq.quantity} Stk.
-                                    </span>
-                                  )}
+                              {!isZubehoer && eq.next_maintenance && (
+                                <span className="text-[11px] text-slate-500 inline-flex items-center gap-1 tabular-nums">
+                                  <Calendar size={10} className="text-slate-400" />
+                                  <span>{eq.next_maintenance}</span>
+                                </span>
+                              )}
 
-                                {!isZubehoer && eq.next_maintenance && (
-                                  <span className="text-[11px] text-slate-500 inline-flex items-center gap-1 tabular-nums">
-                                    <Calendar size={11} className="text-slate-400" />
-                                    <span>{eq.next_maintenance}</span>
-                                  </span>
-                                )}
-
-                                {linkedAccessories.length > 0 && (
-                                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-indigo-50 text-[#3138A0]">
-                                    +{linkedAccessories.length} Zubehör
-                                  </span>
-                                )}
-                              </div>
+                              {linkedAccessories.length > 0 && (
+                                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-indigo-50 text-[#3138A0]">
+                                  +{linkedAccessories.length} Zubehör
+                                </span>
+                              )}
 
                               {parentGeraet && (
-                                <p className="text-[11px] font-semibold text-[#3138A0] flex items-center gap-1 mt-1 truncate">
-                                  <Link2 size={11} className="shrink-0" />
-                                  <span className="truncate">Zu: {parentGeraet.name}</span>
-                                </p>
+                                <span className="text-[10px] font-semibold text-[#3138A0] inline-flex items-center gap-0.5 truncate max-w-[150px]">
+                                  <Link2 size={10} className="shrink-0" />
+                                  <span className="truncate">{parentGeraet.name}</span>
+                                </span>
                               )}
                             </div>
                           </div>
-
-                          <ChevronRight size={17} className="text-slate-400 shrink-0 mt-1" />
                         </div>
 
-                        {/* Technische Parameter (übersichtliche Badges) */}
-                        {renderSpecBadges(eq)}
-
-                        {/* Notiz / Lagerort falls vorhanden */}
-                        {eq.notes && (
-                          <p className="text-[11px] text-slate-600 bg-slate-50 px-2.5 py-1.5 rounded-xl border border-slate-100 line-clamp-2">
-                            {eq.notes}
-                          </p>
-                        )}
+                        <ChevronRight size={17} className="text-slate-400 shrink-0" />
                       </div>
                     </SwipeToDeleteRow>
                   );
@@ -538,7 +494,7 @@ export const GeraeteView: React.FC = () => {
                   : 'bg-slate-50 text-slate-600 border-slate-200'
               }`}
             >
-              Alle Funktionen
+              Alle Kategorien
             </button>
             {usedCategoryIds.map((catId) => (
               <button
@@ -621,3 +577,4 @@ export const GeraeteView: React.FC = () => {
     </div>
   );
 };
+
