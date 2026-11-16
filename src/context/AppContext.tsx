@@ -731,6 +731,44 @@ export const AppProvider: React.FC<{
     );
   };
 
+  const nextMonotonicIso = (prevIso?: string | null): string => {
+    const nowMs = Date.now();
+    if (!prevIso || typeof prevIso !== 'string') {
+      return new Date(nowMs).toISOString();
+    }
+    const parsed = Date.parse(prevIso);
+    if (Number.isNaN(parsed)) {
+      return new Date(nowMs).toISOString();
+    }
+    return new Date(Math.max(nowMs, parsed + 1)).toISOString();
+  };
+
+  const preserveMediaIfSameTimestamp = <T extends Record<string, unknown>>(
+    winner: T,
+    other: T,
+    sameTime: boolean
+  ): T => {
+    if (!sameTime) return winner;
+    let patched: T = winner;
+    if (
+      ('photo' in other || 'photo' in winner) &&
+      (!winner.photo || typeof winner.photo !== 'string') &&
+      typeof other.photo === 'string' &&
+      other.photo.length > 0
+    ) {
+      patched = { ...patched, photo: other.photo };
+    }
+    if (
+      ('photos' in other || 'photos' in winner) &&
+      (!Array.isArray(winner.photos) || winner.photos.length === 0) &&
+      Array.isArray(other.photos) &&
+      other.photos.length > 0
+    ) {
+      patched = { ...patched, photos: other.photos };
+    }
+    return patched;
+  };
+
   const mergeCollectionById = <T extends { id: string; updated_at?: string }>(
     baseArr: T[] | undefined,
     primaryArr: T[] | undefined,
@@ -752,8 +790,11 @@ export const AppProvider: React.FC<{
         } else {
           const baseTime = existing.updated_at || '';
           const primTime = item.updated_at || '';
+          const sameTime = baseTime === primTime;
           if (!baseTime || (primTime && primTime >= baseTime)) {
-            map.set(item.id, item);
+            map.set(item.id, preserveMediaIfSameTimestamp(item, existing, sameTime));
+          } else {
+            map.set(item.id, preserveMediaIfSameTimestamp(existing, item, sameTime));
           }
         }
       }
@@ -1047,7 +1088,6 @@ export const AppProvider: React.FC<{
     }
     updateSyncMeta({ syncInFlight: true });
     try {
-      const localSnap = latestSnapshotRef.current;
       const store = await fetchBestRemoteStoreForWeb();
       if (!store) {
         updateSyncMeta({
@@ -1057,6 +1097,7 @@ export const AppProvider: React.FC<{
         return;
       }
 
+      const localSnap = latestSnapshotRef.current;
       const hasLocalData = hasAnySnapshotRecords(localSnap);
       const hasRemoteData = hasAnySnapshotRecords(store.data);
       const normalizedRemote = normalizeRemoteSnapshot(store.data);
@@ -1232,14 +1273,23 @@ export const AppProvider: React.FC<{
     };
 
     const initSync = async () => {
+      if (syncInFlightRef.current || mutationDebouncePendingRef.current) return;
       try {
-        const localSnap = latestSnapshotRef.current;
-        const localJson = JSON.stringify(localSnap);
+        const initialSnap = latestSnapshotRef.current;
+        const initialJson = JSON.stringify(initialSnap);
         if (!lastTrackedMutationJsonRef.current) {
-          lastTrackedMutationJsonRef.current = localJson;
+          lastTrackedMutationJsonRef.current = initialJson;
         }
 
         const store = await fetchBestRemoteStoreForWeb();
+        if (syncInFlightRef.current || mutationDebouncePendingRef.current) {
+          serverSyncInitializedRef.current = true;
+          return;
+        }
+
+        const localSnap = latestSnapshotRef.current;
+        const localJson = JSON.stringify(localSnap);
+
         if (!store || cancelled) {
           if (pendingSyncCountRef.current > 0) {
             await pushSnapshotToServer(
@@ -1317,7 +1367,11 @@ export const AppProvider: React.FC<{
 
     const handleBrowserOnline = () => {
       updateSyncMeta({ online: true });
-      void initSync();
+      if (serverSyncInitializedRef.current) {
+        void pullLatestFromServerIfIdle();
+      } else {
+        void initSync();
+      }
     };
 
     const handleBrowserOffline = () => {
@@ -1335,7 +1389,12 @@ export const AppProvider: React.FC<{
         eventSource?.close();
         eventSource = null;
       } else {
-        void initSync();
+        connectEventStream();
+        if (serverSyncInitializedRef.current) {
+          void pullLatestFromServerIfIdle();
+        } else {
+          void initSync();
+        }
       }
     };
 
@@ -1917,13 +1976,13 @@ export const AppProvider: React.FC<{
   };
 
   const updateAppointment = (id: string, updated: Partial<Appointment>) => {
-    const nowIso = new Date().toISOString();
     const existing = appointments.find((a) => a.id === id);
+    const nowIso = nextMonotonicIso(existing?.updated_at);
     const merged: Appointment | null = existing
       ? { ...existing, ...updated, updated_at: nowIso }
       : null;
     setAppointments(prev =>
-      prev.map(a => (a.id === id ? { ...a, ...updated, updated_at: nowIso } : a))
+      prev.map(a => (a.id === id ? { ...a, ...updated, updated_at: nextMonotonicIso(a.updated_at) } : a))
     );
 
     if (merged) {
@@ -2012,7 +2071,7 @@ export const AppProvider: React.FC<{
               customer_number: nextCustomerNumber,
               billing_mode: nextMode,
               default_billing_customer_id: nextBillingCustId,
-              updated_at: new Date().toISOString()
+              updated_at: nextMonotonicIso(c.updated_at)
             }
           : c
       )
@@ -2156,15 +2215,14 @@ export const AppProvider: React.FC<{
   };
 
   const updateOrder = (id: string, order: Partial<Order>) => {
-    setOrders(prev => prev.map(o => o.id === id ? { ...o, ...order, updated_at: new Date().toISOString() } : o));
+    setOrders(prev => prev.map(o => o.id === id ? { ...o, ...order, updated_at: nextMonotonicIso(o.updated_at) } : o));
   };
 
   const updateOrdersStatusBatch = (ids: string[], status: Order['status']) => {
     if (ids.length === 0) return;
     const idSet = new Set(ids);
-    const nowIso = new Date().toISOString();
     setOrders(prev =>
-      prev.map(o => (idSet.has(o.id) ? { ...o, status, updated_at: nowIso } : o))
+      prev.map(o => (idSet.has(o.id) ? { ...o, status, updated_at: nextMonotonicIso(o.updated_at) } : o))
     );
   };
 
@@ -2268,7 +2326,7 @@ export const AppProvider: React.FC<{
     setProperties(prev =>
       prev.map(p =>
         p.id === id
-          ? { ...p, ...prop, updated_at: new Date().toISOString() }
+          ? { ...p, ...prop, updated_at: nextMonotonicIso(p.updated_at) }
           : p
       )
     );
@@ -2412,7 +2470,7 @@ export const AppProvider: React.FC<{
           material_cost: matCost,
           hourly_rate: rate,
           accounting_amount,
-          updated_at: new Date().toISOString()
+          updated_at: nextMonotonicIso(w.updated_at)
         };
       }
       return w;
@@ -3305,10 +3363,10 @@ export const AppProvider: React.FC<{
   };
 
   const updateEquipment = (id: string, patch: Partial<Equipment>) => {
-    const nowIso = new Date().toISOString();
     setEquipments(prev =>
       prev.map(eq => {
         if (eq.id !== id) return eq;
+        const nextIso = nextMonotonicIso(eq.updated_at);
         const nextSpecs =
           patch.specs !== undefined
             ? Object.fromEntries(
@@ -3316,6 +3374,8 @@ export const AppProvider: React.FC<{
                   ([k, v]) =>
                     k !== 'created_at' &&
                     k !== 'updated_at' &&
+                    k !== 'has_photo' &&
+                    k !== 'photo_count' &&
                     v !== undefined &&
                     v !== null &&
                     String(v).trim() !== ''
@@ -3326,8 +3386,8 @@ export const AppProvider: React.FC<{
           ...eq,
           ...patch,
           specs: nextSpecs,
-          created_at: eq.created_at || nowIso,
-          updated_at: nowIso
+          created_at: eq.created_at || nextIso,
+          updated_at: nextIso
         };
       })
     );
@@ -3338,7 +3398,6 @@ export const AppProvider: React.FC<{
     if (!target) return;
     const prevSnapshot = [...equipments];
     const prevDeletedIds = { ...deletedIds };
-    const nowIso = new Date().toISOString();
 
     recordDeletedTombstones([['equipments', id]]);
     setEquipments(prev =>
@@ -3346,7 +3405,7 @@ export const AppProvider: React.FC<{
         .filter(eq => eq.id !== id)
         .map(eq =>
           eq.parent_equipment_id === id
-            ? { ...eq, parent_equipment_id: null, updated_at: nowIso }
+            ? { ...eq, parent_equipment_id: null, updated_at: nextMonotonicIso(eq.updated_at) }
             : eq
         )
     );
@@ -3374,10 +3433,10 @@ export const AppProvider: React.FC<{
     performedDate?: string
   ) => {
     const maintDate = performedDate?.trim() || getTodayLocalIso();
-    const nowIso = new Date().toISOString();
     setEquipments(prev =>
       prev.map(eq => {
         if (eq.id === equipmentId) {
+          const nextIso = nextMonotonicIso(eq.updated_at);
           return {
             ...eq,
             status: 'einsatzbereit',
@@ -3385,8 +3444,8 @@ export const AppProvider: React.FC<{
             next_maintenance: nextDate,
             maintenance_plan: plan,
             history: [{ date: maintDate, note, plan }, ...(eq.history || [])],
-            created_at: eq.created_at || nowIso,
-            updated_at: nowIso
+            created_at: eq.created_at || nextIso,
+            updated_at: nextIso
           };
         }
         return eq;
@@ -3414,7 +3473,7 @@ export const AppProvider: React.FC<{
   };
 
   const updateMaterial = (id: string, mat: Partial<Material>) => {
-    setMaterials(prev => prev.map(m => m.id === id ? { ...m, ...mat, updated_at: new Date().toISOString() } : m));
+    setMaterials(prev => prev.map(m => m.id === id ? { ...m, ...mat, updated_at: nextMonotonicIso(m.updated_at) } : m));
   };
 
   const deleteMaterial = (id: string) => {
@@ -3456,22 +3515,21 @@ export const AppProvider: React.FC<{
   };
 
   const updateExpense = (id: string, patch: Partial<BusinessExpense>) => {
-    const nowIso = new Date().toISOString();
     setExpenses(prev =>
-      prev.map(e =>
-        e.id === id
-          ? {
-              ...e,
-              ...patch,
-              amount:
-                patch.amount !== undefined
-                  ? Math.max(0, Math.round(patch.amount * 100) / 100)
-                  : e.amount,
-              created_at: e.created_at || nowIso,
-              updated_at: nowIso
-            }
-          : e
-      )
+      prev.map(e => {
+        if (e.id !== id) return e;
+        const nextIso = nextMonotonicIso(e.updated_at);
+        return {
+          ...e,
+          ...patch,
+          amount:
+            patch.amount !== undefined
+              ? Math.max(0, Math.round(patch.amount * 100) / 100)
+              : e.amount,
+          created_at: e.created_at || nextIso,
+          updated_at: nextIso
+        };
+      })
     );
   };
 

@@ -96,7 +96,8 @@ export const KundeModal: React.FC = () => {
       setHasDivergentBilling(false);
       setBillingCustomerId('');
     }
-  }, [activeModal, selectedCustomerId, isCreating, isEditing, existingCustomer, customers]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeModal, selectedCustomerId, isCreating, isEditing]);
 
   if (!isCreating && !isEditing) return null;
 
@@ -109,6 +110,9 @@ export const KundeModal: React.FC = () => {
     try {
       const compressed = await compressImageFile(file, 640, 0.8);
       setPhoto(compressed);
+      if (isEditing && existingCustomer) {
+        updateCustomer(existingCustomer.id, { photo: compressed });
+      }
     } finally {
       e.target.value = '';
     }

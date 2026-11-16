@@ -1,8 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useApp } from '../../context/AppContext.tsx';
+import { useApp, usePixelBackLayer } from '../../context/AppContext.tsx';
 import {
   X,
-  Wrench,
   Calendar,
   Tag,
   Camera,
@@ -19,11 +18,9 @@ import {
   Clock,
   History
 } from 'lucide-react';
-import { compressImageFile } from '../../utils/imageCompress.ts';
+import { compressImageFile, normalizePhotoSrc } from '../../utils/imageCompress.ts';
 import { getTodayLocalIso } from '../../utils/invoicePdf.ts';
 import {
-  EQUIPMENT_CATEGORIES,
-  FUNCTIONAL_GROUPS,
   getCategoriesByType,
   getCategoryDef,
   getFunctionalGroupInfo,
@@ -93,6 +90,7 @@ export const GeraetModal: React.FC = () => {
   const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
 
   const cameraInputRef = useRef<HTMLInputElement>(null);
+  const initializedModalKeyRef = useRef<string | null>(null);
 
   const extractMatchingAccessorySpecs = (
     parentSpecs: Record<string, string> | undefined,
@@ -116,13 +114,15 @@ export const GeraetModal: React.FC = () => {
     setItemType(eType);
     setCategory(item.category || defaultCat);
     setParentEquipmentId(item.parent_equipment_id || '');
-    setPhoto(item.photo || null);
+    setPhoto(normalizePhotoSrc(item.photo));
     setName(item.name || '');
     setModel(item.model || '');
     setStatus(item.status || 'einsatzbereit');
     const cleanExistingSpecs = { ...(item.specs || {}) };
     delete cleanExistingSpecs.created_at;
     delete cleanExistingSpecs.updated_at;
+    delete cleanExistingSpecs.has_photo;
+    delete cleanExistingSpecs.photo_count;
     setSpecs(cleanExistingSpecs);
     setCustomSpecKey('');
     setCustomSpecVal('');
@@ -136,7 +136,17 @@ export const GeraetModal: React.FC = () => {
   };
 
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen) {
+      initializedModalKeyRef.current = null;
+      return;
+    }
+
+    const modalKey = `${activeModal}:${selectedEquipmentId || 'new'}`;
+    if (initializedModalKeyRef.current === modalKey) {
+      return;
+    }
+    initializedModalKeyRef.current = modalKey;
+
     setConfirmDelete(false);
     setEnlargePhoto(false);
 
@@ -206,15 +216,38 @@ export const GeraetModal: React.FC = () => {
       setNextMaintenance(addMonthsIso(todayIso, defMonths));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeModal, selectedEquipmentId]);
+  }, [isOpen, activeModal, selectedEquipmentId, existingItem?.id]);
 
-  // Synchronisiere Formularzustand im Hintergrund, solange Detailansicht schreibgeschützt offen ist
+  // Synchronisiere Formularzustand im Hintergrund NUR solange die Detailansicht schreibgeschützt offen ist
   useEffect(() => {
     if (isEditing && existingItem && !isEditMode) {
       populateFromExisting(existingItem);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [existingItem?.updated_at, existingItem?.photo, existingItem?.last_maintenance, existingItem?.next_maintenance]);
+  }, [
+    isEditMode,
+    existingItem?.updated_at,
+    existingItem?.photo,
+    existingItem?.name,
+    existingItem?.model,
+    existingItem?.status,
+    existingItem?.last_maintenance,
+    existingItem?.next_maintenance
+  ]);
+
+  const handleCancelEdit = () => {
+    if (isEditing && existingItem) {
+      populateFromExisting(existingItem);
+      setConfirmDelete(false);
+      setIsEditMode(false);
+    } else {
+      setSelectedEquipmentId(null);
+      setActiveModal(null);
+    }
+  };
+
+  usePixelBackLayer(Boolean(isOpen && isEditing && isEditMode), handleCancelEdit);
+  usePixelBackLayer(Boolean(isOpen && enlargePhoto), () => setEnlargePhoto(false));
 
   if (!isOpen) return null;
 
@@ -262,12 +295,21 @@ export const GeraetModal: React.FC = () => {
     try {
       const compressed = await compressImageFile(file, 760, 0.82);
       setPhoto(compressed);
-      if (isEditing && existingItem && !isEditMode) {
+      // Bei bestehendem Gerät Foto sofort dauerhaft im Datensatz sichern, damit es auch
+      // beim Wechsel zwischen Kamera/Galerie und App sofort gespeichert und sichtbar ist.
+      if (isEditing && existingItem) {
         updateEquipment(existingItem.id, { photo: compressed });
       }
     } finally {
       setIsUploadingPhoto(false);
       e.target.value = '';
+    }
+  };
+
+  const handleRemovePhoto = () => {
+    setPhoto(null);
+    if (isEditing && existingItem && !isEditMode) {
+      updateEquipment(existingItem.id, { photo: null });
     }
   };
 
@@ -304,19 +346,9 @@ export const GeraetModal: React.FC = () => {
     }
   };
 
-  const handleCancelEdit = () => {
-    if (isEditing && existingItem) {
-      populateFromExisting(existingItem);
-      setConfirmDelete(false);
-      setIsEditMode(false);
-    } else {
-      setSelectedEquipmentId(null);
-      setActiveModal(null);
-    }
-  };
-
   const handleSave = () => {
-    if (!name.trim()) return;
+    const effectiveName =
+      name.trim() || existingItem?.name?.trim() || currentCatDef?.label || 'Gerät';
 
     const cleanedSpecs: Record<string, string> = {};
     for (const [k, v] of Object.entries(specs)) {
@@ -325,6 +357,8 @@ export const GeraetModal: React.FC = () => {
         cleanK &&
         cleanK !== 'created_at' &&
         cleanK !== 'updated_at' &&
+        cleanK !== 'has_photo' &&
+        cleanK !== 'photo_count' &&
         v !== undefined &&
         v !== null &&
         String(v).trim()
@@ -355,10 +389,10 @@ export const GeraetModal: React.FC = () => {
       item_type: itemType,
       category: currentCatDef?.id || category,
       parent_equipment_id: itemType === 'zubehoer' && parentEquipmentId ? parentEquipmentId : null,
-      name: name.trim(),
+      name: effectiveName,
       model: model.trim(),
-      photo,
-      status: itemType === 'geraet' ? status : 'einsatzbereit',
+      photo: normalizePhotoSrc(photo),
+      status: itemType === 'geraet' ? status : ('einsatzbereit' as const),
       specs: cleanedSpecs,
       quantity: normalizedQty,
       notes: notes.trim(),
@@ -370,6 +404,8 @@ export const GeraetModal: React.FC = () => {
 
     if (isEditing && existingItem) {
       updateEquipment(existingItem.id, payload);
+      setName(effectiveName);
+      setSpecs(cleanedSpecs);
       setCustomSpecKey('');
       setCustomSpecVal('');
       setIsEditMode(false);
@@ -390,6 +426,7 @@ export const GeraetModal: React.FC = () => {
   // Alle anzuzeigenden Spec-Felder im Bearbeiten-Modus (Kategorie-Felder + evtl. zusätzliche MCP-Felder)
   const standardFieldKeys = new Set((currentCatDef?.fields || []).map((f) => f.key));
   const extraSpecKeys = Object.keys(specs).filter((k) => !standardFieldKeys.has(k));
+  const normalizedCurrentPhoto = normalizePhotoSrc(photo);
 
   // ============================================================================
   // 1. SCHREIBGESCHÜTZTE DETAILANSICHT (beim Antippen eines bestehenden Geräts)
@@ -407,10 +444,18 @@ export const GeraetModal: React.FC = () => {
         )
       : [];
     const specEntries = Object.entries(existingItem.specs || {}).filter(
-      ([, val]) => val !== undefined && val !== null && String(val).trim() !== ''
+      ([k, val]) =>
+        k !== 'created_at' &&
+        k !== 'updated_at' &&
+        k !== 'has_photo' &&
+        k !== 'photo_count' &&
+        val !== undefined &&
+        val !== null &&
+        String(val).trim() !== ''
     );
     const isDue = existingItem.status === 'faellig';
     const isInMaintenance = existingItem.status === 'wartung';
+    const detailPhotoSrc = normalizePhotoSrc(existingItem.photo) || normalizedCurrentPhoto;
 
     return (
       <div className="absolute inset-0 z-50 bg-black/45 backdrop-blur-2xs flex flex-col justify-end animate-fade-in">
@@ -488,9 +533,9 @@ export const GeraetModal: React.FC = () => {
 
           {/* Read-Only Content */}
           <div className="flex-1 overflow-y-auto py-3 space-y-3 text-xs text-slate-700 overscroll-contain">
-            {/* Großes Gerätefoto + Basisdaten zur optimalen Erkennbarkeit */}
+            {/* Großes Gerätefoto + Direkte Kamera-/Galerie-Auswahl + Basisdaten */}
             <div className="p-3 bg-slate-50 border border-slate-200 rounded-2xl space-y-2.5">
-              {existingItem.photo && enlargePhoto && (
+              {detailPhotoSrc && enlargePhoto && (
                 <button
                   type="button"
                   onClick={() => setEnlargePhoto(false)}
@@ -498,7 +543,7 @@ export const GeraetModal: React.FC = () => {
                   title="Foto verkleinern"
                 >
                   <img
-                    src={existingItem.photo}
+                    src={detailPhotoSrc}
                     alt={existingItem.name}
                     className="w-full max-h-64 rounded-2xl object-contain bg-white border border-slate-200 p-1 shadow-xs transition-all"
                   />
@@ -506,7 +551,7 @@ export const GeraetModal: React.FC = () => {
               )}
 
               <div className="flex items-center gap-3">
-                {existingItem.photo ? (
+                {detailPhotoSrc ? (
                   !enlargePhoto && (
                     <button
                       type="button"
@@ -515,7 +560,7 @@ export const GeraetModal: React.FC = () => {
                       title="Gerätefoto groß anzeigen"
                     >
                       <img
-                        src={existingItem.photo}
+                        src={detailPhotoSrc}
                         alt={existingItem.name}
                         className="w-24 h-24 rounded-2xl object-cover border border-slate-200 bg-white shadow-2xs transition-all"
                       />
@@ -542,35 +587,72 @@ export const GeraetModal: React.FC = () => {
                   </label>
                 )}
 
-                <div className="flex-1 min-w-0 grid grid-cols-2 gap-x-3 gap-y-2 text-[11px]">
-                  <div>
-                    <span className="text-slate-400 block">Kategorie</span>
-                    <span className="font-bold text-slate-800 truncate block">
-                      {catDef?.label || funcGroup.title}
-                    </span>
-                  </div>
-                  <div>
-                    <span className="text-slate-400 block">Bestand / Anzahl</span>
-                    <span className="font-bold text-slate-800">
-                      {existingItem.quantity ?? 1} Stk.
-                    </span>
-                  </div>
-                  {parentDevice && (
-                    <div className="col-span-2 pt-0.5">
-                      <span className="text-slate-400 block">Zugeordnetes Hauptgerät</span>
-                      <button
-                        type="button"
-                        onClick={() => setSelectedEquipmentId(parentDevice.id)}
-                        className="font-bold text-[#3138A0] hover:underline flex items-center gap-1 text-left"
-                      >
-                        <Link2 size={11} />
-                        <span>
-                          {parentDevice.name}
-                          {parentDevice.model ? ` (${parentDevice.model})` : ''}
-                        </span>
-                      </button>
+                <div className="flex-1 min-w-0 space-y-2">
+                  <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-[11px]">
+                    <div>
+                      <span className="text-slate-400 block">Kategorie</span>
+                      <span className="font-bold text-slate-800 truncate block">
+                        {catDef?.label || funcGroup.title}
+                      </span>
                     </div>
-                  )}
+                    <div>
+                      <span className="text-slate-400 block">Bestand / Anzahl</span>
+                      <span className="font-bold text-slate-800">
+                        {existingItem.quantity ?? 1} Stk.
+                      </span>
+                    </div>
+                    {parentDevice && (
+                      <div className="col-span-2 pt-0.5">
+                        <span className="text-slate-400 block">Zugeordnetes Hauptgerät</span>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedEquipmentId(parentDevice.id)}
+                          className="font-bold text-[#3138A0] hover:underline flex items-center gap-1 text-left"
+                        >
+                          <Link2 size={11} />
+                          <span>
+                            {parentDevice.name}
+                            {parentDevice.model ? ` (${parentDevice.model})` : ''}
+                          </span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Direkte Foto-Buttons auch in der Detailansicht */}
+                  <div className="flex items-center gap-1.5 pt-0.5">
+                    <label
+                      className={`flex-1 h-8 px-2 bg-white hover:bg-slate-100 border border-slate-200 text-slate-800 rounded-xl text-[10px] font-bold flex items-center justify-center gap-1 cursor-pointer shadow-2xs ${
+                        isUploadingPhoto ? 'opacity-60 pointer-events-none' : ''
+                      }`}
+                    >
+                      <Camera size={12} className="text-[#3138A0]" />
+                      <span>Kamera</span>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        capture="environment"
+                        disabled={isUploadingPhoto}
+                        onChange={handlePhotoUpload}
+                        className="hidden"
+                      />
+                    </label>
+                    <label
+                      className={`flex-1 h-8 px-2 bg-white hover:bg-slate-100 border border-slate-200 text-slate-800 rounded-xl text-[10px] font-bold flex items-center justify-center gap-1 cursor-pointer shadow-2xs ${
+                        isUploadingPhoto ? 'opacity-60 pointer-events-none' : ''
+                      }`}
+                    >
+                      <ImagePlus size={12} className="text-[#3138A0]" />
+                      <span>Galerie</span>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        disabled={isUploadingPhoto}
+                        onChange={handlePhotoUpload}
+                        className="hidden"
+                      />
+                    </label>
+                  </div>
                 </div>
               </div>
             </div>
@@ -840,7 +922,75 @@ export const GeraetModal: React.FC = () => {
 
         {/* Body */}
         <div className="flex-1 overflow-y-auto py-3 space-y-3 text-xs text-slate-700 overscroll-contain">
-          {/* 1. Typ & Funktions-Kategorie */}
+          {/* 1. Gerätefoto ganz oben für sofortige Sichtbarkeit */}
+          <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-2xl flex items-center gap-3">
+            {normalizedCurrentPhoto ? (
+              <img
+                src={normalizedCurrentPhoto}
+                alt="Gerätefoto"
+                className="w-20 h-20 rounded-2xl object-cover border border-slate-200 shrink-0 bg-white shadow-2xs"
+              />
+            ) : (
+              <div className="w-20 h-20 rounded-2xl bg-white border border-dashed border-slate-300 flex flex-col items-center justify-center text-slate-400 shrink-0">
+                <Camera size={22} />
+                <span className="text-[9px] font-bold mt-0.5">Kein Foto</span>
+              </div>
+            )}
+
+            <div className="flex-1 space-y-1.5">
+              <span className="text-[11px] font-bold text-slate-700 block">
+                Gerätefoto {isUploadingPhoto ? '(wird verarbeitet...)' : ''}
+              </span>
+              <div className="flex items-center gap-1.5">
+                <label
+                  className={`flex-1 h-9 px-2 bg-white hover:bg-slate-100 border border-slate-200 text-slate-800 rounded-xl text-[11px] font-bold flex items-center justify-center gap-1 cursor-pointer shadow-2xs ${
+                    isUploadingPhoto ? 'opacity-60 pointer-events-none' : ''
+                  }`}
+                >
+                  <Camera size={13} className="text-[#3138A0]" />
+                  <span>Kamera</span>
+                  <input
+                    ref={cameraInputRef}
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    disabled={isUploadingPhoto}
+                    onChange={handlePhotoUpload}
+                    className="hidden"
+                  />
+                </label>
+
+                <label
+                  className={`flex-1 h-9 px-2 bg-white hover:bg-slate-100 border border-slate-200 text-slate-800 rounded-xl text-[11px] font-bold flex items-center justify-center gap-1 cursor-pointer shadow-2xs ${
+                    isUploadingPhoto ? 'opacity-60 pointer-events-none' : ''
+                  }`}
+                >
+                  <ImagePlus size={13} className="text-[#3138A0]" />
+                  <span>Galerie</span>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    disabled={isUploadingPhoto}
+                    onChange={handlePhotoUpload}
+                    className="hidden"
+                  />
+                </label>
+
+                {normalizedCurrentPhoto && (
+                  <button
+                    type="button"
+                    onClick={handleRemovePhoto}
+                    className="w-9 h-9 bg-red-50 hover:bg-red-100 text-[#B42318] rounded-xl flex items-center justify-center shrink-0"
+                    title="Foto entfernen"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* 2. Typ & Funktions-Kategorie */}
           <div className="grid grid-cols-12 gap-2.5">
             <div className="col-span-5">
               <label className="font-semibold text-slate-700 block mb-1 text-[11px]">
@@ -874,7 +1024,7 @@ export const GeraetModal: React.FC = () => {
             </div>
           </div>
 
-          {/* 2. Bezeichnung & Modell / Artikel-Nr. (Freitext mit Datalist-Vorschlägen) */}
+          {/* 3. Bezeichnung & Modell / Artikel-Nr. (Freitext mit Datalist-Vorschlägen) */}
           <div className="p-3 bg-slate-50 border border-slate-200 rounded-2xl space-y-2.5">
             <div>
               <label className="font-semibold text-slate-700 block mb-1 text-[11px]">
@@ -969,7 +1119,7 @@ export const GeraetModal: React.FC = () => {
             )}
           </div>
 
-          {/* 3. Technische Daten (specs) – einfache Text-/Zahlenfelder */}
+          {/* 4. Technische Daten (specs) – einfache Text-/Zahlenfelder */}
           <div className="p-3 bg-slate-50 border border-slate-200 rounded-2xl space-y-2.5">
             <span className="font-bold text-slate-800 flex items-center gap-1.5 text-xs">
               <Sliders size={13} className="text-[#3138A0]" />
@@ -1080,7 +1230,7 @@ export const GeraetModal: React.FC = () => {
             </div>
           </div>
 
-          {/* 4. Wartungsplan & Termine (für Geräte) */}
+          {/* 5. Wartungsplan & Termine (für Geräte) */}
           {itemType === 'geraet' && (
             <div className="p-3 bg-slate-50 border border-slate-200 rounded-2xl space-y-2.5">
               <label className="font-bold text-slate-800 block text-xs">
@@ -1148,7 +1298,7 @@ export const GeraetModal: React.FC = () => {
             </div>
           )}
 
-          {/* 5. Notiz / Lagerort */}
+          {/* 6. Notiz / Lagerort */}
           <div>
             <label className="font-semibold text-slate-700 mb-1 flex items-center gap-1 text-[11px]">
               <FileText size={12} className="text-slate-500" />
@@ -1165,68 +1315,6 @@ export const GeraetModal: React.FC = () => {
               }
               className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-[#3138A0] outline-hidden text-xs text-slate-900 resize-none"
             />
-          </div>
-
-          {/* 6. Gerätefoto (deutlich vergrößert zur besseren Erkennbarkeit) */}
-          <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-2xl flex items-center gap-3">
-            {photo ? (
-              <img
-                src={photo}
-                alt="Foto"
-                className="w-16 h-16 rounded-2xl object-cover border border-slate-200 shrink-0 bg-white"
-              />
-            ) : (
-              <div className="w-16 h-16 rounded-2xl bg-white border border-slate-200 flex items-center justify-center text-slate-400 shrink-0">
-                <Camera size={22} />
-              </div>
-            )}
-
-            <div className="flex-1 flex items-center gap-1.5">
-              <label
-                className={`flex-1 h-9 px-2 bg-white hover:bg-slate-100 border border-slate-200 text-slate-800 rounded-xl text-[11px] font-bold flex items-center justify-center gap-1 cursor-pointer ${
-                  isUploadingPhoto ? 'opacity-60 pointer-events-none' : ''
-                }`}
-              >
-                <Camera size={13} className="text-[#3138A0]" />
-                <span>Kamera</span>
-                <input
-                  ref={cameraInputRef}
-                  type="file"
-                  accept="image/*"
-                  capture="environment"
-                  disabled={isUploadingPhoto}
-                  onChange={handlePhotoUpload}
-                  className="hidden"
-                />
-              </label>
-
-              <label
-                className={`flex-1 h-9 px-2 bg-white hover:bg-slate-100 border border-slate-200 text-slate-800 rounded-xl text-[11px] font-bold flex items-center justify-center gap-1 cursor-pointer ${
-                  isUploadingPhoto ? 'opacity-60 pointer-events-none' : ''
-                }`}
-              >
-                <ImagePlus size={13} className="text-[#3138A0]" />
-                <span>Galerie</span>
-                <input
-                  type="file"
-                  accept="image/*"
-                  disabled={isUploadingPhoto}
-                  onChange={handlePhotoUpload}
-                  className="hidden"
-                />
-              </label>
-
-              {photo && (
-                <button
-                  type="button"
-                  onClick={() => setPhoto(null)}
-                  className="w-9 h-9 bg-red-50 hover:bg-red-100 text-[#B42318] rounded-xl flex items-center justify-center shrink-0"
-                  title="Foto entfernen"
-                >
-                  <Trash2 size={14} />
-                </button>
-              )}
-            </div>
           </div>
 
           {/* 7. Löschen beim Bearbeiten */}
@@ -1280,7 +1368,7 @@ export const GeraetModal: React.FC = () => {
           <button
             type="button"
             onClick={handleSave}
-            disabled={!name.trim()}
+            disabled={!name.trim() && !isEditing}
             className="flex-1 h-11 bg-[#3138A0] hover:bg-[#272d82] active:scale-98 disabled:opacity-50 text-white font-bold rounded-xl text-xs transition-all shadow-xs"
           >
             Speichern
