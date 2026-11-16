@@ -396,6 +396,34 @@ function filterCollectionByTombstones<T extends { id: string; updated_at?: strin
   });
 }
 
+function preserveServerMediaIfSameTime<T extends { id: string; updated_at?: string }>(
+  winner: T,
+  other: T,
+  sameTime: boolean
+): T {
+  if (!sameTime) return winner;
+  const wRec = winner as unknown as Record<string, unknown>;
+  const oRec = other as unknown as Record<string, unknown>;
+  let patched = winner;
+  if (
+    ('photo' in oRec || 'photo' in wRec) &&
+    (!wRec.photo || typeof wRec.photo !== 'string') &&
+    typeof oRec.photo === 'string' &&
+    oRec.photo.length > 0
+  ) {
+    patched = { ...patched, photo: oRec.photo };
+  }
+  if (
+    ('photos' in oRec || 'photos' in wRec) &&
+    (!Array.isArray(wRec.photos) || wRec.photos.length === 0) &&
+    Array.isArray(oRec.photos) &&
+    oRec.photos.length > 0
+  ) {
+    patched = { ...patched, photos: oRec.photos };
+  }
+  return patched;
+}
+
 function mergeArrayById<T extends { id: string; updated_at?: string }>(
   serverArr: T[],
   clientArr: T[]
@@ -411,8 +439,11 @@ function mergeArrayById<T extends { id: string; updated_at?: string }>(
     } else {
       const sTime = existing.updated_at || '';
       const cTime = c.updated_at || '';
+      const sameTime = sTime === cTime;
       if (!sTime || (cTime && cTime >= sTime)) {
-        byId.set(c.id, c);
+        byId.set(c.id, preserveServerMediaIfSameTime(c, existing, sameTime));
+      } else {
+        byId.set(c.id, preserveServerMediaIfSameTime(existing, c, sameTime));
       }
     }
   }
@@ -505,8 +536,11 @@ function mergeArrayWithAndroidPrimary<T extends { id: string; updated_at?: strin
     } else {
       const sTime = existing.updated_at || '';
       const aTime = a.updated_at || '';
+      const sameTime = sTime === aTime;
       if (!sTime || (aTime && aTime >= sTime)) {
-        byId.set(a.id, a);
+        byId.set(a.id, preserveServerMediaIfSameTime(a, existing, sameTime));
+      } else {
+        byId.set(a.id, preserveServerMediaIfSameTime(existing, a, sameTime));
       }
     }
   }
@@ -1230,20 +1264,44 @@ async function startServer() {
       return;
     }
 
+    const serverHasUnseenChanges =
+      hasSnapshotAnyRecords(current.data) && current.revision > minRevisionFloor;
+
     let shouldMerge = false;
     let nextSnapshot: AppDataSnapshot = {
       ...body.data,
       deletedIds: mergeTombstones(current.data.deletedIds, body.data.deletedIds)
     };
 
-    if (isAndroidPrimary) {
-      if (hasSnapshotAnyRecords(current.data)) {
-        shouldMerge = true;
-        nextSnapshot = mergeSnapshotsWithAndroidPrimary(current.data, body.data);
-      }
-    } else if (hasSnapshotAnyRecords(current.data)) {
+    if (serverHasUnseenChanges) {
       shouldMerge = true;
-      nextSnapshot = mergeConcurrentOfflineSnapshot(current.data, body.data);
+      nextSnapshot = isAndroidPrimary
+        ? mergeSnapshotsWithAndroidPrimary(current.data, body.data)
+        : mergeConcurrentOfflineSnapshot(current.data, body.data);
+    } else if (hasSnapshotAnyRecords(current.data)) {
+      // Client is pushing on top of the latest server revision: accept client state directly,
+      // only restoring photos if localStorage quota fallback stripped them with an unchanged timestamp.
+      const restoreQuotaStrippedPhotos = <T extends { id: string; updated_at?: string }>(
+        serverList: T[],
+        clientList: T[]
+      ): T[] => {
+        const sMap = new Map<string, T>();
+        for (const s of serverList || []) {
+          if (s && s.id) sMap.set(s.id, s);
+        }
+        return (clientList || []).map((c) => {
+          const s = sMap.get(c.id);
+          if (!s) return c;
+          return preserveServerMediaIfSameTime(c, s, (c.updated_at || '') === (s.updated_at || ''));
+        });
+      };
+      nextSnapshot = {
+        ...nextSnapshot,
+        customers: restoreQuotaStrippedPhotos(current.data.customers, nextSnapshot.customers),
+        properties: restoreQuotaStrippedPhotos(current.data.properties, nextSnapshot.properties),
+        workRecords: restoreQuotaStrippedPhotos(current.data.workRecords, nextSnapshot.workRecords),
+        equipments: restoreQuotaStrippedPhotos(current.data.equipments, nextSnapshot.equipments)
+      };
     }
 
     const actor = isAndroidPrimary ? 'android' : 'web';

@@ -438,9 +438,23 @@ class NativeStoreManager(context: Context) {
                 } else {
                     val prevUpdated = prev.optString("updated_at", "")
                     val newUpdated = item.optString("updated_at", "")
-                    if (prevUpdated.isEmpty() || (newUpdated.isNotEmpty() && newUpdated >= prevUpdated)) {
-                        byId[id] = item
+                    val sameTime = prevUpdated == newUpdated
+                    val winner = if (prevUpdated.isEmpty() || (newUpdated.isNotEmpty() && newUpdated >= prevUpdated)) {
+                        item
+                    } else {
+                        prev
                     }
+                    val other = if (winner === item) prev else item
+                    if (sameTime) {
+                        val winPhoto = winner.optString("photo", "").trim()
+                        val othPhoto = other.optString("photo", "").trim()
+                        if ((winner.isNull("photo") || winPhoto.isEmpty() || winPhoto == "null") &&
+                            !other.isNull("photo") && othPhoto.isNotEmpty() && othPhoto != "null"
+                        ) {
+                            winner.put("photo", othPhoto)
+                        }
+                    }
+                    byId[id] = winner
                 }
             }
 

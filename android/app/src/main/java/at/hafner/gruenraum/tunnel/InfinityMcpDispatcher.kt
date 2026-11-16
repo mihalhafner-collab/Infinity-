@@ -1240,9 +1240,9 @@ class InfinityMcpDispatcher(
 
                 val reservedKeys = setOf(
                     "id", "item_type", "category", "parent_equipment_id", "name", "model",
-                    "photo", "specs", "quantity", "notes", "status", "last_maintenance",
-                    "next_maintenance", "maintenance_plan", "interval_months", "history",
-                    "created_at", "updated_at"
+                    "photo", "has_photo", "photo_count", "remove_photo", "specs", "quantity",
+                    "notes", "status", "last_maintenance", "next_maintenance", "maintenance_plan",
+                    "interval_months", "history", "created_at", "updated_at"
                 )
                 val mergedSpecs = JSONObject()
                 val prevSpecs = prev?.optJSONObject("specs")
@@ -1250,7 +1250,7 @@ class InfinityMcpDispatcher(
                     val pk = prevSpecs.keys()
                     while (pk.hasNext()) {
                         val k = pk.next()
-                        if (k == "created_at" || k == "updated_at") continue
+                        if (k == "created_at" || k == "updated_at" || k == "has_photo" || k == "photo_count") continue
                         val v = prevSpecs.optString(k, "").trim()
                         if (v.isNotEmpty() && !prevSpecs.isNull(k)) {
                             mergedSpecs.put(k, v)
@@ -1262,7 +1262,7 @@ class InfinityMcpDispatcher(
                     val nk = payloadSpecs.keys()
                     while (nk.hasNext()) {
                         val k = nk.next()
-                        if (k == "created_at" || k == "updated_at" || payloadSpecs.isNull(k) || payloadSpecs.optString(k, "").trim().isEmpty()) {
+                        if (k == "created_at" || k == "updated_at" || k == "has_photo" || k == "photo_count" || payloadSpecs.isNull(k) || payloadSpecs.optString(k, "").trim().isEmpty()) {
                             mergedSpecs.remove(k)
                         } else {
                             mergedSpecs.put(k.trim(), payloadSpecs.optString(k, "").trim())
@@ -1300,6 +1300,13 @@ class InfinityMcpDispatcher(
                     record.put("quantity", JSONObject.NULL)
                 }
 
+                val incomingPhoto = payload.optString("photo", "").trim().takeIf { !payload.isNull("photo") && it.isNotEmpty() && it != "null" }
+                val prevPhoto = prev?.optString("photo", "")?.trim()?.takeIf { !prev.isNull("photo") && it.isNotEmpty() && it != "null" }
+                val resolvedPhoto = if (payload.optBoolean("remove_photo", false)) null else (incomingPhoto ?: prevPhoto)
+                record.remove("has_photo")
+                record.remove("photo_count")
+                record.remove("remove_photo")
+
                 record.put("item_type", itemType)
                 record.put("category", record.optString("category", if (itemType == "zubehoer") "zub_kette_schiene" else "motorsaegen"))
                 if (!record.has("parent_equipment_id") || record.optString("parent_equipment_id", "").trim().isEmpty()) {
@@ -1307,7 +1314,7 @@ class InfinityMcpDispatcher(
                 }
                 record.put("name", nameVal)
                 record.put("model", record.optString("model", ""))
-                if (!record.has("photo")) record.put("photo", JSONObject.NULL)
+                record.put("photo", resolvedPhoto ?: JSONObject.NULL)
                 record.put("specs", mergedSpecs)
                 record.put("notes", record.optString("notes", ""))
                 record.put("status", statusVal)

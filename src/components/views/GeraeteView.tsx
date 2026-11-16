@@ -17,7 +17,7 @@ import {
   X
 } from 'lucide-react';
 import { Equipment } from '../../types/index.ts';
-import { compressImageFile } from '../../utils/imageCompress.ts';
+import { compressImageFile, normalizePhotoSrc } from '../../utils/imageCompress.ts';
 import {
   getCategoryLabel,
   getFunctionalGroupInfo
@@ -287,46 +287,49 @@ export const GeraeteView: React.FC = () => {
                       >
                         <div className="flex items-center gap-3 min-w-0 flex-1">
                           {/* Deutlich vergrößertes Gerätefoto zur besseren Erkennbarkeit */}
-                          {eq.photo ? (
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setPreviewPhoto({
-                                  eqId: eq.id,
-                                  src: eq.photo!,
-                                  title: eq.name
-                                });
-                              }}
-                              className="w-16 h-16 rounded-2xl overflow-hidden border border-slate-200 shrink-0 bg-white shadow-2xs"
-                              title="Gerätefoto vergrößern"
-                            >
-                              <img
-                                src={eq.photo}
-                                alt={eq.name}
-                                className="w-full h-full object-cover"
-                              />
-                            </button>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setPhotoSourceEq(eq);
-                              }}
-                              className={`w-16 h-16 rounded-2xl border border-dashed flex flex-col items-center justify-center shrink-0 transition-colors ${
-                                isZubehoer
-                                  ? 'bg-indigo-50/50 border-indigo-200 text-[#3138A0]'
-                                  : isDue
-                                    ? 'bg-fuchsia-50 border-fuchsia-200 text-[#9A1B8D]'
-                                    : 'bg-emerald-50/60 border-emerald-200 text-[#2C7738]'
-                              }`}
-                              title="Gerätefoto hinzufügen"
-                            >
-                              <Camera size={18} />
-                              <span className="text-[9px] font-bold mt-0.5">Foto</span>
-                            </button>
-                          )}
+                          {(() => {
+                            const photoSrc = normalizePhotoSrc(eq.photo);
+                            return photoSrc ? (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setPreviewPhoto({
+                                    eqId: eq.id,
+                                    src: photoSrc,
+                                    title: eq.name
+                                  });
+                                }}
+                                className="w-16 h-16 rounded-2xl overflow-hidden border border-slate-200 shrink-0 bg-white shadow-2xs"
+                                title="Gerätefoto vergrößern"
+                              >
+                                <img
+                                  src={photoSrc}
+                                  alt={eq.name}
+                                  className="w-full h-full object-cover"
+                                />
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setPhotoSourceEq(eq);
+                                }}
+                                className={`w-16 h-16 rounded-2xl border border-dashed flex flex-col items-center justify-center shrink-0 transition-colors ${
+                                  isZubehoer
+                                    ? 'bg-indigo-50/50 border-indigo-200 text-[#3138A0]'
+                                    : isDue
+                                      ? 'bg-fuchsia-50 border-fuchsia-200 text-[#9A1B8D]'
+                                      : 'bg-emerald-50/60 border-emerald-200 text-[#2C7738]'
+                                }`}
+                                title="Gerätefoto hinzufügen"
+                              >
+                                <Camera size={18} />
+                                <span className="text-[9px] font-bold mt-0.5">Foto</span>
+                              </button>
+                            );
+                          })()}
 
                           {/* Kompakte Hauptinfo (Details erst nach Antippen) */}
                           <div className="min-w-0 flex-1">

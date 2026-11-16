@@ -3,8 +3,8 @@ name: Android APK Build (Pixel 10 Pro - Kotlin)
 on:
   push:
     branches:
-      - main
-      - master
+      - '**'
+  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -28,7 +28,12 @@ jobs:
       - name: Abhängigkeiten installieren & Offline-Assets erzeugen
         run: |
           npm install
+          npm run lint
           npm run build:apk-assets
+
+      - name: Prüfen ob Android-Offline-Assets vorhanden sind
+        run: |
+          test -f android/app/src/main/assets/www/index.html
 
       - name: Java JDK 17 einrichten
         uses: actions/setup-java@v4

@@ -762,12 +762,22 @@ function mutateUpsertOnSnapshotInner(
           : Math.max(0, Number(payload.garden_area))
         : (prev?.garden_area ?? null);
 
+    const incomingCustPhoto =
+      typeof payload.photo === 'string' && payload.photo.trim().length > 0
+        ? payload.photo.trim()
+        : null;
+    const resolvedCustPhoto =
+      payload.remove_photo === true
+        ? null
+        : incomingCustPhoto || (typeof prev?.photo === 'string' && prev.photo ? prev.photo : null);
+
     const record: Customer = {
       ...(prev || {}),
       ...(payload as Partial<Customer>),
       id,
       name: rawName,
       company: String(payload.company ?? prev?.company ?? ''),
+      photo: resolvedCustPhoto,
       phone: String(payload.phone ?? prev?.phone ?? ''),
       email: String(payload.email ?? prev?.email ?? ''),
       street: String(payload.street ?? prev?.street ?? ''),
@@ -1518,6 +1528,9 @@ function mutateUpsertOnSnapshotInner(
       'name',
       'model',
       'photo',
+      'has_photo',
+      'photo_count',
+      'remove_photo',
       'specs',
       'quantity',
       'notes',
@@ -1543,6 +1556,8 @@ function mutateUpsertOnSnapshotInner(
       if (
         k !== 'created_at' &&
         k !== 'updated_at' &&
+        k !== 'has_photo' &&
+        k !== 'photo_count' &&
         v !== undefined &&
         v !== null &&
         String(v).trim() !== ''
@@ -1551,7 +1566,15 @@ function mutateUpsertOnSnapshotInner(
       }
     }
     for (const [k, v] of Object.entries(payloadSpecs)) {
-      if (k === 'created_at' || k === 'updated_at' || v === null || v === undefined || String(v).trim() === '') {
+      if (
+        k === 'created_at' ||
+        k === 'updated_at' ||
+        k === 'has_photo' ||
+        k === 'photo_count' ||
+        v === null ||
+        v === undefined ||
+        String(v).trim() === ''
+      ) {
         delete mergedSpecs[k];
       } else {
         mergedSpecs[k.trim()] = String(v).trim();
@@ -1593,6 +1616,18 @@ function mutateUpsertOnSnapshotInner(
           ? 1
           : null;
 
+    const incomingEqPhoto =
+      typeof payload.photo === 'string' && payload.photo.trim().length > 0
+        ? payload.photo.trim()
+        : null;
+    const resolvedEqPhoto =
+      payload.remove_photo === true
+        ? null
+        : incomingEqPhoto || (typeof prev?.photo === 'string' && prev.photo ? prev.photo : null);
+    delete merged.has_photo;
+    delete merged.photo_count;
+    delete merged.remove_photo;
+
     merged.item_type = itemType;
     merged.category = String(
       merged.category || (itemType === 'zubehoer' ? 'zub_kette_schiene' : 'motorsaegen')
@@ -1600,7 +1635,7 @@ function mutateUpsertOnSnapshotInner(
     merged.parent_equipment_id = merged.parent_equipment_id ? String(merged.parent_equipment_id) : null;
     merged.name = name;
     merged.model = String(merged.model || '');
-    merged.photo = merged.photo ?? null;
+    merged.photo = resolvedEqPhoto;
     merged.specs = mergedSpecs;
     merged.quantity = normalizedQty;
     merged.notes = String(merged.notes || '');
