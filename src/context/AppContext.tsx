@@ -39,6 +39,7 @@ import {
   isNativeAndroidApp,
   loadNativeStoreJson,
   migrateLegacyWebStorageCredentialsIfNeeded,
+  pairNativeMcpWithCode,
   registerNativeBackHandler,
   resolveBackendEndpoint,
   restoreNativeVerifiedBackup,
@@ -52,7 +53,8 @@ import { validateFirestoreBootConnection } from '../services/firebaseClient.ts';
 import {
   consumeOAuthReturnScreen,
   isGoogleConnected,
-  refreshOwnerServerSessionIfPossible
+  refreshOwnerServerSessionIfPossible,
+  subscribeOwnerSession
 } from '../services/gmailService.ts';
 import {
   attachGoogleEventIdToNotes,
@@ -623,28 +625,39 @@ export const AppProvider: React.FC<{
     deletedIds
   });
 
+  const normalizeRemoteSnapshot = (
+    remote: Partial<ReturnType<typeof buildCurrentSnapshot>> | null | undefined
+  ): ReturnType<typeof buildCurrentSnapshot> => ({
+    customers: Array.isArray(remote?.customers) ? remote.customers : [],
+    properties: Array.isArray(remote?.properties) ? remote.properties : [],
+    appointments: Array.isArray(remote?.appointments) ? remote.appointments : [],
+    workRecords: Array.isArray(remote?.workRecords) ? remote.workRecords : [],
+    invoices: Array.isArray(remote?.invoices) ? remote.invoices : [],
+    inquiries: Array.isArray(remote?.inquiries) ? remote.inquiries : [],
+    offers: Array.isArray(remote?.offers) ? remote.offers : [],
+    orders: Array.isArray(remote?.orders) ? remote.orders : [],
+    equipments: Array.isArray(remote?.equipments) ? remote.equipments : [],
+    materials: Array.isArray(remote?.materials) ? remote.materials : [],
+    expenses: Array.isArray(remote?.expenses) ? remote.expenses : [],
+    taxSettings:
+      remote?.taxSettings && typeof remote.taxSettings === 'object'
+        ? { ...defaultTaxSettings, ...remote.taxSettings }
+        : { ...defaultTaxSettings },
+    deletedIds: capClientTombstones(remote?.deletedIds)
+  });
+
+  const lastNativeSavedJsonRef = useRef<string>('');
+  const nativeHydratedRef = useRef<boolean>(!isNativeAndroidApp());
+
   const applyServerData = (remote: Partial<ReturnType<typeof buildCurrentSnapshot>>) => {
-    const normalized = {
-      customers: Array.isArray(remote.customers) ? remote.customers : [],
-      properties: Array.isArray(remote.properties) ? remote.properties : [],
-      appointments: Array.isArray(remote.appointments) ? remote.appointments : [],
-      workRecords: Array.isArray(remote.workRecords) ? remote.workRecords : [],
-      invoices: Array.isArray(remote.invoices) ? remote.invoices : [],
-      inquiries: Array.isArray(remote.inquiries) ? remote.inquiries : [],
-      offers: Array.isArray(remote.offers) ? remote.offers : [],
-      orders: Array.isArray(remote.orders) ? remote.orders : [],
-      equipments: Array.isArray(remote.equipments) ? remote.equipments : [],
-      materials: Array.isArray(remote.materials) ? remote.materials : [],
-      expenses: Array.isArray(remote.expenses) ? remote.expenses : [],
-      taxSettings:
-        remote.taxSettings && typeof remote.taxSettings === 'object'
-          ? { ...defaultTaxSettings, ...remote.taxSettings }
-          : { ...defaultTaxSettings },
-      deletedIds: capClientTombstones(remote.deletedIds)
-    };
+    const normalized = normalizeRemoteSnapshot(remote);
     const serialized = JSON.stringify(normalized);
     lastSyncedSnapshotJsonRef.current = serialized;
     lastTrackedMutationJsonRef.current = serialized;
+    if (isNativeAndroidApp()) {
+      lastNativeSavedJsonRef.current = serialized;
+      saveNativeStoreJson(serialized);
+    }
     setCustomers(normalized.customers);
     setProperties(normalized.properties);
     setAppointments(normalized.appointments);
@@ -659,9 +672,6 @@ export const AppProvider: React.FC<{
     setTaxSettings(normalized.taxSettings);
     setDeletedIds(normalized.deletedIds);
   };
-
-  const lastNativeSavedJsonRef = useRef<string>('');
-  const nativeHydratedRef = useRef<boolean>(!isNativeAndroidApp());
 
   const hasAnySnapshotRecords = (snap: Partial<ReturnType<typeof buildCurrentSnapshot>> | null | undefined): boolean => {
     if (!snap || typeof snap !== 'object') return false;
@@ -694,7 +704,17 @@ export const AppProvider: React.FC<{
     }
     if (Array.isArray(primaryArr)) {
       for (const item of primaryArr) {
-        if (item && item.id) map.set(item.id, item);
+        if (!item || !item.id) continue;
+        const existing = map.get(item.id);
+        if (!existing) {
+          map.set(item.id, item);
+        } else {
+          const baseTime = existing.updated_at || '';
+          const primTime = item.updated_at || '';
+          if (!baseTime || !primTime || primTime >= baseTime || isNativeAndroidApp()) {
+            map.set(item.id, item);
+          }
+        }
       }
     }
     const items = Array.from(map.values());
@@ -750,18 +770,16 @@ export const AppProvider: React.FC<{
           const nativeHasData =
             hasAnySnapshotRecords(parsed) ||
             Object.keys(parsed.deletedIds || {}).length > 0;
-          if (nativeHasData) {
-            applyServerData(parsed);
-            lastNativeSavedJsonRef.current = lastSyncedSnapshotJsonRef.current;
-          } else if (hasAnySnapshotRecords(localBootSnap)) {
+          if (nativeHasData && hasAnySnapshotRecords(localBootSnap)) {
             const mergedBoot = mergeSnapshotsClientSide(localBootSnap, parsed);
             applyServerData(mergedBoot);
-            const mergedStr = JSON.stringify(mergedBoot);
-            lastNativeSavedJsonRef.current = mergedStr;
-            saveNativeStoreJson(mergedStr);
+          } else if (nativeHasData) {
+            applyServerData(parsed);
+          } else if (hasAnySnapshotRecords(localBootSnap)) {
+            const mergedBoot = mergeSnapshotsClientSide(parsed, localBootSnap);
+            applyServerData(mergedBoot);
           } else {
             applyServerData(parsed);
-            lastNativeSavedJsonRef.current = lastSyncedSnapshotJsonRef.current;
           }
         }
       } catch {
@@ -775,15 +793,21 @@ export const AppProvider: React.FC<{
       saveNativeStoreJson(initialStr);
     }
     nativeHydratedRef.current = true;
+    pairNativeMcpWithCode(DEFAULT_INFINITY_CLOUD_URL, 'AUTO');
+    configureNativeMcpSync(DEFAULT_INFINITY_CLOUD_URL, '');
     triggerNativeMcpSyncNow();
 
     const unsubRemote = subscribeNativeRemoteState((stateJson, revision) => {
       try {
         const parsed = JSON.parse(stateJson) as Partial<ReturnType<typeof buildCurrentSnapshot>>;
         if (parsed && typeof parsed === 'object') {
-          updateSyncMeta({ revision, lastSyncAt: new Date().toISOString() });
+          updateSyncMeta({
+            revision,
+            online: true,
+            lastSyncAt: new Date().toISOString(),
+            lastSyncError: null
+          });
           applyServerData(parsed);
-          lastNativeSavedJsonRef.current = lastSyncedSnapshotJsonRef.current;
         }
       } catch {
         // Ignore malformed remote payload
@@ -806,13 +830,14 @@ export const AppProvider: React.FC<{
   const fetchBestRemoteStoreForWeb = async (): Promise<RemoteStorePayload | null> => {
     let endpoint = resolveBackendEndpoint('/api/internal/state');
     if (!endpoint.url) return null;
+    const isNative = isNativeAndroidApp();
 
     try {
       let res = await fetch(endpoint.url, {
         headers: endpoint.headers,
-        credentials: 'include'
+        credentials: isNative ? 'omit' : 'include'
       });
-      if (res.status === 401) {
+      if (res.status === 401 && !isNative) {
         const refreshed = await refreshOwnerServerSessionIfPossible();
         if (refreshed) {
           endpoint = resolveBackendEndpoint('/api/internal/state');
@@ -827,8 +852,17 @@ export const AppProvider: React.FC<{
       if (res.ok) {
         return (await res.json()) as RemoteStorePayload;
       }
+      updateSyncMeta({
+        lastSyncError:
+          res.status === 401
+            ? 'Sitzung wird erneuert – bitte kurz warten oder auf Synchronisieren tippen'
+            : `Server-Abfrage fehlgeschlagen (HTTP ${res.status})`
+      });
     } catch {
-      // Offline / network error tolerance
+      updateSyncMeta({
+        online: typeof navigator !== 'undefined' ? navigator.onLine : false,
+        lastSyncError: 'Offline oder Server vorübergehend nicht erreichbar'
+      });
     }
 
     return null;
@@ -842,6 +876,7 @@ export const AppProvider: React.FC<{
     ): Promise<boolean> => {
       let endpoint = resolveBackendEndpoint('/api/internal/state');
       if (!endpoint.url) return false;
+      const isNative = isNativeAndroidApp();
       if (typeof navigator !== 'undefined' && !navigator.onLine) {
         updateSyncMeta({
           online: false,
@@ -859,13 +894,14 @@ export const AppProvider: React.FC<{
         baseRevision: lastKnownRevisionRef.current,
         clientRevision: lastKnownRevisionRef.current,
         summary,
-        source: 'web'
+        source: isNative ? 'android' : 'web',
+        isPrimarySource: isNative
       });
 
       try {
         let res = await fetch(endpoint.url, {
           method: 'PUT',
-          credentials: 'include',
+          credentials: isNative ? 'omit' : 'include',
           headers: {
             'Content-Type': 'application/json',
             ...endpoint.headers
@@ -873,7 +909,7 @@ export const AppProvider: React.FC<{
           body: payloadStr
         });
 
-        if (res.status === 401) {
+        if (res.status === 401 && !isNative) {
           const refreshed = await refreshOwnerServerSessionIfPossible();
           if (refreshed) {
             endpoint = resolveBackendEndpoint('/api/internal/state');
@@ -943,13 +979,19 @@ export const AppProvider: React.FC<{
 
   const flushPendingAppSync = useCallback(async () => {
     if (isNativeAndroidApp()) {
+      pairNativeMcpWithCode(DEFAULT_INFINITY_CLOUD_URL, 'AUTO');
       configureNativeMcpSync(DEFAULT_INFINITY_CLOUD_URL, '');
       triggerNativeMcpSyncNow();
-      return;
     }
     const snap = buildCurrentSnapshot();
     const snapJson = JSON.stringify(snap);
-    await pushSnapshotToServer(snap, snapJson, 'Manueller Abgleich aus Web-App');
+    await pushSnapshotToServer(
+      snap,
+      snapJson,
+      isNativeAndroidApp()
+        ? 'Manueller Abgleich von Primärquelle (Pixel 10 Pro)'
+        : 'Manueller Abgleich aus Web-App'
+    );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     customers,
@@ -964,17 +1006,19 @@ export const AppProvider: React.FC<{
     materials,
     expenses,
     taxSettings,
+    deletedIds,
     pushSnapshotToServer
   ]);
 
   const refreshFromServer = useCallback(async () => {
     if (isNativeAndroidApp()) {
+      pairNativeMcpWithCode(DEFAULT_INFINITY_CLOUD_URL, 'AUTO');
       configureNativeMcpSync(DEFAULT_INFINITY_CLOUD_URL, '');
       triggerNativeMcpSyncNow();
-      return;
     }
     updateSyncMeta({ syncInFlight: true });
     try {
+      const localSnap = buildCurrentSnapshot();
       const store = await fetchBestRemoteStoreForWeb();
       if (!store) {
         updateSyncMeta({
@@ -983,7 +1027,33 @@ export const AppProvider: React.FC<{
         });
         return;
       }
-      if (store.data) {
+
+      const hasLocalData = hasAnySnapshotRecords(localSnap);
+      const hasRemoteData = hasAnySnapshotRecords(store.data);
+      const normalizedRemote = normalizeRemoteSnapshot(store.data);
+      const merged = mergeSnapshotsClientSide(normalizedRemote, localSnap);
+      const mergedJson = JSON.stringify(merged);
+      const remoteJson = JSON.stringify(normalizedRemote);
+
+      if (
+        hasLocalData &&
+        (!hasRemoteData ||
+          lastKnownRevisionRef.current > store.revision ||
+          pendingSyncCountRef.current > 0 ||
+          mergedJson !== remoteJson)
+      ) {
+        applyServerData(merged);
+        await pushSnapshotToServer(
+          merged,
+          mergedJson,
+          isNativeAndroidApp()
+            ? 'Abgleich von Primärquelle (Pixel 10 Pro)'
+            : 'Abgleich aus Web-App'
+        );
+        return;
+      }
+
+      if (store.data && (hasRemoteData || store.revision > 0)) {
         applyServerData(store.data);
       }
       updateSyncMeta({
@@ -1002,29 +1072,74 @@ export const AppProvider: React.FC<{
       });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [updateSyncMeta]);
+  }, [
+    customers,
+    properties,
+    appointments,
+    workRecords,
+    invoices,
+    inquiries,
+    offers,
+    orders,
+    equipments,
+    materials,
+    expenses,
+    taxSettings,
+    deletedIds,
+    pushSnapshotToServer,
+    updateSyncMeta
+  ]);
 
   useEffect(() => {
-    if (isNativeAndroidApp()) {
-      serverSyncInitializedRef.current = true;
-      return;
-    }
-    if (!ownerAuthenticated) {
+    if (!isNativeAndroidApp() && !ownerAuthenticated) {
       serverSyncInitializedRef.current = false;
       return;
     }
 
-    void validateFirestoreBootConnection();
+    if (!isNativeAndroidApp()) {
+      void validateFirestoreBootConnection();
+    }
 
     let cancelled = false;
     let eventSource: EventSource | null = null;
 
     const pullLatestFromServerIfIdle = async () => {
-      if (cancelled || pendingSyncCountRef.current > 0) return;
+      if (cancelled) return;
+      if (pendingSyncCountRef.current > 0) {
+        const currentSnap = buildCurrentSnapshot();
+        await pushSnapshotToServer(
+          currentSnap,
+          JSON.stringify(currentSnap),
+          isNativeAndroidApp()
+            ? 'Nachsynchronisation von Primärquelle (Pixel 10 Pro)'
+            : 'Nachsynchronisation ausstehender Änderungen'
+        );
+        return;
+      }
       const store = await fetchBestRemoteStoreForWeb();
       if (!store || cancelled) return;
-      if (store.data && (store.revision > 0 || hasAnySnapshotRecords(store.data))) {
-        const incomingSerialized = JSON.stringify(store.data);
+
+      const localSnap = buildCurrentSnapshot();
+      const hasLocalData = hasAnySnapshotRecords(localSnap);
+      const hasRemoteData = hasAnySnapshotRecords(store.data);
+
+      if (hasLocalData && (!hasRemoteData || lastKnownRevisionRef.current > store.revision)) {
+        const merged = mergeSnapshotsClientSide(store.data, localSnap);
+        const mergedJson = JSON.stringify(merged);
+        applyServerData(merged);
+        await pushSnapshotToServer(
+          merged,
+          mergedJson,
+          isNativeAndroidApp()
+            ? 'Primärquellen-Abgleich (Pixel 10 Pro)'
+            : 'Datenstand-Abgleich mit Server'
+        );
+        return;
+      }
+
+      if (store.data && (store.revision > 0 || hasRemoteData)) {
+        const normalizedRemote = normalizeRemoteSnapshot(store.data);
+        const incomingSerialized = JSON.stringify(normalizedRemote);
         if (
           incomingSerialized !== lastSyncedSnapshotJsonRef.current ||
           store.revision !== lastKnownRevisionRef.current
@@ -1037,12 +1152,20 @@ export const AppProvider: React.FC<{
             lastActor: store.lastActor || null,
             lastAndroidSyncAt: store.lastAndroidSyncAt || null
           });
-          applyServerData(store.data);
+          applyServerData(normalizedRemote);
+        } else {
+          updateSyncMeta({
+            online: true,
+            lastSyncError: null,
+            lastActor: store.lastActor || null,
+            lastAndroidSyncAt: store.lastAndroidSyncAt || null
+          });
         }
       }
     };
 
     const connectEventStream = () => {
+      if (isNativeAndroidApp()) return;
       if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
         eventSource?.close();
         eventSource = null;
@@ -1084,32 +1207,44 @@ export const AppProvider: React.FC<{
           lastTrackedMutationJsonRef.current = localJson;
         }
 
-        if (pendingSyncCountRef.current > 0) {
-          const flushed = await pushSnapshotToServer(
-            localSnap,
-            localJson,
-            'Nachsynchronisation ausstehender Offline-Änderungen'
-          );
-          if (flushed) {
-            serverSyncInitializedRef.current = true;
-            connectEventStream();
-            return;
-          }
-        }
-
         const store = await fetchBestRemoteStoreForWeb();
         if (!store || cancelled) {
+          if (pendingSyncCountRef.current > 0) {
+            await pushSnapshotToServer(
+              localSnap,
+              localJson,
+              isNativeAndroidApp()
+                ? 'Synchronisation von Primärquelle (Pixel 10 Pro)'
+                : 'Nachsynchronisation ausstehender Änderungen'
+            );
+          }
           serverSyncInitializedRef.current = true;
           return;
         }
 
         const hasLocalData = hasAnySnapshotRecords(localSnap);
         const hasRemoteData = hasAnySnapshotRecords(store.data);
+        const normalizedRemote = normalizeRemoteSnapshot(store.data);
+        const remoteJson = JSON.stringify(normalizedRemote);
+        const merged = mergeSnapshotsClientSide(normalizedRemote, localSnap);
+        const mergedJson = JSON.stringify(merged);
 
-        if (!hasRemoteData && hasLocalData) {
-          updateSyncMeta({ pendingSyncCount: Math.max(1, pendingSyncCountRef.current) });
-          await pushSnapshotToServer(localSnap, localJson, 'Initiale Synchronisation aus Web-App');
-        } else if (store.data && (hasRemoteData || store.revision > 0) && pendingSyncCountRef.current === 0) {
+        if (
+          hasLocalData &&
+          (!hasRemoteData ||
+            pendingSyncCountRef.current > 0 ||
+            lastKnownRevisionRef.current > store.revision ||
+            mergedJson !== remoteJson)
+        ) {
+          applyServerData(merged);
+          await pushSnapshotToServer(
+            merged,
+            mergedJson,
+            isNativeAndroidApp()
+              ? 'Synchronisation von Primärquelle (Pixel 10 Pro)'
+              : 'Abgleich lokaler & Server-Daten'
+          );
+        } else if (store.data && (hasRemoteData || store.revision > 0)) {
           updateSyncMeta({
             revision: store.revision,
             online: true,
@@ -1118,7 +1253,7 @@ export const AppProvider: React.FC<{
             lastActor: store.lastActor || null,
             lastAndroidSyncAt: store.lastAndroidSyncAt || null
           });
-          applyServerData(store.data);
+          applyServerData(normalizedRemote);
         } else {
           lastSyncedSnapshotJsonRef.current = localJson;
           lastTrackedMutationJsonRef.current = localJson;
@@ -1172,6 +1307,14 @@ export const AppProvider: React.FC<{
       }
     };
 
+    const unsubOwner = !isNativeAndroidApp()
+      ? subscribeOwnerSession((state) => {
+          if (state.authenticated && !cancelled) {
+            void initSync();
+          }
+        })
+      : () => {};
+
     void initSync();
     window.addEventListener('online', handleBrowserOnline);
     window.addEventListener('offline', handleBrowserOffline);
@@ -1179,6 +1322,7 @@ export const AppProvider: React.FC<{
 
     return () => {
       cancelled = true;
+      unsubOwner();
       clearInterval(pollTimer);
       window.removeEventListener('online', handleBrowserOnline);
       window.removeEventListener('offline', handleBrowserOffline);
@@ -1194,13 +1338,15 @@ export const AppProvider: React.FC<{
 
     if (isNativeAndroidApp()) {
       if (!nativeHydratedRef.current) return;
-      if (snapJson === lastNativeSavedJsonRef.current) return;
-      lastNativeSavedJsonRef.current = snapJson;
-      saveNativeStoreJson(snapJson);
+      if (snapJson !== lastNativeSavedJsonRef.current) {
+        lastNativeSavedJsonRef.current = snapJson;
+        saveNativeStoreJson(snapJson);
+      }
+    } else if (!ownerAuthenticated) {
       return;
     }
 
-    if (!ownerAuthenticated || !serverSyncInitializedRef.current) return;
+    if (!serverSyncInitializedRef.current) return;
     if (snapJson === lastSyncedSnapshotJsonRef.current) return;
 
     if (snapJson !== lastTrackedMutationJsonRef.current) {
@@ -1211,7 +1357,11 @@ export const AppProvider: React.FC<{
     }
 
     const timer = setTimeout(() => {
-      void pushSnapshotToServer(snap, snapJson, 'Änderung in App');
+      void pushSnapshotToServer(
+        snap,
+        snapJson,
+        isNativeAndroidApp() ? 'Änderung auf Pixel 10 Pro' : 'Änderung in Web-App'
+      );
     }, 180);
 
     return () => clearTimeout(timer);

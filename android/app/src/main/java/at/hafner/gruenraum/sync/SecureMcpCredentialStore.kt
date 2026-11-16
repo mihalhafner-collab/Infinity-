@@ -158,7 +158,7 @@ class SecureMcpCredentialStore(private val context: Context) {
         private const val TRANSFORMATION = "AES/GCM/NoPadding"
         private const val IV_LENGTH_BYTES = 12
         private const val GCM_TAG_BITS = 128
-        const val PRIMARY_CLOUD_RUN_URL = "https://hafner-gruenraum-523881801839.europe-west1.run.app"
+        const val PRIMARY_CLOUD_RUN_URL = "https://infinity-hafner.ai.studio"
         const val DEFAULT_PIXEL10_DEVICE_TOKEN = "hgh_px10_pixel10pro_primary_sync_token_2026"
 
         fun sanitizeBaseUrl(raw: String): String {
@@ -170,8 +170,9 @@ class SecureMcpCredentialStore(private val context: Context) {
                 cleaned = "https://" + cleaned.removePrefix("http://")
             }
             if (
-                cleaned.contains("infinity-hafner.ai.studio", ignoreCase = true) ||
-                cleaned.contains("hafner-gruenraum.ai.studio", ignoreCase = true)
+                cleaned.contains("523881801839.europe-west1.run.app", ignoreCase = true) ||
+                cleaned.contains("hafner-gruenraum.ai.studio", ignoreCase = true) ||
+                cleaned.contains("infinity-hafner.ai.studio", ignoreCase = true)
             ) {
                 cleaned = PRIMARY_CLOUD_RUN_URL
             }

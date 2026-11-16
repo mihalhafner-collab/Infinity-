@@ -4,10 +4,10 @@ import { doc, getDocFromServer, getFirestore } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 
 const SAME_ORIGIN_AUTH_HOSTS = new Set([
+  'infinity-hafner.ai.studio',
   'ais-dev-usuarrctzvo6yzyghmhedg-947976408951.europe-west2.run.app',
   'ais-pre-usuarrctzvo6yzyghmhedg-947976408951.europe-west2.run.app',
-  'ais-mob-usuarrctzvo6yzyghmhedg-947976408951.europe-west2.run.app',
-  'hafner-gruenraum-523881801839.europe-west1.run.app'
+  'ais-mob-usuarrctzvo6yzyghmhedg-947976408951.europe-west2.run.app'
 ]);
 
 function resolveEffectiveAuthDomain(): string {
@@ -16,7 +16,9 @@ function resolveEffectiveAuthDomain(): string {
     if (
       window.location.protocol === 'https:' &&
       hostname !== 'appassets.androidplatform.net' &&
-      SAME_ORIGIN_AUTH_HOSTS.has(hostname)
+      (SAME_ORIGIN_AUTH_HOSTS.has(hostname) ||
+        hostname.endsWith('.ai.studio') ||
+        hostname.endsWith('.run.app'))
     ) {
       return window.location.host;
     }

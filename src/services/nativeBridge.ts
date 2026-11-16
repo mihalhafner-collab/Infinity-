@@ -121,16 +121,17 @@ const pixelTunnelStatusListeners = new Set<PixelTunnelStatusListener>();
 
 const LEGACY_REMOTE_URL_KEY = 'hafner_remote_mcp_base_url';
 const LEGACY_REMOTE_TOKEN_KEY = 'hafner_remote_mcp_token';
-export const DEFAULT_INFINITY_CLOUD_URL =
-  'https://hafner-gruenraum-523881801839.europe-west1.run.app';
+export const DEFAULT_INFINITY_CLOUD_URL = 'https://infinity-hafner.ai.studio';
 
 export function normalizeInfinityCloudBaseUrl(raw?: string | null): string {
   const trimmed = (raw || '').trim();
   if (!trimmed) return DEFAULT_INFINITY_CLOUD_URL;
   const withoutMcp = trimmed.replace(/\/mcp.*$/i, '').replace(/\/+$/, '');
+  const lower = withoutMcp.toLowerCase();
   if (
-    withoutMcp.toLowerCase().includes('infinity-hafner.ai.studio') ||
-    withoutMcp.toLowerCase().includes('hafner-gruenraum.ai.studio')
+    lower.includes('523881801839.europe-west1.run.app') ||
+    lower.includes('hafner-gruenraum.ai.studio') ||
+    lower.includes('infinity-hafner.ai.studio')
   ) {
     return DEFAULT_INFINITY_CLOUD_URL;
   }
@@ -595,8 +596,22 @@ export function resolveBackendEndpoint(path: string): {
 } {
   const cleanPath = path.startsWith('/') ? path : `/${path}`;
   if (isNativeAndroidApp()) {
-    // Im nativen Android-Betrieb übernimmt Kotlin NativeMcpSyncManager alle Daten-Synchronisationen
-    return { url: null, headers: {} };
+    if (cleanPath.startsWith('/api/internal/events')) {
+      return { url: null, headers: {} };
+    }
+    const status = getNativeMcpSyncStatus();
+    const base = normalizeInfinityCloudBaseUrl(status?.baseUrl || DEFAULT_INFINITY_CLOUD_URL);
+    const headers: Record<string, string> = {
+      'X-Device-Model': 'Google Pixel 10 Pro'
+    };
+    const token = status?.deviceToken?.trim() || status?.revealedToken?.trim();
+    if (token && token.length >= 16) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+    return {
+      url: `${base}${cleanPath}`,
+      headers
+    };
   }
   const headers: Record<string, string> = {};
   let finalUrl = cleanPath;
