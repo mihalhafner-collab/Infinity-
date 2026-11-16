@@ -25,13 +25,17 @@ import { UsedMaterial } from '../../types/index.ts';
 import { getCustomerBillingRecipient } from '../../utils/invoicePdf.ts';
 import { CustomerSelectField } from '../common/CustomerSelectField.tsx';
 
+const WORK_TITLE_PRESETS = [
+  'Gartenpflege',
+  'Garten- und Außenanlagenreinigung',
+  'Pflege der Außenanlage'
+];
+
 const ACTIVITY_GROUPS = [
   {
     group: 'Garten & Grünanlage',
     items: [
-      'Gartenpflege',
-      'Pflege der Außenanlage',
-      'Garten- und Außenanlagenreinigung',
+      ...WORK_TITLE_PRESETS,
       'Rasenpflege / Mähen',
       'Heckenschnitt',
       'Strauch- & Baumschnitt',
@@ -357,7 +361,7 @@ export const ArbeitModal: React.FC = () => {
   } = useApp();
 
   const isEditing = activeModal === 'ARBEIT_BEARBEITEN';
-  const isAddingManual = activeModal === 'ARBEIT_NACHTRAGEN';
+  const isCreating = activeModal === 'ARBEIT_NACHTRAGEN';
 
   const [title, setTitle] = useState('');
   const [selectedActivities, setSelectedActivities] = useState<string[]>([]);
@@ -478,7 +482,7 @@ export const ArbeitModal: React.FC = () => {
         }))
       );
       setOpenSeq((s) => s + 1);
-    } else if (isAddingManual) {
+    } else if (isCreating) {
       if (prefilledWorkTitle) {
         setTitle(prefilledWorkTitle);
         setSelectedActivities([]);
@@ -511,7 +515,7 @@ export const ArbeitModal: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeModal, selectedWorkRecordId]);
 
-  if (!isEditing && !isAddingManual) return null;
+  if (!isEditing && !isCreating) return null;
 
   const toggleActivityItem = (act: string) => {
     setSelectedActivities((prev) => {
@@ -588,8 +592,8 @@ export const ArbeitModal: React.FC = () => {
     setActiveTimeField(field);
   };
 
-  const handleConfirmClockPicker = () => {
-    const formatted = `${String(draftHour).padStart(2, '0')}:${String(draftMinute).padStart(2, '0')}`;
+  const handleConfirmClockPicker = (hour = draftHour, minute = draftMinute) => {
+    const formatted = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
     if (activeTimeField === 'start') {
       const prevSpan = parseTimeToMinutes(endTime) - parseTimeToMinutes(startTime);
       const keepSpan = prevSpan > 0 ? prevSpan : 60;
@@ -603,7 +607,7 @@ export const ArbeitModal: React.FC = () => {
         setEndTime(nextEndStr);
       }
 
-      if (!isEditing) {
+      if (isCreating) {
         // Automatisch zur Endzeitanzeige springen (17:00 bleibt voreingestellt)
         openClockPicker('end', nextEndStr);
       } else {
@@ -1234,8 +1238,8 @@ export const ArbeitModal: React.FC = () => {
 
             {/* Optische Pixel-Uhrzeitauswahl (Zifferblatt) mit automatischem Sprung von Beginn -> Ende (17:00) */}
             {activeTimeField !== null && (() => {
-              const OUTER_HOURS = [0, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23];
-              const INNER_HOURS = [12, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
+              const OUTER_HOURS = [12, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
+              const INNER_HOURS = [0, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23];
               const MINUTES_RING = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55];
 
               const DIAL_SIZE = 248;
@@ -1251,7 +1255,7 @@ export const ArbeitModal: React.FC = () => {
                 };
               };
 
-              const isInnerHour = draftHour >= 1 && draftHour <= 12;
+              const isInnerHour = draftHour === 0 || draftHour >= 13;
               const selectedHandPos =
                 clockStep === 'hour'
                   ? getAngleCoords(draftHour % 12, isInnerHour ? INNER_R : OUTER_R)
@@ -1259,7 +1263,7 @@ export const ArbeitModal: React.FC = () => {
 
               const updateFromPointer = (clientX: number, clientY: number) => {
                 const el = clockDialRef.current;
-                if (!el) return;
+                if (!el) return null;
                 const rect = el.getBoundingClientRect();
                 const dx = clientX - (rect.left + rect.width / 2);
                 const dy = clientY - (rect.top + rect.height / 2);
@@ -1269,13 +1273,14 @@ export const ArbeitModal: React.FC = () => {
 
                 if (clockStep === 'hour') {
                   const innerThreshold = (OUTER_R + INNER_R) / 2;
-                  if (dist < innerThreshold) {
-                    setDraftHour(sector === 0 ? 12 : sector);
-                  } else {
-                    setDraftHour(sector === 0 ? 0 : sector + 12);
-                  }
+                  const hour = dist < innerThreshold
+                    ? INNER_HOURS[sector] : OUTER_HOURS[sector];
+                  setDraftHour(hour);
+                  return { hour, minute: draftMinute };
                 } else {
-                  setDraftMinute((sector * 5) % 60);
+                  const minute = (sector * 5) % 60;
+                  setDraftMinute(minute);
+                  return { hour: draftHour, minute };
                 }
               };
 
@@ -1345,9 +1350,11 @@ export const ArbeitModal: React.FC = () => {
                           e.currentTarget.releasePointerCapture(e.pointerId);
                         }
                         setIsClockDragging(false);
-                        updateFromPointer(e.clientX, e.clientY);
+                        const selected = updateFromPointer(e.clientX, e.clientY);
                         if (clockStep === 'hour') {
                           setClockStep('minute');
+                        } else if (selected && isCreating && activeTimeField === 'start') {
+                          handleConfirmClockPicker(selected.hour, selected.minute);
                         }
                       }}
                       style={{ width: DIAL_SIZE, height: DIAL_SIZE }}
@@ -1404,7 +1411,7 @@ export const ArbeitModal: React.FC = () => {
                                   isSel ? 'text-white font-bold' : 'text-slate-500'
                                 }`}
                               >
-                                {h}
+                                {String(h).padStart(2, '0')}
                               </span>
                             );
                           })}
@@ -1439,10 +1446,11 @@ export const ArbeitModal: React.FC = () => {
                       </button>
                       <button
                         type="button"
-                        onClick={handleConfirmClockPicker}
+                        onClick={() => handleConfirmClockPicker()}
                         className="px-5 h-10 rounded-xl bg-[#3138A0] hover:bg-[#272d82] active:scale-98 text-white text-xs font-bold shadow-xs transition-all"
                       >
-                        OK
+                        {isCreating && activeTimeField === 'start'
+                          ? `Weiter zu Ende (${endTime})` : 'OK'}
                       </button>
                     </div>
                   </div>

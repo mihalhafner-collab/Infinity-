@@ -1251,7 +1251,8 @@ async function startServer() {
     if (
       !isAndroidPrimary &&
       !hasSnapshotAnyRecords(body.data) &&
-      hasSnapshotAnyRecords(current.data)
+      hasSnapshotAnyRecords(current.data) &&
+      current.revision > minRevisionFloor
     ) {
       res.json({
         revision: current.revision,
@@ -1264,8 +1265,7 @@ async function startServer() {
       return;
     }
 
-    const serverHasUnseenChanges =
-      hasSnapshotAnyRecords(current.data) && current.revision > minRevisionFloor;
+    const serverHasUnseenChanges = current.revision > minRevisionFloor;
 
     let shouldMerge = false;
     let nextSnapshot: AppDataSnapshot = {

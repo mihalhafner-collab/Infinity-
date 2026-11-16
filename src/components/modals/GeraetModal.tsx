@@ -123,6 +123,7 @@ export const GeraetModal: React.FC = () => {
     delete cleanExistingSpecs.updated_at;
     delete cleanExistingSpecs.has_photo;
     delete cleanExistingSpecs.photo_count;
+    delete cleanExistingSpecs.remove_photo;
     setSpecs(cleanExistingSpecs);
     setCustomSpecKey('');
     setCustomSpecVal('');
@@ -145,6 +146,7 @@ export const GeraetModal: React.FC = () => {
     if (initializedModalKeyRef.current === modalKey) {
       return;
     }
+    if (isEditing && !existingItem) return;
     initializedModalKeyRef.current = modalKey;
 
     setConfirmDelete(false);
@@ -976,17 +978,17 @@ export const GeraetModal: React.FC = () => {
                   />
                 </label>
 
-                {normalizedCurrentPhoto && (
-                  <button
-                    type="button"
-                    onClick={handleRemovePhoto}
-                    className="w-9 h-9 bg-red-50 hover:bg-red-100 text-[#B42318] rounded-xl flex items-center justify-center shrink-0"
-                    title="Foto entfernen"
-                  >
-                    <Trash2 size={14} />
-                  </button>
-                )}
               </div>
+              {normalizedCurrentPhoto && (
+                <button
+                  type="button"
+                  onClick={handleRemovePhoto}
+                  className="h-8 px-2 bg-red-50 hover:bg-red-100 text-[#B42318] rounded-xl flex items-center gap-1 text-[11px] font-bold"
+                >
+                  <Trash2 size={14} />
+                  Foto entfernen
+                </button>
+              )}
             </div>
           </div>
 

@@ -1558,6 +1558,7 @@ function mutateUpsertOnSnapshotInner(
         k !== 'updated_at' &&
         k !== 'has_photo' &&
         k !== 'photo_count' &&
+        k !== 'remove_photo' &&
         v !== undefined &&
         v !== null &&
         String(v).trim() !== ''
@@ -1571,6 +1572,7 @@ function mutateUpsertOnSnapshotInner(
         k === 'updated_at' ||
         k === 'has_photo' ||
         k === 'photo_count' ||
+        k === 'remove_photo' ||
         v === null ||
         v === undefined ||
         String(v).trim() === ''
