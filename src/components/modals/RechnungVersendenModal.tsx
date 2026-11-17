@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { User as FirebaseUser } from 'firebase/auth';
-import { useApp, usePixelBackLayer } from '../../context/AppContext.tsx';
+import { useApp } from '../../context/AppContext.tsx';
 import { InvoicePaperPreview } from '../common/InvoicePaperPreview.tsx';
 import { GoogleSignInButton } from '../common/GoogleSignInButton.tsx';
 import {
@@ -20,6 +20,7 @@ import {
   resolveInvoiceDisplayData
 } from '../../utils/invoicePdf.ts';
 import {
+  OWNER_EMAIL,
   getAccessToken,
   googleSignIn,
   logoutGmail,
@@ -28,7 +29,11 @@ import {
 } from '../../services/gmailService.ts';
 import {
   downloadOrSaveBlob,
+  getNativeGmailConfig,
   isNativeAndroidApp,
+  notifyMailSentNatively,
+  saveNativeGmailAppPassword,
+  sendInvoiceEmailAutomaticallyNatively,
   shareDocumentNatively
 } from '../../services/nativeBridge.ts';
 import {
@@ -39,6 +44,7 @@ import {
   Download,
   Eye,
   FileText,
+  KeyRound,
   Loader2,
   LogOut,
   Mail,
@@ -77,7 +83,8 @@ export const RechnungVersendenModal: React.FC = () => {
     customers,
     workRecords,
     updateInvoice,
-    updateCustomer
+    updateCustomer,
+    setUndoToast
   } = useApp();
 
   const invoice = invoices.find((i) => i.id === sendingInvoiceId) || null;
@@ -99,12 +106,18 @@ export const RechnungVersendenModal: React.FC = () => {
   const [customizeMailOpen, setCustomizeMailOpen] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
 
-  // Expliziter Bestätigungsdialog vor E-Mail-Versand über Gmail API
-  const [confirmSendOpen, setConfirmSendOpen] = useState(false);
+  // Direkt-Versand ohne zweiten Bestätigungsdialog (dieses Sheet ist die letzte Bestätigung)
   const [isSending, setIsSending] = useState(false);
-  usePixelBackLayer(confirmSendOpen && !isSending, () => setConfirmSendOpen(false));
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
+
+  // Nativer Gmail-Direktversand auf dem Pixel 10 Pro (Titan M2 Keystore)
+  const [nativeGmailCfg, setNativeGmailCfg] = useState(() => getNativeGmailConfig());
+  const [showAppPasswordBox, setShowAppPasswordBox] = useState(false);
+  const [senderEmailDraft, setSenderEmailDraft] = useState(
+    () => getNativeGmailConfig()?.senderEmail || OWNER_EMAIL
+  );
+  const [appPasswordDraft, setAppPasswordDraft] = useState('');
 
   const [pdfArtifact, setPdfArtifact] = useState<{
     blob: Blob;
@@ -154,8 +167,14 @@ export const RechnungVersendenModal: React.FC = () => {
       setRecipientEmail(initEmail);
       setRecipientPhone(initPhone);
 
+      const latestNativeCfg = getNativeGmailConfig();
+      setNativeGmailCfg(latestNativeCfg);
+      setSenderEmailDraft(latestNativeCfg?.senderEmail || OWNER_EMAIL);
+      setShowAppPasswordBox(false);
+      setAppPasswordDraft('');
+
       // Sinnvolle Kanal-Vorauswahl: Gmail wenn E-Mail hinterlegt oder Token aktiv, sonst WhatsApp bei vorhandener Telefonnummer
-      if (!initEmail && initPhone && !hasToken) {
+      if (!initEmail && initPhone && !hasToken && !isNativeAndroidApp()) {
         setChannel('whatsapp');
       } else {
         setChannel('gmail');
@@ -207,7 +226,6 @@ export const RechnungVersendenModal: React.FC = () => {
 
       setCustomizeMailOpen(false);
       setShowPreview(false);
-      setConfirmSendOpen(false);
       setIsSending(false);
       setErrorMessage(null);
       setFeedbackMessage(null);
@@ -263,45 +281,70 @@ export const RechnungVersendenModal: React.FC = () => {
 
   const isNativeAndroid = isNativeAndroidApp();
 
-  const handleRequestGmailSend = () => {
+  const finalizeSuccessfulMailSend = (cleanEmail: string) => {
+    const todayIso = new Date().toISOString().slice(0, 10);
+    updateInvoice(invoice.id, {
+      sent_at: todayIso,
+      sent_via: `Gmail PDF (${cleanEmail})`
+    });
+
+    if (customer && cleanEmail !== customer.email) {
+      updateCustomer(customer.id, { email: cleanEmail });
+    }
+
+    // Kurze Benachrichtigung in der Android App (In-App Banner + Nativer Android Toast/Notification)
+    notifyMailSentNatively(cleanEmail, invoice.invoice_number);
+    setUndoToast({
+      visible: true,
+      message: `PDF-Rechnung ${invoice.invoice_number} an ${cleanEmail} versendet`
+    });
+    setSendingInvoiceId(null);
+  };
+
+  // Bei Aktivierung von „PDF per Gmail senden“ wird die E-Mail sofort automatisch versendet
+  const handleSendGmailDirectly = async () => {
     setErrorMessage(null);
     const cleanEmail = recipientEmail.trim();
     if (!cleanEmail || !cleanEmail.includes('@')) {
       setErrorMessage('Bitte eine gültige Empfänger-E-Mail-Adresse eingeben.');
       return;
     }
+
     if (!hasToken && !isNativeAndroid) {
       setErrorMessage('Bitte zuerst über „Sign in with Google“ mit Gmail verbinden.');
       return;
     }
-    setConfirmSendOpen(true);
-  };
 
-  const handleConfirmAndSendGmail = async () => {
-    setErrorMessage(null);
     setIsSending(true);
     try {
       const freshPdf = pdfArtifact || (await generateInvoicePdfAsync(resolvedData));
-      const cleanEmail = recipientEmail.trim();
       const cleanSubject = emailSubject.trim() || `Rechnungs Nr. ${invoice.invoice_number}`;
 
-      if (isNativeAndroid && !hasToken) {
-        const opened = await shareDocumentNatively({
+      // Falls der Nutzer gerade ein Google App-Passwort eingegeben hat, zuerst im Titan M2 Keystore sichern
+      if (isNativeAndroid && appPasswordDraft.replace(/\s+/g, '').length >= 8) {
+        const updatedCfg = saveNativeGmailAppPassword(
+          senderEmailDraft.trim() || OWNER_EMAIL,
+          appPasswordDraft
+        );
+        setNativeGmailCfg(updatedCfg);
+        setAppPasswordDraft('');
+        setShowAppPasswordBox(false);
+      }
+
+      if (isNativeAndroid) {
+        const webToken = await getAccessToken();
+        await sendInvoiceEmailAutomaticallyNatively({
           blob: freshPdf.blob,
           filename: freshPdf.filename,
-          mimeType: 'application/pdf',
+          recipientEmail: cleanEmail,
           subject: cleanSubject,
           bodyText: emailBody,
-          channel: 'gmail',
-          recipientEmail: cleanEmail
+          invoiceNumber: invoice.invoice_number,
+          webAccessToken: webToken
         });
-        if (!opened) {
-          throw new Error('Gmail-App konnte auf dem Gerät nicht geöffnet werden.');
-        }
       } else {
         const token = await getAccessToken();
         if (!token) {
-          setConfirmSendOpen(false);
           setErrorMessage('Kein aktives Gmail-Zugriffstoken. Bitte erneut mit Google anmelden.');
           return;
         }
@@ -316,25 +359,46 @@ export const RechnungVersendenModal: React.FC = () => {
         });
       }
 
-      const todayIso = new Date().toISOString().slice(0, 10);
-      updateInvoice(invoice.id, {
-        sent_at: todayIso,
-        sent_via: `Gmail PDF (${cleanEmail})`
-      });
-
-      if (customer && cleanEmail !== customer.email) {
-        updateCustomer(customer.id, { email: cleanEmail });
-      }
-
-      setConfirmSendOpen(false);
-      setFeedbackMessage(`PDF-Rechnung per Gmail an ${cleanEmail} übergeben`);
-      setTimeout(() => {
-        setSendingInvoiceId(null);
-      }, 1000);
+      finalizeSuccessfulMailSend(cleanEmail);
     } catch (err) {
-      setConfirmSendOpen(false);
-      const msg = err instanceof Error ? err.message : 'Fehler beim Gmail-Versand.';
-      setErrorMessage(msg);
+      const rawMsg = err instanceof Error ? err.message : 'Fehler beim Gmail-Versand.';
+      if (rawMsg.startsWith('APP_PASSWORD_REQUIRED:')) {
+        setShowAppPasswordBox(true);
+        setErrorMessage(rawMsg.replace('APP_PASSWORD_REQUIRED:', '').trim());
+      } else {
+        setErrorMessage(rawMsg);
+      }
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  const handleOpenPixelGmailAppFallback = async () => {
+    setErrorMessage(null);
+    const cleanEmail = recipientEmail.trim();
+    if (!cleanEmail || !cleanEmail.includes('@')) {
+      setErrorMessage('Bitte eine gültige Empfänger-E-Mail-Adresse eingeben.');
+      return;
+    }
+    setIsSending(true);
+    try {
+      const freshPdf = pdfArtifact || (await generateInvoicePdfAsync(resolvedData));
+      const cleanSubject = emailSubject.trim() || `Rechnungs Nr. ${invoice.invoice_number}`;
+      const opened = await shareDocumentNatively({
+        blob: freshPdf.blob,
+        filename: freshPdf.filename,
+        mimeType: 'application/pdf',
+        subject: cleanSubject,
+        bodyText: emailBody,
+        channel: 'gmail',
+        recipientEmail: cleanEmail
+      });
+      if (!opened) {
+        throw new Error('Gmail-App konnte auf dem Gerät nicht geöffnet werden.');
+      }
+      finalizeSuccessfulMailSend(cleanEmail);
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : 'Fehler beim Öffnen der Gmail-App.');
     } finally {
       setIsSending(false);
     }
@@ -368,8 +432,11 @@ export const RechnungVersendenModal: React.FC = () => {
             sent_at: new Date().toISOString().slice(0, 10),
             sent_via: `${viaLabel} PDF${phoneSuffix}`
           });
-          setFeedbackMessage(`PDF-Rechnung über ${viaLabel} übergeben`);
-          setTimeout(() => setSendingInvoiceId(null), 900);
+          setUndoToast({
+            visible: true,
+            message: `PDF-Rechnung ${invoice.invoice_number} über ${viaLabel} übergeben`
+          });
+          setSendingInvoiceId(null);
           return;
         }
       }
@@ -390,8 +457,11 @@ export const RechnungVersendenModal: React.FC = () => {
           sent_at: new Date().toISOString().slice(0, 10),
           sent_via: `${viaLabel} PDF${phoneSuffix}`
         });
-        setFeedbackMessage(`PDF-Rechnung über ${viaLabel} gesendet`);
-        setTimeout(() => setSendingInvoiceId(null), 900);
+        setUndoToast({
+          visible: true,
+          message: `PDF-Rechnung ${invoice.invoice_number} über ${viaLabel} gesendet`
+        });
+        setSendingInvoiceId(null);
         return;
       }
 
@@ -405,8 +475,11 @@ export const RechnungVersendenModal: React.FC = () => {
           sent_at: new Date().toISOString().slice(0, 10),
           sent_via: `${viaLabel}${phoneSuffix}`
         });
-        setFeedbackMessage(`Über ${viaLabel} geteilt`);
-        setTimeout(() => setSendingInvoiceId(null), 900);
+        setUndoToast({
+          visible: true,
+          message: `Rechnung ${invoice.invoice_number} über ${viaLabel} geteilt`
+        });
+        setSendingInvoiceId(null);
         return;
       }
     } catch (err) {
@@ -589,9 +662,13 @@ export const RechnungVersendenModal: React.FC = () => {
                       <span>Trennen</span>
                     </button>
                   ) : isNativeAndroid ? (
-                    <span className="text-[10px] font-semibold text-[#2C7738] bg-emerald-50 px-2 py-0.5 rounded-md">
-                      Pixel Gmail-App bereit
-                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setShowAppPasswordBox((prev) => !prev)}
+                      className="text-[10px] font-semibold text-[#2C7738] bg-emerald-50 px-2 py-0.5 rounded-md flex items-center gap-1"
+                    >
+                      <span>Automatischer Direktversand</span>
+                    </button>
                   ) : (
                     <span className="text-[10px] font-semibold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md">
                       Anmeldung erforderlich
@@ -607,11 +684,68 @@ export const RechnungVersendenModal: React.FC = () => {
                     <Check size={14} className="text-[#2C7738] shrink-0" />
                   </div>
                 ) : isNativeAndroid ? (
-                  <div className="px-2.5 py-2 bg-emerald-50/70 border border-emerald-200 rounded-xl flex items-center justify-between">
-                    <span className="text-xs font-semibold text-[#2C7738] truncate">
-                      Übergabe inkl. PDF direkt an deine Pixel Gmail-App
-                    </span>
-                    <Check size={14} className="text-[#2C7738] shrink-0" />
+                  <div className="space-y-2">
+                    <div className="px-2.5 py-2 bg-emerald-50/70 border border-emerald-200 rounded-xl flex items-center justify-between gap-2">
+                      <span className="text-xs font-semibold text-[#2C7738] truncate">
+                        {nativeGmailCfg?.hasAppPassword || nativeGmailCfg?.hasOAuthToken
+                          ? `Automatischer Hintergrund-Versand (${nativeGmailCfg.senderEmail})`
+                          : 'Automatischer Gmail-Versand inkl. PDF bei Aktivierung'}
+                      </span>
+                      <Check size={14} className="text-[#2C7738] shrink-0" />
+                    </div>
+
+                    {showAppPasswordBox && (
+                      <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl space-y-2 animate-fade-in">
+                        <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-800">
+                          <KeyRound size={13} className="text-[#3138A0]" />
+                          <span>Einmalig Google App-Passwort hinterlegen (Titan M2)</span>
+                        </div>
+                        <input
+                          type="email"
+                          value={senderEmailDraft}
+                          onChange={(e) => setSenderEmailDraft(e.target.value)}
+                          placeholder="mihalhafner@gmail.com"
+                          className="w-full h-9 px-2.5 bg-white border border-slate-200 rounded-lg text-xs text-slate-900 font-semibold"
+                        />
+                        <input
+                          type="password"
+                          value={appPasswordDraft}
+                          onChange={(e) => setAppPasswordDraft(e.target.value)}
+                          placeholder="16-stelliges Google App-Passwort"
+                          className="w-full h-9 px-2.5 bg-white border border-slate-200 rounded-lg text-xs text-slate-900 font-mono"
+                        />
+                        <div className="flex items-center justify-between gap-2 pt-0.5">
+                          <button
+                            type="button"
+                            onClick={handleOpenPixelGmailAppFallback}
+                            disabled={isSending}
+                            className="text-[11px] font-semibold text-slate-600 underline"
+                          >
+                            Alternativ in Pixel Gmail-App öffnen
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (appPasswordDraft.replace(/\s+/g, '').length >= 8) {
+                                const updated = saveNativeGmailAppPassword(
+                                  senderEmailDraft.trim() || OWNER_EMAIL,
+                                  appPasswordDraft
+                                );
+                                setNativeGmailCfg(updated);
+                                setAppPasswordDraft('');
+                                setShowAppPasswordBox(false);
+                                setErrorMessage(null);
+                                void handleSendGmailDirectly();
+                              }
+                            }}
+                            disabled={appPasswordDraft.replace(/\s+/g, '').length < 8 || isSending}
+                            className="px-3 h-8 rounded-lg bg-[#3138A0] text-white text-[11px] font-bold disabled:opacity-50"
+                          >
+                            Speichern & Senden
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div className="space-y-1.5">
@@ -801,7 +935,7 @@ export const RechnungVersendenModal: React.FC = () => {
           )}
         </div>
 
-        {/* Primäre Sende-Leiste in der Daumenzone (Pixel 10 Pro) */}
+        {/* Primäre Sende-Leiste in der Daumenzone (Pixel 10 Pro) – Letzte Bestätigung */}
         <div className="pt-3 border-t border-slate-200/80 flex items-center gap-2 mt-1">
           <button
             type="button"
@@ -816,11 +950,20 @@ export const RechnungVersendenModal: React.FC = () => {
             <button
               type="button"
               disabled={isSending || (!hasToken && !isNativeAndroid)}
-              onClick={handleRequestGmailSend}
+              onClick={() => void handleSendGmailDirectly()}
               className="flex-1 h-12 bg-[#3138A0] hover:bg-[#272d82] disabled:opacity-50 active:scale-98 text-white font-semibold rounded-xl text-xs flex items-center justify-center gap-2 shadow-xs transition-all"
             >
-              <Send size={15} />
-              <span>PDF per Gmail senden</span>
+              {isSending ? (
+                <>
+                  <Loader2 size={15} className="animate-spin" />
+                  <span>Sende PDF automatisch...</span>
+                </>
+              ) : (
+                <>
+                  <Send size={15} />
+                  <span>PDF per Gmail senden</span>
+                </>
+              )}
             </button>
           )}
 
@@ -846,76 +989,6 @@ export const RechnungVersendenModal: React.FC = () => {
             </button>
           )}
         </div>
-
-        {/* Pflicht-Bestätigungsdialog vor E-Mail-Versand im Namen des Nutzers */}
-        {confirmSendOpen && (
-          <div className="absolute inset-0 z-50 bg-black/50 backdrop-blur-2xs rounded-t-3xl flex items-end p-4 animate-fade-in">
-            <div className="w-full bg-white border border-slate-200 rounded-3xl p-4 shadow-2xl space-y-3 text-xs text-slate-700">
-              <h3 className="text-sm font-bold text-slate-900">
-                PDF-Rechnung jetzt über Gmail senden?
-              </h3>
-              <p className="text-slate-600">
-                Folgende E-Mail wird mit angehängter PDF-Rechnung (inkl. Original-Logo) über Ihr Gmail-Konto versendet:
-              </p>
-
-              <div className="p-3 bg-slate-50 border border-slate-200 rounded-2xl space-y-1.5 text-[11px]">
-                <div className="flex justify-between gap-2">
-                  <span className="text-slate-500">Von:</span>
-                  <span className="font-semibold text-slate-900 truncate">
-                    {gmailUser?.email || 'Gmail-Konto'}
-                  </span>
-                </div>
-                <div className="flex justify-between gap-2">
-                  <span className="text-slate-500">An:</span>
-                  <span className="font-bold text-slate-900 truncate">
-                    {recipientEmail.trim()}
-                  </span>
-                </div>
-                <div className="flex justify-between gap-2">
-                  <span className="text-slate-500">Betreff:</span>
-                  <span className="font-semibold text-slate-900 truncate">
-                    {emailSubject}
-                  </span>
-                </div>
-                <div className="flex justify-between gap-2 pt-1 border-t border-slate-200">
-                  <span className="text-slate-500">PDF-Anhang:</span>
-                  <span className="font-bold text-[#2C7738] truncate">
-                    {displayFilename} ({formatEuro(resolvedData.totalAmount)})
-                  </span>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-2 pt-1">
-                <button
-                  type="button"
-                  disabled={isSending}
-                  onClick={() => setConfirmSendOpen(false)}
-                  className="flex-1 h-11 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-xl text-xs transition-colors"
-                >
-                  Abbrechen
-                </button>
-                <button
-                  type="button"
-                  disabled={isSending}
-                  onClick={handleConfirmAndSendGmail}
-                  className="flex-1 h-11 bg-[#3138A0] hover:bg-[#272d82] disabled:opacity-60 text-white font-semibold rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-xs transition-colors"
-                >
-                  {isSending ? (
-                    <>
-                      <Loader2 size={14} className="animate-spin" />
-                      <span>Sende PDF...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Send size={14} />
-                      <span>Bestätigen & Senden</span>
-                    </>
-                  )}
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
       </div>
     </div>
   );

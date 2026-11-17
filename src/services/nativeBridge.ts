@@ -80,6 +80,19 @@ interface HafnerNativeInterface {
     channel: string,
     recipientEmail: string
   ) => boolean;
+  sendGmailAutomatically?: (
+    requestId: string,
+    base64Data: string,
+    filename: string,
+    recipientEmail: string,
+    subject: string,
+    bodyText: string,
+    invoiceNumber: string,
+    webAccessToken: string
+  ) => void;
+  notifyMailSent?: (recipientEmail: string, invoiceNumber: string) => boolean;
+  getGmailConfigJson?: () => string;
+  saveGmailAppPassword?: (senderEmail: string, appPassword: string) => string;
   readDeviceCalendar: (requestId: string, startDateIso: string, endDateIso: string) => void;
   upsertDeviceCalendarEvent?: (requestId: string, payloadJson: string) => void;
   deleteDeviceCalendarEvent?: (requestId: string, googleEventId: string) => void;
@@ -451,6 +464,80 @@ export async function shareDocumentNatively(params: {
     params.channel,
     params.recipientEmail || ''
   );
+}
+
+export interface NativeGmailConfig {
+  senderEmail: string;
+  hasAppPassword: boolean;
+  hasOAuthToken: boolean;
+}
+
+export function getNativeGmailConfig(): NativeGmailConfig | null {
+  if (!isNativeAndroidApp() || !window.HafnerNative?.getGmailConfigJson) {
+    return null;
+  }
+  try {
+    const raw = window.HafnerNative.getGmailConfigJson();
+    if (!raw) return null;
+    return JSON.parse(raw) as NativeGmailConfig;
+  } catch {
+    return null;
+  }
+}
+
+export function saveNativeGmailAppPassword(
+  senderEmail: string,
+  appPassword: string
+): NativeGmailConfig | null {
+  if (!isNativeAndroidApp() || !window.HafnerNative?.saveGmailAppPassword) {
+    return null;
+  }
+  try {
+    const raw = window.HafnerNative.saveGmailAppPassword(senderEmail, appPassword);
+    if (!raw) return null;
+    return JSON.parse(raw) as NativeGmailConfig;
+  } catch {
+    return null;
+  }
+}
+
+export function notifyMailSentNatively(recipientEmail: string, invoiceNumber: string): void {
+  if (!isNativeAndroidApp()) return;
+  try {
+    window.HafnerNative?.notifyMailSent?.(recipientEmail, invoiceNumber);
+  } catch {
+    // Ignore
+  }
+}
+
+export async function sendInvoiceEmailAutomaticallyNatively(params: {
+  blob: Blob;
+  filename: string;
+  recipientEmail: string;
+  subject: string;
+  bodyText: string;
+  invoiceNumber: string;
+  webAccessToken?: string | null;
+}): Promise<{ ok: boolean; method: string }> {
+  if (!isNativeAndroidApp() || !window.HafnerNative?.sendGmailAutomatically) {
+    throw new Error('Nativer automatischer E-Mail-Versand auf diesem Gerät nicht verfügbar.');
+  }
+  const base64 = await blobToBase64(params.blob);
+  const reqId = nextRequestId('gmail_send');
+  const rawJson = await new Promise<string>((resolve, reject) => {
+    pendingCallbacks.set(reqId, { resolve, reject });
+    window.HafnerNative?.sendGmailAutomatically?.(
+      reqId,
+      base64,
+      params.filename,
+      params.recipientEmail.trim(),
+      params.subject,
+      params.bodyText,
+      params.invoiceNumber,
+      params.webAccessToken || ''
+    );
+  });
+  return JSON.parse(rawJson) as { ok: boolean; method: string };
 }
 
 export async function readNativeDeviceCalendar(

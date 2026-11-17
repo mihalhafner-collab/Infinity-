@@ -18,9 +18,11 @@ android {
 
         val envMcpUrl = System.getenv("MCP_SERVER_URL")?.trim()?.replace("\"", "").orEmpty()
         val defaultMcpUrl = envMcpUrl.ifBlank { "https://infinity-hafner.ai.studio" }
+        val envGmailAppPwd = System.getenv("GMAIL_APP_PASSWORD")?.trim()?.replace("\"", "").orEmpty()
 
         // Nur die Serveradresse wird in der APK hinterlegt – niemals ein dauerhafter Admin- oder Sync-Schlüssel.
         buildConfigField("String", "DEFAULT_MCP_BASE_URL", "\"$defaultMcpUrl\"")
+        buildConfigField("String", "DEFAULT_GMAIL_APP_PASSWORD", "\"$envGmailAppPwd\"")
 
         vectorDrawables {
             useSupportLibrary = true

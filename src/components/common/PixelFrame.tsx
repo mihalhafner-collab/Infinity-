@@ -139,6 +139,133 @@ export const PixelFrame: React.FC<PixelFrameProps> = ({ children }) => {
     };
   }, []);
 
+  const triggerSystemBackRef = useRef(triggerSystemBack);
+  triggerSystemBackRef.current = triggerSystemBack;
+
+  // Universelles Nach-unten-Wischen zum Schließen für alle Bottom-Sheets, Menüs & Reiter (.rounded-t-3xl)
+  useLayoutEffect(() => {
+    let activeSheet: HTMLElement | null = null;
+    let scrollEl: HTMLElement | null = null;
+    let startX = 0;
+    let startY = 0;
+    let currentY = 0;
+    let isDraggingSheet = false;
+
+    const findScrollableWithin = (
+      target: EventTarget | null,
+      boundary: HTMLElement
+    ): HTMLElement | null => {
+      let el = target instanceof HTMLElement ? target : null;
+      while (el && el !== boundary) {
+        if (el.scrollHeight > el.clientHeight + 4) {
+          const cs = window.getComputedStyle(el);
+          if (cs.overflowY === 'auto' || cs.overflowY === 'scroll') {
+            return el;
+          }
+        }
+        el = el.parentElement;
+      }
+      return null;
+    };
+
+    const closeSheetElement = (sheet: HTMLElement) => {
+      if (sheet.dataset.swipeCloseSearch === 'true') {
+        setIsSearchOpen(false);
+        return;
+      }
+      const prev = sheet.previousElementSibling;
+      if (prev instanceof HTMLElement && prev.classList.contains('flex-1')) {
+        prev.click();
+        return;
+      }
+      triggerSystemBackRef.current();
+    };
+
+    const resetActiveSheet = () => {
+      if (activeSheet) {
+        activeSheet.style.transition = 'transform 180ms ease-out';
+        activeSheet.style.transform = '';
+      }
+      activeSheet = null;
+      scrollEl = null;
+      isDraggingSheet = false;
+    };
+
+    const onTouchStart = (e: TouchEvent) => {
+      if (e.touches.length !== 1) return;
+      const target = e.target instanceof HTMLElement ? e.target : null;
+      if (!target) return;
+      const sheet = target.closest('.rounded-t-3xl') as HTMLElement | null;
+      if (!sheet || sheet.dataset.customSwipe === 'true') return;
+
+      const scroller = findScrollableWithin(target, sheet);
+      if (scroller && scroller.scrollTop > 4) {
+        return;
+      }
+
+      activeSheet = sheet;
+      scrollEl = scroller;
+      startX = e.touches[0].clientX;
+      startY = e.touches[0].clientY;
+      currentY = startY;
+      isDraggingSheet = false;
+    };
+
+    const onTouchMove = (e: TouchEvent) => {
+      if (!activeSheet || e.touches.length !== 1) return;
+      if (scrollEl && scrollEl.scrollTop > 4) {
+        resetActiveSheet();
+        return;
+      }
+
+      const x = e.touches[0].clientX;
+      const y = e.touches[0].clientY;
+      const dx = x - startX;
+      const dy = y - startY;
+      currentY = y;
+
+      if (!isDraggingSheet) {
+        if (dy < -6 || Math.abs(dx) > Math.abs(dy) * 1.1) {
+          resetActiveSheet();
+          return;
+        }
+        if (dy > 10 && dy > Math.abs(dx) * 1.15) {
+          isDraggingSheet = true;
+          activeSheet.style.transition = 'none';
+        }
+      }
+
+      if (isDraggingSheet) {
+        const offset = Math.max(0, dy);
+        activeSheet.style.transform = `translateY(${offset}px)`;
+      }
+    };
+
+    const onTouchEnd = () => {
+      if (!activeSheet) return;
+      const sheet = activeSheet;
+      const dy = currentY - startY;
+      const wasDragging = isDraggingSheet;
+      resetActiveSheet();
+
+      if (wasDragging && dy > 48) {
+        closeSheetElement(sheet);
+      }
+    };
+
+    document.addEventListener('touchstart', onTouchStart, { passive: true });
+    document.addEventListener('touchmove', onTouchMove, { passive: true });
+    document.addEventListener('touchend', onTouchEnd, { passive: true });
+    document.addEventListener('touchcancel', resetActiveSheet, { passive: true });
+
+    return () => {
+      document.removeEventListener('touchstart', onTouchStart);
+      document.removeEventListener('touchmove', onTouchMove);
+      document.removeEventListener('touchend', onTouchEnd);
+      document.removeEventListener('touchcancel', resetActiveSheet);
+    };
+  }, [setIsSearchOpen]);
+
   // In der eigenständigen Native-Kotlin-App auf dem Pixel 10 Pro übernimmt Android 16
   // Statusleiste, Predictive-Back-Pfeil und Gestenbalken nativ über OnBackPressedDispatcher.
   if (isNativeAndroidApp()) {

@@ -16,11 +16,14 @@ import {
   Calendar,
   X
 } from 'lucide-react';
-import { Equipment } from '../../types/index.ts';
-import { compressImageFile, normalizePhotoSrc } from '../../utils/imageCompress.ts';
+import { Equipment, EquipmentImage } from '../../types/index.ts';
+import { compressImageFile } from '../../utils/imageCompress.ts';
 import {
   getCategoryLabel,
-  getFunctionalGroupInfo
+  getFunctionalGroupInfo,
+  resolveEquipmentIdentity,
+  resolveEquipmentImages,
+  resolvePrimaryEquipmentPhoto
 } from '../../utils/equipmentConfig.ts';
 
 export const GeraeteView: React.FC = () => {
@@ -72,10 +75,14 @@ export const GeraeteView: React.FC = () => {
     [equipments, activeTab]
   );
 
-  // Verfügbare Kategorien innerhalb des aktiven Reiters, geordnet nach Funktion
+  // Verfügbare Kategorien innerhalb des aktiven Reiters
   const usedCategoryIds = useMemo(() => {
     const unique = Array.from(
-      new Set(tabFiltered.map((e) => e.category).filter((c): c is string => !!c))
+      new Set(
+        tabFiltered
+          .map((e) => (e.category || '').trim())
+          .filter((c): c is string => Boolean(c))
+      )
     );
     return unique.sort((a, b) => {
       const infoA = getFunctionalGroupInfo(a);
@@ -96,7 +103,7 @@ export const GeraeteView: React.FC = () => {
     [tabFiltered, selectedCategoryFilter]
   );
 
-  // Sinnvolle Ordnung nach Funktion / Kategorie (und innerhalb alphabetisch nach Name)
+  // Einheitliche Ordnung nach Kategorie und Hersteller / Modell / Bezeichnung
   const groupedByFunction = useMemo(() => {
     const sorted = [...visibleItems].sort((a, b) => {
       const gA = getFunctionalGroupInfo(a.category, a.item_type);
@@ -105,7 +112,9 @@ export const GeraeteView: React.FC = () => {
       const catA = getCategoryLabel(a.category, a.item_type);
       const catB = getCategoryLabel(b.category, b.item_type);
       if (catA !== catB) return catA.localeCompare(catB, 'de');
-      return (a.name || '').localeCompare(b.name || '', 'de');
+      const idA = resolveEquipmentIdentity(a);
+      const idB = resolveEquipmentIdentity(b);
+      return idA.title.localeCompare(idB.title, 'de');
     });
 
     const groups: Array<{
@@ -116,7 +125,7 @@ export const GeraeteView: React.FC = () => {
     }> = [];
 
     for (const eq of sorted) {
-      const catId = eq.category || eq.item_type || 'geraet';
+      const catId = (eq.category || '').trim() || eq.item_type || 'geraet';
       const catLabel = getCategoryLabel(eq.category, eq.item_type);
       let existing = groups.find((g) => g.categoryId === catId);
       if (!existing) {
@@ -158,7 +167,21 @@ export const GeraeteView: React.FC = () => {
     if (!file) return;
     try {
       const compressed = await compressImageFile(file, 760, 0.82);
-      updateEquipment(eqId, { photo: compressed });
+      const targetEq = equipments.find((item) => item.id === eqId);
+      const existingImages = targetEq ? resolveEquipmentImages(targetEq) : [];
+      const newImage: EquipmentImage = {
+        id: `img-${Date.now().toString(36)}`,
+        url: compressed,
+        caption: file.name ? file.name.replace(/\.[^.]+$/, '') : 'Eigenes Foto',
+        source: 'own',
+        is_primary: true,
+        added_at: new Date().toISOString()
+      };
+      const updatedImages = [
+        newImage,
+        ...existingImages.map((img) => ({ ...img, is_primary: false }))
+      ];
+      updateEquipment(eqId, { photo: compressed, images: updatedImages });
       setPhotoSourceEq(null);
       setPreviewPhoto((prev) =>
         prev && prev.eqId === eqId ? { ...prev, src: compressed } : prev
@@ -179,7 +202,7 @@ export const GeraeteView: React.FC = () => {
         subtitle={
           selectedCategoryFilter !== 'all'
             ? 'Kategorie gewählt · Zurück für Geräteübersicht'
-            : 'Nach Einzelkategorie geordnet · Antippen für Details'
+            : 'Einheitliche Geräteansicht · Antippen für Details'
         }
         showBack
         onBack={
@@ -208,7 +231,7 @@ export const GeraeteView: React.FC = () => {
                   : 'Noch keine Geräte oder Zubehörteile erfasst'}
               </h3>
               <p className="text-xs text-slate-500 max-w-[260px] mx-auto mt-1">
-                Geräte, Werkzeuge und Zubehör werden hier nach Funktion geordnet dargestellt.
+                Erfasse beliebige Geräte universell manuell oder direkt über ChatGPT & MCP.
               </p>
             </div>
             <div className="flex items-center justify-center gap-2 pt-1">
@@ -233,7 +256,7 @@ export const GeraeteView: React.FC = () => {
         ) : (
           groupedByFunction.map((group) => (
             <div key={group.key} className="space-y-1.5">
-              {/* Klare Einzelkategorie-Überschrift */}
+              {/* Kategorie-Überschrift */}
               <div className="flex items-center justify-between px-1 pt-0.5">
                 <button
                   type="button"
@@ -274,6 +297,9 @@ export const GeraeteView: React.FC = () => {
                   const linkedAccessories = !isZubehoer
                     ? zubehoerItems.filter((z) => z.parent_equipment_id === eq.id)
                     : [];
+                  const identity = resolveEquipmentIdentity(eq);
+                  const photoSrc = resolvePrimaryEquipmentPhoto(eq);
+                  const imageList = resolveEquipmentImages(eq);
 
                   return (
                     <SwipeToDeleteRow
@@ -286,61 +312,78 @@ export const GeraeteView: React.FC = () => {
                         className="p-3 bg-white border border-slate-200 hover:border-[#3138A0]/50 active:bg-slate-50/70 rounded-2xl shadow-2xs transition-colors cursor-pointer flex items-center justify-between gap-3"
                       >
                         <div className="flex items-center gap-3 min-w-0 flex-1">
-                          {/* Deutlich vergrößertes Gerätefoto zur besseren Erkennbarkeit */}
-                          {(() => {
-                            const photoSrc = normalizePhotoSrc(eq.photo);
-                            return photoSrc ? (
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setPreviewPhoto({
-                                    eqId: eq.id,
-                                    src: photoSrc,
-                                    title: eq.name
-                                  });
-                                }}
-                                className="w-16 h-16 rounded-2xl overflow-hidden border border-slate-200 shrink-0 bg-white shadow-2xs"
-                                title="Gerätefoto vergrößern"
-                              >
-                                <img
-                                  src={photoSrc}
-                                  alt={eq.name}
-                                  className="w-full h-full object-cover"
-                                />
-                              </button>
-                            ) : (
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setPhotoSourceEq(eq);
-                                }}
-                                className={`w-16 h-16 rounded-2xl border border-dashed flex flex-col items-center justify-center shrink-0 transition-colors ${
-                                  isZubehoer
-                                    ? 'bg-indigo-50/50 border-indigo-200 text-[#3138A0]'
-                                    : isDue
-                                      ? 'bg-fuchsia-50 border-fuchsia-200 text-[#9A1B8D]'
-                                      : 'bg-emerald-50/60 border-emerald-200 text-[#2C7738]'
-                                }`}
-                                title="Gerätefoto hinzufügen"
-                              >
-                                <Camera size={18} />
-                                <span className="text-[9px] font-bold mt-0.5">Foto</span>
-                              </button>
-                            );
-                          })()}
+                          {/* Einheitliches Gerätefoto (Hauptbild) mit Galerie-Zähler */}
+                          {photoSrc ? (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setPreviewPhoto({
+                                  eqId: eq.id,
+                                  src: photoSrc,
+                                  title: identity.title
+                                });
+                              }}
+                              className="w-16 h-16 rounded-2xl overflow-hidden border border-slate-200 shrink-0 bg-white shadow-2xs relative"
+                              title="Gerätefoto vergrößern"
+                            >
+                              <img
+                                src={photoSrc}
+                                alt={identity.title}
+                                className="w-full h-full object-cover"
+                              />
+                              {imageList.length > 1 && (
+                                <span className="absolute bottom-1 right-1 px-1 py-0.2 rounded bg-black/70 text-white text-[9px] font-bold tabular-nums">
+                                  {imageList.length}
+                                </span>
+                              )}
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setPhotoSourceEq(eq);
+                              }}
+                              className={`w-16 h-16 rounded-2xl border border-dashed flex flex-col items-center justify-center shrink-0 transition-colors ${
+                                isZubehoer
+                                  ? 'bg-indigo-50/50 border-indigo-200 text-[#3138A0]'
+                                  : isDue
+                                    ? 'bg-fuchsia-50 border-fuchsia-200 text-[#9A1B8D]'
+                                    : 'bg-emerald-50/60 border-emerald-200 text-[#2C7738]'
+                              }`}
+                              title="Gerätefoto hinzufügen"
+                            >
+                              <Camera size={18} />
+                              <span className="text-[9px] font-bold mt-0.5">Foto</span>
+                            </button>
+                          )}
 
-                          {/* Kompakte Hauptinfo (Details erst nach Antippen) */}
+                          {/* Einheitlicher Aufbau: Hersteller, Modell, Bezeichnung & Status */}
                           <div className="min-w-0 flex-1">
+                            {identity.manufacturer && (
+                              <span className="text-[10px] font-bold uppercase tracking-wider text-[#3138A0] block truncate">
+                                {identity.manufacturer}
+                              </span>
+                            )}
                             <h3 className="text-sm font-bold text-slate-900 leading-snug truncate">
-                              {eq.name}
+                              {identity.model
+                                ? identity.manufacturer
+                                  ? identity.model
+                                  : identity.title
+                                : identity.title}
                             </h3>
 
-                            {eq.model && (
+                            {identity.subtitle ? (
                               <p className="text-xs font-medium text-slate-600 truncate mt-0.5">
-                                {eq.model}
+                                {identity.subtitle}
                               </p>
+                            ) : (
+                              eq.serial_number && (
+                                <p className="text-[11px] text-slate-500 truncate mt-0.5">
+                                  SN: {eq.serial_number}
+                                </p>
+                              )
                             )}
 
                             {/* Status, Bestand & Wartungstermin kompakt in einer Zeile */}
@@ -614,4 +657,3 @@ export const GeraeteView: React.FC = () => {
     </div>
   );
 };
-

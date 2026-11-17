@@ -77,7 +77,7 @@ export const PlusMenuModal: React.FC = () => {
 
   const handleTouchEnd = () => {
     if (dragStartYRef.current === null) return;
-    if (dragOffsetY > 60) {
+    if (dragOffsetY > 45) {
       closeSheet();
       return;
     }
@@ -104,7 +104,7 @@ export const PlusMenuModal: React.FC = () => {
 
   const handlePointerUp = (e: React.PointerEvent) => {
     if (e.pointerType === 'touch' || dragStartYRef.current === null) return;
-    if (dragOffsetY > 60) {
+    if (dragOffsetY > 45) {
       closeSheet();
       return;
     }
@@ -361,6 +361,7 @@ export const PlusMenuModal: React.FC = () => {
 
       {/* Sheet Content (~25% niedrigere Höhe + Nach-unten-ziehen zum Schließen) */}
       <div
+        data-custom-swipe="true"
         style={{
           transform: dragOffsetY > 0 ? `translateY(${dragOffsetY}px)` : undefined,
           transition: isDragging ? 'none' : 'transform 180ms ease-out'

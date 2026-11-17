@@ -1457,6 +1457,124 @@ async function startServer() {
     });
   });
 
+  let cachedServerGmailAccessToken: string | null = null;
+
+  app.post('/api/internal/gmail-token', (req, res) => {
+    const webAuth = isOwnerWebAuthenticated(req);
+    const body = (req.body || {}) as { accessToken?: string };
+    const token = typeof body.accessToken === 'string' ? body.accessToken.trim() : '';
+    if (!webAuth.authenticated && !token) {
+      res.status(401).json({ ok: false });
+      return;
+    }
+    if (token) {
+      cachedServerGmailAccessToken = token;
+    }
+    res.json({ ok: true, hasToken: Boolean(cachedServerGmailAccessToken) });
+  });
+
+  app.post('/api/internal/send-invoice-mail', requireAndroidMcpAdminAuth, async (req, res) => {
+    try {
+      const body = (req.body || {}) as {
+        to?: string;
+        subject?: string;
+        bodyText?: string;
+        filename?: string;
+        base64Pdf?: string;
+        accessToken?: string;
+      };
+      const to = (body.to || '').trim();
+      const subject = (body.subject || 'Rechnung – Hafner Grünraum Handwerk').trim();
+      const bodyText = body.bodyText || '';
+      const filename = (body.filename || 'Rechnung.pdf').replace(/[^a-zA-Z0-9._-]/g, '_');
+      const base64Pdf = (body.base64Pdf || '').replace(/^data:.*?;base64,/, '').trim();
+      const token = (body.accessToken || '').trim() || cachedServerGmailAccessToken || '';
+
+      if (!to || !to.includes('@') || !base64Pdf) {
+        res.status(400).json({ ok: false, error: 'Ungültige E-Mail-Parameter.' });
+        return;
+      }
+
+      if (!token) {
+        res.status(503).json({
+          ok: false,
+          error: 'Kein aktives Gmail-Token auf dem Server hinterlegt.'
+        });
+        return;
+      }
+
+      const wrap76 = (b64: string) => {
+        const clean = b64.replace(/[\r\n]/g, '');
+        const lines: string[] = [];
+        for (let i = 0; i < clean.length; i += 76) {
+          lines.push(clean.slice(i, i + 76));
+        }
+        return lines.join('\r\n');
+      };
+
+      const subjectB64 = Buffer.from(subject, 'utf8').toString('base64');
+      const bodyB64 = wrap76(Buffer.from(bodyText, 'utf8').toString('base64'));
+      const pdfB64 = wrap76(base64Pdf);
+      const boundary = `hafner_srv_${Date.now().toString(36)}`;
+      const senderEmail = getAllowedOwnerEmail();
+
+      const mime = [
+        `From: "Hafner Gruenraum Handwerk" <${senderEmail}>`,
+        `To: ${to}`,
+        `Subject: =?UTF-8?B?${subjectB64}?=`,
+        'MIME-Version: 1.0',
+        `Content-Type: multipart/mixed; boundary="${boundary}"`,
+        '',
+        `--${boundary}`,
+        'Content-Type: text/plain; charset="UTF-8"',
+        'Content-Transfer-Encoding: base64',
+        '',
+        bodyB64,
+        '',
+        `--${boundary}`,
+        `Content-Type: application/pdf; name="${filename}"`,
+        `Content-Disposition: attachment; filename="${filename}"`,
+        'Content-Transfer-Encoding: base64',
+        '',
+        pdfB64,
+        `--${boundary}--`,
+        ''
+      ].join('\r\n');
+
+      const rawBase64Url = Buffer.from(mime, 'utf8').toString('base64url');
+      const gmailResp = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ raw: rawBase64Url })
+      });
+
+      if (gmailResp.status === 401 || gmailResp.status === 403) {
+        if (token === cachedServerGmailAccessToken) {
+          cachedServerGmailAccessToken = null;
+        }
+        res.status(401).json({ ok: false, error: 'Gmail-Token abgelaufen.' });
+        return;
+      }
+
+      if (!gmailResp.ok) {
+        const errText = await gmailResp.text().catch(() => '');
+        res.status(502).json({ ok: false, error: `Gmail API HTTP ${gmailResp.status}: ${errText}` });
+        return;
+      }
+
+      const data = (await gmailResp.json().catch(() => ({}))) as { id?: string };
+      res.json({ ok: true, id: data.id || 'sent' });
+    } catch (err: unknown) {
+      res.status(500).json({
+        ok: false,
+        error: err instanceof Error ? err.message : 'Serverfehler beim E-Mail-Versand.'
+      });
+    }
+  });
+
   app.post('/api/internal/pair-android', requireAndroidMcpAdminAuth, (req, res) => {
     const { baseUrl } = resolvePublicHttpsBaseUrl(req);
     const body = (req.body || {}) as { deviceLabel?: string };

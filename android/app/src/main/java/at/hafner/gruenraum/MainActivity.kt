@@ -1,7 +1,10 @@
 package at.hafner.gruenraum
 
 import android.Manifest
+import android.accounts.Account
+import android.accounts.AccountManager
 import android.annotation.SuppressLint
+import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -33,6 +36,7 @@ import androidx.webkit.WebViewAssetLoader
 import at.hafner.gruenraum.bridge.PixelNativeBridge
 import at.hafner.gruenraum.calendar.NativeCalendarReader
 import at.hafner.gruenraum.documents.NativeDocumentManager
+import at.hafner.gruenraum.documents.NativeMailSender
 import at.hafner.gruenraum.storage.NativeStoreManager
 import at.hafner.gruenraum.sync.NativeMcpSyncManager
 import at.hafner.gruenraum.sync.SecureMcpCredentialStore
@@ -48,6 +52,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var webView: WebView
     private lateinit var storeManager: NativeStoreManager
     private lateinit var documentManager: NativeDocumentManager
+    private lateinit var mailSender: NativeMailSender
     private lateinit var calendarReader: NativeCalendarReader
     private lateinit var credentialStore: SecureMcpCredentialStore
     private lateinit var mcpSyncManager: NativeMcpSyncManager
@@ -78,6 +83,18 @@ class MainActivity : AppCompatActivity() {
         val jsonPayload: String
     )
 
+    private data class PendingMailSend(
+        val requestId: String,
+        val base64Pdf: String,
+        val filename: String,
+        val recipientEmail: String,
+        val subject: String,
+        val bodyText: String,
+        val invoiceNumber: String,
+        val rawMimeMessage: String,
+        val selectedAccountName: String? = null
+    )
+
     private var pendingDocSave: PendingDocSave? = null
     private var pendingCalendarQuery: PendingCalendarQuery? = null
     private var pendingCalendarWrite: PendingCalendarWrite? = null
@@ -86,6 +103,7 @@ class MainActivity : AppCompatActivity() {
     private var pendingWebGeoCallback: GeolocationPermissions.Callback? = null
     private var pendingBackupWrite: PendingBackupWrite? = null
     private var pendingRestoreRequestId: String? = null
+    private var pendingMailSend: PendingMailSend? = null
 
     private val tunnelMutationListener: (String, Int, String) -> Unit = { stateJson, revision, summary ->
         runOnUiThread {
@@ -264,6 +282,51 @@ class MainActivity : AppCompatActivity() {
         resolveNativeLocationAndDispatch(reqId)
     }
 
+    private val gmailAccountPickerLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val pending = pendingMailSend
+        if (pending == null) return@registerForActivityResult
+        if (result.resultCode == Activity.RESULT_OK && result.data != null) {
+            val accName = result.data?.getStringExtra(AccountManager.KEY_ACCOUNT_NAME)?.trim().orEmpty()
+            if (accName.isNotEmpty()) {
+                credentialStore.saveGmailConfig(accName, null, null)
+                val updated = pending.copy(selectedAccountName = accName)
+                pendingMailSend = updated
+                requestAccountManagerTokenAndSend(updated, Account(accName, "com.google"))
+                return@registerForActivityResult
+            }
+        }
+        pendingMailSend = null
+        dispatchNativeCallback(
+            pending.requestId,
+            false,
+            "APP_PASSWORD_REQUIRED:Für den automatischen Hintergrund-Versand bitte einmalig Ihr 16-stelliges Google App-Passwort hinterlegen."
+        )
+    }
+
+    private val gmailAuthConsentLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val pending = pendingMailSend
+        if (pending == null) return@registerForActivityResult
+        if (result.resultCode == Activity.RESULT_OK) {
+            val accName = pending.selectedAccountName ?: credentialStore.loadCredentials().gmailSenderEmail
+            requestAccountManagerTokenAndSend(
+                pending,
+                Account(accName.ifBlank { "mihalhafner@gmail.com" }, "com.google"),
+                allowConsentIntent = false
+            )
+        } else {
+            pendingMailSend = null
+            dispatchNativeCallback(
+                pending.requestId,
+                false,
+                "APP_PASSWORD_REQUIRED:Google-Freigabe abgelehnt. Bitte einmalig das 16-stellige Google App-Passwort für den Direktversand hinterlegen."
+            )
+        }
+    }
+
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -279,6 +342,7 @@ class MainActivity : AppCompatActivity() {
 
         storeManager = NativeStoreManager(applicationContext)
         documentManager = NativeDocumentManager(applicationContext)
+        mailSender = NativeMailSender(applicationContext)
         calendarReader = NativeCalendarReader(applicationContext)
         credentialStore = SecureMcpCredentialStore(applicationContext)
         mcpSyncManager = NativeMcpSyncManager(
@@ -504,6 +568,266 @@ class MainActivity : AppCompatActivity() {
         } catch (e: Exception) {
             dispatchNativeCallback(requestId, false, e.message ?: " Ungültige Dateidaten.")
         }
+    }
+
+    fun getNativeGmailConfigJson(): String {
+        val creds = credentialStore.loadCredentials()
+        return JSONObject().apply {
+            put("senderEmail", creds.gmailSenderEmail)
+            put("hasAppPassword", creds.effectiveGmailAppPassword.length >= 8)
+            put("hasOAuthToken", creds.gmailOAuthToken.isNotBlank())
+        }.toString()
+    }
+
+    fun saveNativeGmailAppPassword(senderEmail: String, appPassword: String): String {
+        credentialStore.saveGmailConfig(
+            senderEmail = senderEmail.trim().ifBlank { "mihalhafner@gmail.com" },
+            appPassword = appPassword.replace("\\s+".toRegex(), "")
+        )
+        return getNativeGmailConfigJson()
+    }
+
+    fun showNativeMailSentNotification(recipientEmail: String, invoiceNumber: String) {
+        mailSender.showMailSentNotification(recipientEmail, invoiceNumber)
+    }
+
+    fun requestSendGmailAutomatically(
+        requestId: String,
+        base64Pdf: String,
+        filename: String,
+        recipientEmail: String,
+        subject: String,
+        bodyText: String,
+        invoiceNumber: String,
+        webAccessToken: String
+    ) {
+        Thread {
+            try {
+                val creds = credentialStore.loadCredentials()
+                val senderEmail = creds.gmailSenderEmail.ifBlank { "mihalhafner@gmail.com" }
+                val rawMime = mailSender.buildRawMimeMessage(
+                    senderEmail = senderEmail,
+                    recipientEmail = recipientEmail,
+                    subject = subject,
+                    bodyText = bodyText,
+                    filename = filename,
+                    base64Pdf = base64Pdf
+                )
+
+                // 1. Direktversand über TLS SMTP (smtp.gmail.com:465), falls App-Passwort hinterlegt
+                val appPwd = creds.effectiveGmailAppPassword
+                if (appPwd.length >= 8) {
+                    val smtpOutcome = mailSender.sendViaDirectGmailSmtp(
+                        senderEmail = senderEmail,
+                        appPassword = appPwd,
+                        recipientEmail = recipientEmail,
+                        rawMimeMessage = rawMime
+                    )
+                    if (smtpOutcome.ok) {
+                        runOnUiThread {
+                            mailSender.showMailSentNotification(recipientEmail, invoiceNumber)
+                            val res = JSONObject().apply {
+                                put("ok", true)
+                                put("method", "smtp_tls")
+                            }.toString()
+                            dispatchNativeCallback(requestId, true, res)
+                        }
+                        return@Thread
+                    }
+                }
+
+                // 2. Direktversand über Gmail REST API mit aktivem OAuth-Token
+                val activeToken = webAccessToken.trim().ifBlank { creds.gmailOAuthToken.trim() }
+                if (activeToken.isNotEmpty()) {
+                    val apiOutcome = mailSender.sendViaGmailRestApi(activeToken, rawMime)
+                    if (apiOutcome.ok) {
+                        if (webAccessToken.isNotBlank()) {
+                            credentialStore.saveGmailConfig(null, null, webAccessToken.trim())
+                        }
+                        runOnUiThread {
+                            mailSender.showMailSentNotification(recipientEmail, invoiceNumber)
+                            val res = JSONObject().apply {
+                                put("ok", true)
+                                put("method", "gmail_api")
+                            }.toString()
+                            dispatchNativeCallback(requestId, true, res)
+                        }
+                        return@Thread
+                    } else if (apiOutcome.error?.contains("401") == true || apiOutcome.error?.contains("403") == true) {
+                        credentialStore.saveGmailConfig(null, null, "")
+                    }
+                }
+
+                // 3. Direktversand über gekoppeltes Infinity Cloud-Backend (/api/internal/send-invoice-mail)
+                val relayOutcome = mailSender.sendViaBackendRelay(
+                    baseUrl = creds.baseUrl,
+                    deviceToken = creds.effectiveMcpToken,
+                    recipientEmail = recipientEmail,
+                    subject = subject,
+                    bodyText = bodyText,
+                    filename = filename,
+                    base64Pdf = base64Pdf
+                )
+                if (relayOutcome.ok) {
+                    runOnUiThread {
+                        mailSender.showMailSentNotification(recipientEmail, invoiceNumber)
+                        val res = JSONObject().apply {
+                            put("ok", true)
+                            put("method", "backend_relay")
+                        }.toString()
+                        dispatchNativeCallback(requestId, true, res)
+                    }
+                    return@Thread
+                }
+
+                // 4. Nativer Android AccountManager OAuth2-Versand über das auf dem Pixel 10 Pro angemeldete Google-Konto
+                val pending = PendingMailSend(
+                    requestId = requestId,
+                    base64Pdf = base64Pdf,
+                    filename = filename,
+                    recipientEmail = recipientEmail,
+                    subject = subject,
+                    bodyText = bodyText,
+                    invoiceNumber = invoiceNumber,
+                    rawMimeMessage = rawMime,
+                    selectedAccountName = senderEmail
+                )
+                pendingMailSend = pending
+
+                val am = AccountManager.get(this)
+                val visibleAccounts = am.getAccountsByType("com.google")
+                val targetAccount = visibleAccounts.firstOrNull {
+                    it.name.equals(senderEmail, ignoreCase = true)
+                } ?: visibleAccounts.firstOrNull()
+
+                if (targetAccount != null) {
+                    requestAccountManagerTokenAndSend(pending, targetAccount, allowConsentIntent = true)
+                } else {
+                    runOnUiThread {
+                        try {
+                            @Suppress("DEPRECATION")
+                            val chooseIntent = AccountManager.newChooseAccountIntent(
+                                null,
+                                null,
+                                arrayOf("com.google"),
+                                null,
+                                null,
+                                null,
+                                null
+                            )
+                            gmailAccountPickerLauncher.launch(chooseIntent)
+                        } catch (_: Exception) {
+                            pendingMailSend = null
+                            dispatchNativeCallback(
+                                requestId,
+                                false,
+                                "APP_PASSWORD_REQUIRED:Für den automatischen Hintergrund-Versand bitte einmalig Ihr 16-stelliges Google App-Passwort hinterlegen."
+                            )
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                runOnUiThread {
+                    dispatchNativeCallback(
+                        requestId,
+                        false,
+                        e.message ?: "Fehler beim automatischen E-Mail-Versand."
+                    )
+                }
+            }
+        }.start()
+    }
+
+    private fun requestAccountManagerTokenAndSend(
+        pending: PendingMailSend,
+        account: Account,
+        allowConsentIntent: Boolean = true
+    ) {
+        Thread {
+            try {
+                val am = AccountManager.get(this)
+                val scope = "oauth2:https://www.googleapis.com/auth/gmail.send"
+                val future = am.getAuthToken(account, scope, null, false, null, null)
+                val bundle = future.result
+
+                val consentIntent = if (Build.VERSION.SDK_INT >= 33) {
+                    bundle.getParcelable(AccountManager.KEY_INTENT, Intent::class.java)
+                } else {
+                    @Suppress("DEPRECATION")
+                    bundle.getParcelable(AccountManager.KEY_INTENT)
+                }
+
+                if (consentIntent != null && allowConsentIntent) {
+                    runOnUiThread {
+                        try {
+                            gmailAuthConsentLauncher.launch(consentIntent)
+                        } catch (_: Exception) {
+                            pendingMailSend = null
+                            dispatchNativeCallback(
+                                pending.requestId,
+                                false,
+                                "APP_PASSWORD_REQUIRED:Für den automatischen Hintergrund-Versand bitte einmalig Ihr 16-stelliges Google App-Passwort hinterlegen."
+                            )
+                        }
+                    }
+                    return@Thread
+                }
+
+                val token = bundle.getString(AccountManager.KEY_AUTHTOKEN)?.trim().orEmpty()
+                if (token.isNotEmpty()) {
+                    var outcome = mailSender.sendViaGmailRestApi(token, pending.rawMimeMessage)
+                    if (!outcome.ok && (outcome.error?.contains("401") == true || outcome.error?.contains("403") == true)) {
+                        am.invalidateAuthToken("com.google", token)
+                        val retryBundle = am.getAuthToken(account, scope, null, false, null, null).result
+                        val freshToken = retryBundle.getString(AccountManager.KEY_AUTHTOKEN)?.trim().orEmpty()
+                        if (freshToken.isNotEmpty()) {
+                            outcome = mailSender.sendViaGmailRestApi(freshToken, pending.rawMimeMessage)
+                            if (outcome.ok) {
+                                credentialStore.saveGmailConfig(account.name, null, freshToken)
+                            }
+                        }
+                    } else if (outcome.ok) {
+                        credentialStore.saveGmailConfig(account.name, null, token)
+                    }
+
+                    pendingMailSend = null
+                    runOnUiThread {
+                        if (outcome.ok) {
+                            mailSender.showMailSentNotification(pending.recipientEmail, pending.invoiceNumber)
+                            val res = JSONObject().apply {
+                                put("ok", true)
+                                put("method", "android_account_manager")
+                            }.toString()
+                            dispatchNativeCallback(pending.requestId, true, res)
+                        } else {
+                            dispatchNativeCallback(
+                                pending.requestId,
+                                false,
+                                "APP_PASSWORD_REQUIRED:${outcome.error ?: "Gmail-Direktversand benötigt einmalig ein Google App-Passwort."}"
+                            )
+                        }
+                    }
+                } else {
+                    pendingMailSend = null
+                    runOnUiThread {
+                        dispatchNativeCallback(
+                            pending.requestId,
+                            false,
+                            "APP_PASSWORD_REQUIRED:Für den automatischen Hintergrund-Versand bitte einmalig Ihr 16-stelliges Google App-Passwort hinterlegen."
+                        )
+                    }
+                }
+            } catch (_: Exception) {
+                pendingMailSend = null
+                runOnUiThread {
+                    dispatchNativeCallback(
+                        pending.requestId,
+                        false,
+                        "APP_PASSWORD_REQUIRED:Für den automatischen Hintergrund-Versand bitte einmalig Ihr 16-stelliges Google App-Passwort hinterlegen."
+                    )
+                }
+            }
+        }.start()
     }
 
     fun requestCalendarEvents(requestId: String, startDateIso: String, endDateIso: String) {

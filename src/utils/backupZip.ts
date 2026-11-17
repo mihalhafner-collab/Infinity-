@@ -23,9 +23,26 @@ export function buildLightWebBackupObject<T extends Record<string, unknown>>(ful
     );
   }
   if (Array.isArray(fullData.equipments)) {
-    clone.equipments = fullData.equipments.map((e) =>
-      e && typeof e === 'object' ? { ...(e as Record<string, unknown>), photo: null } : e
-    );
+    clone.equipments = fullData.equipments.map((e) => {
+      if (!e || typeof e !== 'object') return e;
+      const rec = e as Record<string, unknown>;
+      const lightImages = Array.isArray(rec.images)
+        ? rec.images.filter(
+            (img) =>
+              img &&
+              typeof img === 'object' &&
+              typeof (img as { url?: string }).url === 'string' &&
+              !(img as { url: string }).url.startsWith('data:')
+          )
+        : [];
+      return {
+        ...rec,
+        photo:
+          typeof rec.photo === 'string' && !rec.photo.startsWith('data:') ? rec.photo : null,
+        images: lightImages,
+        documents: []
+      };
+    });
   }
 
   return clone as T;
