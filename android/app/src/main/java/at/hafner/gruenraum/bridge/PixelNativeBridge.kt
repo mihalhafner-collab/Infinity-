@@ -188,6 +188,49 @@ class PixelNativeBridge(
     }
 
     @JavascriptInterface
+    fun sendGmailAutomatically(
+        requestId: String,
+        base64Data: String,
+        filename: String,
+        recipientEmail: String,
+        subject: String,
+        bodyText: String,
+        invoiceNumber: String,
+        webAccessToken: String
+    ) {
+        activity.runOnUiThread {
+            activity.requestSendGmailAutomatically(
+                requestId = requestId,
+                base64Pdf = base64Data,
+                filename = filename,
+                recipientEmail = recipientEmail,
+                subject = subject,
+                bodyText = bodyText,
+                invoiceNumber = invoiceNumber,
+                webAccessToken = webAccessToken
+            )
+        }
+    }
+
+    @JavascriptInterface
+    fun notifyMailSent(recipientEmail: String, invoiceNumber: String): Boolean {
+        activity.runOnUiThread {
+            activity.showNativeMailSentNotification(recipientEmail, invoiceNumber)
+        }
+        return true
+    }
+
+    @JavascriptInterface
+    fun getGmailConfigJson(): String {
+        return activity.getNativeGmailConfigJson()
+    }
+
+    @JavascriptInterface
+    fun saveGmailAppPassword(senderEmail: String, appPassword: String): String {
+        return activity.saveNativeGmailAppPassword(senderEmail, appPassword)
+    }
+
+    @JavascriptInterface
     fun readDeviceCalendar(requestId: String, startDateIso: String, endDateIso: String) {
         activity.runOnUiThread {
             activity.requestCalendarEvents(requestId, startDateIso, endDateIso)

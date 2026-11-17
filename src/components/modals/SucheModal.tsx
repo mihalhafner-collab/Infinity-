@@ -17,7 +17,11 @@ import {
   Wallet
 } from 'lucide-react';
 import { ScreenId } from '../../types/index.ts';
-import { getCategoryLabel } from '../../utils/equipmentConfig.ts';
+import {
+  getCategoryLabel,
+  resolveEquipmentIdentity,
+  resolvePrimaryEquipmentPhoto
+} from '../../utils/equipmentConfig.ts';
 import {
   buildSearchIndexEntry,
   formatAmountSearchable,
@@ -432,11 +436,15 @@ export const SucheModal: React.FC = () => {
     return equipments.map((e) => {
       const catLabel = getCategoryLabel(e.category, e.item_type);
       const specsText = e.specs ? Object.values(e.specs).join(' ') : '';
+      const customFieldsText = Array.isArray(e.custom_fields)
+        ? e.custom_fields.map((cf) => `${cf.label} ${cf.value} ${cf.unit || ''} ${cf.section || ''}`).join(' ')
+        : '';
       return {
         item: e,
         index: buildSearchIndexEntry({
-          primary: [e.name, e.model],
-          secondary: [catLabel, specsText],
+          exactKeys: [e.serial_number],
+          primary: [e.name, e.manufacturer, e.model],
+          secondary: [catLabel, e.dealer, specsText, customFieldsText],
           keywords: [
             e.notes,
             e.maintenance_plan,
@@ -946,6 +954,8 @@ export const SucheModal: React.FC = () => {
                   <div className="space-y-2">
                     {matchingEquipment.map((e) => {
                       const isZubehoer = e.item_type === 'zubehoer';
+                      const primaryPhoto = resolvePrimaryEquipmentPhoto(e);
+                      const identity = resolveEquipmentIdentity(e);
                       return (
                         <button
                           key={e.id}
@@ -954,10 +964,10 @@ export const SucheModal: React.FC = () => {
                           className="w-full p-3 bg-white border border-slate-200 rounded-2xl flex items-center justify-between hover:border-[#3138A0] transition-colors text-left shadow-2xs"
                         >
                           <div className="flex items-center gap-3 min-w-0">
-                            {e.photo ? (
+                            {primaryPhoto ? (
                               <img
-                                src={e.photo}
-                                alt={e.name}
+                                src={primaryPhoto}
+                                alt={identity.title}
                                 className="w-10 h-10 rounded-xl object-cover border border-slate-200 shrink-0"
                               />
                             ) : (
@@ -974,7 +984,7 @@ export const SucheModal: React.FC = () => {
                             <div className="min-w-0">
                               <div className="flex items-center gap-1.5">
                                 <span className="font-bold text-slate-950 truncate text-sm leading-snug">
-                                  {e.name}
+                                  {identity.title}
                                 </span>
                                 {isZubehoer && (
                                   <span className="px-1.5 py-0.5 bg-indigo-50 text-[#3138A0] text-[10px] font-bold rounded shrink-0">
@@ -983,14 +993,19 @@ export const SucheModal: React.FC = () => {
                                 )}
                               </div>
                               <span className="text-xs text-slate-600 block truncate">
-                                {e.model || getCategoryLabel(e.category)} ·{' '}
+                                {[identity.manufacturer, identity.model, getCategoryLabel(e.category, e.item_type)]
+                                  .filter(Boolean)
+                                  .join(' · ')}{' '}
+                                ·{' '}
                                 {isZubehoer
                                   ? e.quantity != null
                                     ? `${e.quantity} Stk.`
                                     : 'Zubehör'
                                   : e.status === 'faellig'
                                     ? 'Wartung fällig'
-                                    : 'Einsatzbereit'}
+                                    : e.status === 'wartung'
+                                      ? 'In Wartung'
+                                      : 'Einsatzbereit'}
                               </span>
                             </div>
                           </div>
@@ -1044,7 +1059,29 @@ export const SucheModal: React.FC = () => {
       </div>
 
       {/* Unterer Suchbereich (Filter-Chips + Suchfeld direkt über der Tastatur / Daumenzone) */}
-      <div className="shrink-0 bg-white border-t border-slate-200 shadow-lg">
+      <div
+        data-swipe-close-search="true"
+        onTouchStart={(e) => {
+          (e.currentTarget as HTMLElement).dataset.startY = String(e.touches[0].clientY);
+          (e.currentTarget as HTMLElement).dataset.startX = String(e.touches[0].clientX);
+        }}
+        onTouchEnd={(e) => {
+          const startY = Number((e.currentTarget as HTMLElement).dataset.startY || 0);
+          const startX = Number((e.currentTarget as HTMLElement).dataset.startX || 0);
+          const endTouch = e.changedTouches[0];
+          if (startY && endTouch) {
+            const dy = endTouch.clientY - startY;
+            const dx = endTouch.clientX - startX;
+            if (dy > 42 && dy > Math.abs(dx) * 1.15) {
+              resetAndCloseSearch();
+            }
+          }
+        }}
+        className="shrink-0 bg-white rounded-t-3xl border-t border-slate-200 shadow-lg"
+      >
+        <div className="pt-1.5 pb-0.5 flex justify-center">
+          <div className="w-10 h-1 bg-slate-300 rounded-full" />
+        </div>
         {/* Filter Chips */}
         <div className="px-3.5 py-2 border-b border-slate-100 flex items-center gap-1.5 overflow-x-auto no-scrollbar">
           {(

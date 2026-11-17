@@ -26,6 +26,7 @@ import { RechnungVersendenModal } from './components/modals/RechnungVersendenMod
 import { WartungModal } from './components/modals/WartungModal.tsx';
 import { GeraetModal } from './components/modals/GeraetModal.tsx';
 import { MaterialModal } from './components/modals/MaterialModal.tsx';
+import { UndoToast } from './components/common/UndoToast.tsx';
 
 const MainRouter: React.FC = () => {
   const { currentScreen } = useApp();
@@ -67,6 +68,7 @@ const MainRouter: React.FC = () => {
       {renderCurrentScreen()}
 
       {/* Global Overlays & Modals */}
+      <UndoToast />
       <PlusMenuModal />
       <ThreeDotsMenuModal />
       <SucheModal />

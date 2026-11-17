@@ -184,6 +184,11 @@ if (typeof window !== 'undefined' && !isNativeAndroidApp()) {
         const credential = GoogleAuthProvider.credentialFromResult(result);
         if (credential?.accessToken) {
           cachedAccessToken = credential.accessToken;
+          void fetch('/api/internal/gmail-token', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ accessToken: cachedAccessToken })
+          }).catch(() => undefined);
         }
         currentUser = result.user;
         lastRedirectAuthError = null;
@@ -323,6 +328,11 @@ export const googleSignIn = async (
     consumeOAuthReturnScreen();
     cachedAccessToken = credential.accessToken;
     currentUser = result.user;
+    void fetch('/api/internal/gmail-token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ accessToken: cachedAccessToken })
+    }).catch(() => undefined);
     await establishOwnerServerSession(result.user);
     notifyListeners();
     return { user: result.user, accessToken: cachedAccessToken };

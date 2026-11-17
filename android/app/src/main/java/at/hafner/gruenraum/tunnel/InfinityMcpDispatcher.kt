@@ -713,6 +713,46 @@ class InfinityMcpDispatcher(
             copy.put("has_photo", true)
             copy.remove("photo")
         }
+        val imagesArr = copy.optJSONArray("images")
+        if (imagesArr != null) {
+            copy.put("image_count", imagesArr.length())
+            val strippedImages = JSONArray()
+            for (i in 0 until imagesArr.length()) {
+                val imgObj = imagesArr.optJSONObject(i)
+                if (imgObj == null) {
+                    strippedImages.put(imagesArr.opt(i))
+                    continue
+                }
+                val imgCopy = JSONObject(imgObj.toString())
+                val url = imgCopy.optString("url", "")
+                if (url.startsWith("data:")) {
+                    imgCopy.remove("url")
+                    imgCopy.put("has_data_url", true)
+                }
+                strippedImages.put(imgCopy)
+            }
+            copy.put("images", strippedImages)
+        }
+        val docsArr = copy.optJSONArray("documents")
+        if (docsArr != null) {
+            copy.put("document_count", docsArr.length())
+            val strippedDocs = JSONArray()
+            for (i in 0 until docsArr.length()) {
+                val docObj = docsArr.optJSONObject(i)
+                if (docObj == null) {
+                    strippedDocs.put(docsArr.opt(i))
+                    continue
+                }
+                val docCopy = JSONObject(docObj.toString())
+                val url = docCopy.optString("url", "")
+                if (url.startsWith("data:")) {
+                    docCopy.remove("url")
+                    docCopy.put("has_data_url", true)
+                }
+                strippedDocs.put(docCopy)
+            }
+            copy.put("documents", strippedDocs)
+        }
         return copy
     }
 
@@ -788,6 +828,26 @@ class InfinityMcpDispatcher(
                 recordMaintenanceInState(state, eqId, maintObj)
             }
 
+            "equipment_media" -> {
+                val eqId = firstNonBlank(
+                    args.optString("equipment_id", ""),
+                    args.optString("id", ""),
+                    args.optJSONObject("record")?.optString("id", "").orEmpty()
+                )
+                if (eqId.isEmpty()) {
+                    throw IllegalArgumentException("Parameter 'equipment_id' (oder 'id') ist für op='equipment_media' erforderlich.")
+                }
+                val mediaPayload = JSONObject()
+                val nested = args.optJSONObject("record")
+                if (nested != null) copyAllFields(nested, mediaPayload)
+                copyAllFields(args, mediaPayload)
+                mediaPayload.remove("op")
+                mediaPayload.remove("collection")
+                mediaPayload.remove("equipment_id")
+                mediaPayload.put("id", eqId)
+                upsertRecordInState(state, "equipments", mediaPayload)
+            }
+
             "tax_settings" -> {
                 val settingsObj = args.optJSONObject("tax_settings") ?: args
                 updateTaxSettingsInState(state, settingsObj)
@@ -813,6 +873,44 @@ class InfinityMcpDispatcher(
             for (i in 0 until arr.length()) {
                 val item = arr.optJSONObject(i) ?: continue
                 if (item.optString("id") == requestedId) {
+                    existingIdx = i
+                    prev = item
+                    break
+                }
+            }
+        } else if (collection == "equipments" && !payload.optBoolean("allow_duplicate", false)) {
+            val reqType = if (payload.optString("item_type") == "zubehoer") "zubehoer" else "geraet"
+            val reqSerial = payload.optString("serial_number", "").trim().lowercase(Locale.ROOT)
+            val reqManuf = payload.optString("manufacturer", "").trim().lowercase(Locale.ROOT)
+            val reqModel = payload.optString("model", "").trim().lowercase(Locale.ROOT)
+            val reqName = payload.optString("name", "").trim().lowercase(Locale.ROOT)
+            val reqParent = payload.optString("parent_equipment_id", "").trim()
+
+            for (i in 0 until arr.length()) {
+                val item = arr.optJSONObject(i) ?: continue
+                val itType = if (item.optString("item_type") == "zubehoer") "zubehoer" else "geraet"
+                if (itType != reqType) continue
+                val itSerial = item.optString("serial_number", "").trim().lowercase(Locale.ROOT)
+                if (reqSerial.isNotEmpty() && itSerial.isNotEmpty() && reqSerial == itSerial) {
+                    existingIdx = i
+                    prev = item
+                    break
+                }
+                val itManuf = item.optString("manufacturer", "").trim().lowercase(Locale.ROOT)
+                val itModel = item.optString("model", "").trim().lowercase(Locale.ROOT)
+                if (reqManuf.isNotEmpty() && reqModel.isNotEmpty() && itManuf == reqManuf && itModel == reqModel) {
+                    if (reqType == "zubehoer" && reqParent.isNotEmpty() && item.optString("parent_equipment_id", "").trim() != reqParent) {
+                        continue
+                    }
+                    existingIdx = i
+                    prev = item
+                    break
+                }
+                val itName = item.optString("name", "").trim().lowercase(Locale.ROOT)
+                if (reqName.isNotEmpty() && itName == reqName) {
+                    if (reqType == "zubehoer" && reqParent.isNotEmpty() && item.optString("parent_equipment_id", "").trim() != reqParent) {
+                        continue
+                    }
                     existingIdx = i
                     prev = item
                     break
@@ -1229,58 +1327,392 @@ class InfinityMcpDispatcher(
 
             "equipments" -> {
                 val itemType = if (record.optString("item_type") == "zubehoer") "zubehoer" else "geraet"
-                val statusVal = record.optString("status", "einsatzbereit").lowercase(Locale.ROOT)
-                if (statusVal !in listOf("faellig", "einsatzbereit", "wartung")) {
-                    throw IllegalArgumentException("Ungültiger Gerätestatus: Erlaubt sind faellig, einsatzbereit, wartung.")
-                }
-                val nameVal = record.optString("name", "").trim()
-                if (nameVal.isEmpty()) {
-                    throw IllegalArgumentException("Gerätename ('name') darf nicht leer sein.")
+                val rawStatus = record.optString("status", "einsatzbereit").lowercase(Locale.ROOT).trim()
+                val statusVal = when (rawStatus) {
+                    "fällig", "faellig", "due" -> "faellig"
+                    "wartung", "in_wartung", "werkstatt" -> "wartung"
+                    else -> "einsatzbereit"
                 }
 
-                val reservedKeys = setOf(
-                    "id", "item_type", "category", "parent_equipment_id", "name", "model",
-                    "photo", "has_photo", "photo_count", "remove_photo", "specs", "quantity",
-                    "notes", "status", "last_maintenance", "next_maintenance", "maintenance_plan",
-                    "interval_months", "history", "created_at", "updated_at"
+                val manufacturerVal = record.optString("manufacturer", "").trim()
+                val modelVal = record.optString("model", "").trim()
+                val categoryVal = record.optString("category", "").trim().ifEmpty {
+                    if (itemType == "zubehoer") "Zubehör" else "Allgemein"
+                }
+                val autoTitle = listOf(manufacturerVal, modelVal).filter { it.isNotEmpty() }.joinToString(" ")
+                val nameVal = firstNonBlank(
+                    if (payload.has("name")) payload.optString("name", "") else "",
+                    prev?.optString("name", "").orEmpty(),
+                    autoTitle,
+                    categoryVal,
+                    if (itemType == "zubehoer") "Zubehör" else "Gerät"
                 )
-                val mergedSpecs = JSONObject()
-                val prevSpecs = prev?.optJSONObject("specs")
-                if (prevSpecs != null) {
-                    val pk = prevSpecs.keys()
-                    while (pk.hasNext()) {
-                        val k = pk.next()
-                        if (k == "created_at" || k == "updated_at" || k == "has_photo" || k == "photo_count") continue
-                        val v = prevSpecs.optString(k, "").trim()
-                        if (v.isNotEmpty() && !prevSpecs.isNull(k)) {
-                            mergedSpecs.put(k, v)
+
+                val serialNumberVal = record.optString("serial_number", "").trim()
+                val purchaseDateVal = record.optString("purchase_date", "").trim()
+                val dealerVal = record.optString("dealer", "").trim()
+                val hasPurchasePrice = record.has("purchase_price") && !record.isNull("purchase_price") &&
+                    record.optString("purchase_price", "").trim().isNotEmpty()
+                val purchasePriceVal = if (hasPurchasePrice) round2(record.optDouble("purchase_price", 0.0)) else null
+
+                val defaultFieldSource = if (
+                    payload.optString("data_source") == "manufacturer" ||
+                    payload.optString("source") == "manufacturer"
+                ) "manufacturer" else "individual"
+
+                val fieldList = mutableListOf<JSONObject>()
+                val prevCustomFields = prev?.optJSONArray("custom_fields")
+                if (prevCustomFields != null && prevCustomFields.length() > 0) {
+                    for (i in 0 until prevCustomFields.length()) {
+                        val cf = prevCustomFields.optJSONObject(i) ?: continue
+                        if (cf.optString("label", "").trim().isNotEmpty()) {
+                            fieldList.add(JSONObject(cf.toString()))
+                        }
+                    }
+                } else {
+                    val prevSpecs = prev?.optJSONObject("specs")
+                    if (prevSpecs != null) {
+                        val pk = prevSpecs.keys()
+                        while (pk.hasNext()) {
+                            val k = pk.next()
+                            if (k == "created_at" || k == "updated_at" || k == "has_photo" || k == "photo_count") continue
+                            val v = prevSpecs.optString(k, "").trim()
+                            if (v.isNotEmpty() && !prevSpecs.isNull(k)) {
+                                fieldList.add(
+                                    JSONObject()
+                                        .put("id", "cf-${k.lowercase(Locale.ROOT).replace(Regex("[^a-z0-9äöüß_-]"), "_")}")
+                                        .put("label", k)
+                                        .put("type", "text")
+                                        .put("value", v)
+                                        .put("section", "Technische Daten")
+                                        .put("source", "individual")
+                                )
+                            }
                         }
                     }
                 }
+
+                fun upsertDynamicField(
+                    fId: String?,
+                    label: String,
+                    typeStr: String?,
+                    valueAny: Any?,
+                    unitStr: String?,
+                    sectionStr: String?,
+                    sourceStr: String?
+                ) {
+                    val cleanLabel = label.trim()
+                    if (cleanLabel.isEmpty()) return
+                    val cleanSection = sectionStr?.trim()?.ifEmpty { "Technische Daten" } ?: "Technische Daten"
+                    val idx = fieldList.indexOfFirst { f ->
+                        (!fId.isNullOrEmpty() && f.optString("id") == fId) ||
+                            (f.optString("label").equals(cleanLabel, ignoreCase = true) &&
+                                f.optString("section", "Technische Daten").equals(cleanSection, ignoreCase = true))
+                    }
+                    if (valueAny == null || valueAny == JSONObject.NULL || valueAny.toString().trim().isEmpty()) {
+                        if (idx >= 0) fieldList.removeAt(idx)
+                        return
+                    }
+                    val chosenType = when (typeStr?.lowercase(Locale.ROOT)?.trim()) {
+                        "number", "unit", "date", "boolean", "text" -> typeStr.lowercase(Locale.ROOT).trim()
+                        else -> if (!unitStr.isNullOrBlank()) "unit" else "text"
+                    }
+                    val chosenSource = when (sourceStr?.lowercase(Locale.ROOT)?.trim()) {
+                        "manufacturer" -> "manufacturer"
+                        "individual" -> "individual"
+                        else -> if (idx >= 0) fieldList[idx].optString("source", defaultFieldSource) else defaultFieldSource
+                    }
+                    val resolvedId = (if (idx >= 0) fieldList[idx].optString("id") else "")
+                        .ifEmpty { fId ?: "cf-${cleanLabel.lowercase(Locale.ROOT).replace(Regex("[^a-z0-9äöüß_-]"), "_")}" }
+
+                    val obj = JSONObject()
+                        .put("id", resolvedId)
+                        .put("label", cleanLabel)
+                        .put("type", chosenType)
+                        .put("value", valueAny)
+                        .put("section", cleanSection)
+                        .put("source", chosenSource)
+                    if (!unitStr.isNullOrBlank()) {
+                        obj.put("unit", unitStr.trim())
+                    }
+                    if (idx >= 0) fieldList[idx] = obj else fieldList.add(obj)
+                }
+
+                val sectionNamesSet = linkedSetOf<String>()
+                val prevSecs = prev?.optJSONArray("custom_sections")
+                if (prevSecs != null) {
+                    for (i in 0 until prevSecs.length()) {
+                        val s = prevSecs.optString(i, "").trim()
+                        if (s.isNotEmpty()) sectionNamesSet.add(s)
+                    }
+                }
+                val paySecs = payload.optJSONArray("custom_sections")
+                if (paySecs != null) {
+                    for (i in 0 until paySecs.length()) {
+                        val s = paySecs.optString(i, "").trim()
+                        if (s.isNotEmpty()) sectionNamesSet.add(s)
+                    }
+                }
+
+                val sectionsArr = payload.optJSONArray("sections")
+                if (sectionsArr != null) {
+                    for (i in 0 until sectionsArr.length()) {
+                        val secObj = sectionsArr.optJSONObject(i) ?: continue
+                        val secTitle = firstNonBlank(
+                            secObj.optString("name", ""),
+                            secObj.optString("title", ""),
+                            secObj.optString("section", ""),
+                            "Technische Daten"
+                        )
+                        sectionNamesSet.add(secTitle)
+                        val secSource = secObj.optString("source", defaultFieldSource)
+                        val fArr = secObj.optJSONArray("fields")
+                        if (fArr != null) {
+                            for (j in 0 until fArr.length()) {
+                                val fItem = fArr.optJSONObject(j) ?: continue
+                                upsertDynamicField(
+                                    fId = optNullableString(fItem, "id"),
+                                    label = firstNonBlank(fItem.optString("label", ""), fItem.optString("name", ""), fItem.optString("key", "")),
+                                    typeStr = optNullableString(fItem, "type"),
+                                    valueAny = fItem.opt("value"),
+                                    unitStr = optNullableString(fItem, "unit"),
+                                    sectionStr = secTitle,
+                                    sourceStr = optNullableString(fItem, "source") ?: secSource
+                                )
+                            }
+                        } else {
+                            val fMap = secObj.optJSONObject("fields")
+                            if (fMap != null) {
+                                val fk = fMap.keys()
+                                while (fk.hasNext()) {
+                                    val k = fk.next()
+                                    upsertDynamicField(null, k, null, fMap.opt(k), null, secTitle, secSource)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                val incomingCustomFields = payload.optJSONArray("custom_fields")
+                if (incomingCustomFields != null) {
+                    for (i in 0 until incomingCustomFields.length()) {
+                        val cf = incomingCustomFields.optJSONObject(i) ?: continue
+                        val secName = cf.optString("section", "Technische Daten").trim().ifEmpty { "Technische Daten" }
+                        sectionNamesSet.add(secName)
+                        upsertDynamicField(
+                            fId = optNullableString(cf, "id"),
+                            label = firstNonBlank(cf.optString("label", ""), cf.optString("name", ""), cf.optString("key", "")),
+                            typeStr = optNullableString(cf, "type"),
+                            valueAny = cf.opt("value"),
+                            unitStr = optNullableString(cf, "unit"),
+                            sectionStr = secName,
+                            sourceStr = optNullableString(cf, "source") ?: defaultFieldSource
+                        )
+                    }
+                }
+
+                val reservedKeys = setOf(
+                    "id", "item_type", "category", "parent_equipment_id", "manufacturer", "model", "name",
+                    "serial_number", "purchase_date", "purchase_price", "dealer",
+                    "photo", "images", "add_images", "replace_images", "remove_image_ids", "set_primary_image_id",
+                    "documents", "add_documents", "remove_document_ids",
+                    "has_photo", "photo_count", "image_count", "document_count", "remove_photo",
+                    "specs", "custom_fields", "custom_sections", "sections", "remove_fields",
+                    "data_source", "source", "allow_duplicate", "accessories",
+                    "quantity", "notes", "status", "last_maintenance", "next_maintenance", "maintenance_plan",
+                    "interval_months", "history", "created_at", "updated_at"
+                )
+
                 val payloadSpecs = payload.optJSONObject("specs")
                 if (payloadSpecs != null) {
                     val nk = payloadSpecs.keys()
                     while (nk.hasNext()) {
                         val k = nk.next()
-                        if (k == "created_at" || k == "updated_at" || k == "has_photo" || k == "photo_count" || payloadSpecs.isNull(k) || payloadSpecs.optString(k, "").trim().isEmpty()) {
-                            mergedSpecs.remove(k)
-                        } else {
-                            mergedSpecs.put(k.trim(), payloadSpecs.optString(k, "").trim())
-                        }
+                        if (k == "created_at" || k == "updated_at" || k == "has_photo" || k == "photo_count") continue
+                        upsertDynamicField(null, k, null, payloadSpecs.opt(k), null, "Technische Daten", defaultFieldSource)
                     }
                 }
+
                 val payloadKeys = payload.keys()
                 while (payloadKeys.hasNext()) {
                     val k = payloadKeys.next()
                     if (!reservedKeys.contains(k)) {
-                        if (payload.isNull(k) || payload.optString(k, "").trim().isEmpty()) {
-                            mergedSpecs.remove(k)
-                        } else if (payload.optJSONObject(k) == null && payload.optJSONArray(k) == null) {
-                            mergedSpecs.put(k.trim(), payload.optString(k, "").trim())
+                        if (payload.optJSONObject(k) == null && payload.optJSONArray(k) == null) {
+                            upsertDynamicField(null, k, null, payload.opt(k), null, "Technische Daten", defaultFieldSource)
                         }
                         record.remove(k)
                     }
                 }
+
+                val remFieldsArr = payload.optJSONArray("remove_fields")
+                if (remFieldsArr != null) {
+                    val toRem = jsonArrayToStringSet(remFieldsArr).map { it.lowercase(Locale.ROOT) }.toSet()
+                    fieldList.removeAll { f ->
+                        toRem.contains(f.optString("id", "").lowercase(Locale.ROOT)) ||
+                            toRem.contains(f.optString("label", "").lowercase(Locale.ROOT))
+                    }
+                }
+
+                val mergedSpecs = JSONObject()
+                val customFieldsJson = JSONArray()
+                for (f in fieldList) {
+                    customFieldsJson.put(f)
+                    val lbl = f.optString("label", "").trim()
+                    val vStr = f.optString("value", "").trim()
+                    val uStr = f.optString("unit", "").trim()
+                    if (lbl.isNotEmpty() && vStr.isNotEmpty()) {
+                        mergedSpecs.put(lbl, if (uStr.isNotEmpty()) "$vStr $uStr" else vStr)
+                    }
+                }
+
+                // Bilder & Galerie verwalten
+                val imageList = mutableListOf<JSONObject>()
+                if (!payload.optBoolean("replace_images", false) && !payload.optBoolean("remove_photo", false)) {
+                    val prevImages = prev?.optJSONArray("images")
+                    if (prevImages != null && prevImages.length() > 0) {
+                        for (i in 0 until prevImages.length()) {
+                            val img = prevImages.optJSONObject(i) ?: continue
+                            if (img.optString("url", "").trim().isNotEmpty()) {
+                                imageList.add(JSONObject(img.toString()))
+                            }
+                        }
+                    } else {
+                        val prevSingle = prev?.optString("photo", "")?.trim().orEmpty()
+                        if (prevSingle.isNotEmpty() && prevSingle != "null") {
+                            imageList.add(
+                                JSONObject()
+                                    .put("id", "img-primary")
+                                    .put("url", prevSingle)
+                                    .put("caption", "Hauptbild")
+                                    .put("source", "own")
+                                    .put("is_primary", true)
+                                    .put("added_at", prev?.optString("updated_at") ?: nowIso)
+                            )
+                        }
+                    }
+                }
+
+                fun appendImageAny(rawImg: Any?, forcePrimary: Boolean) {
+                    if (rawImg == null || rawImg == JSONObject.NULL) return
+                    if (rawImg is String) {
+                        val url = rawImg.trim()
+                        if (url.isEmpty()) return
+                        val existIdx = imageList.indexOfFirst { it.optString("url") == url }
+                        if (existIdx >= 0) {
+                            if (forcePrimary) {
+                                for (k in imageList.indices) imageList[k].put("is_primary", k == existIdx)
+                            }
+                            return
+                        }
+                        if (forcePrimary) {
+                            for (img in imageList) img.put("is_primary", false)
+                        }
+                        imageList.add(
+                            JSONObject()
+                                .put("id", "img-${System.currentTimeMillis()}-${imageList.size}")
+                                .put("url", url)
+                                .put("caption", if (defaultFieldSource == "manufacturer") "Herstellerbild" else "Gerätebild")
+                                .put("source", if (defaultFieldSource == "manufacturer") "manufacturer" else "own")
+                                .put("is_primary", forcePrimary || imageList.isEmpty())
+                                .put("added_at", nowIso)
+                        )
+                    } else if (rawImg is JSONObject) {
+                        val url = firstNonBlank(rawImg.optString("url", ""), rawImg.optString("src", ""), rawImg.optString("data", ""))
+                        if (url.isEmpty()) return
+                        val imgId = rawImg.optString("id", "").trim().ifEmpty { "img-${System.currentTimeMillis()}-${imageList.size}" }
+                        val isPrim = rawImg.optBoolean("is_primary", false) || forcePrimary
+                        val imgSrc = if (rawImg.optString("source") == "manufacturer" || defaultFieldSource == "manufacturer") "manufacturer" else "own"
+                        val existIdx = imageList.indexOfFirst { it.optString("id") == imgId || it.optString("url") == url }
+                        if (isPrim) {
+                            for (img in imageList) img.put("is_primary", false)
+                        }
+                        val obj = JSONObject()
+                            .put("id", if (existIdx >= 0) imageList[existIdx].optString("id") else imgId)
+                            .put("url", url)
+                            .put("caption", firstNonBlank(rawImg.optString("caption", ""), rawImg.optString("title", "")))
+                            .put("source", imgSrc)
+                            .put("is_primary", isPrim || imageList.isEmpty())
+                            .put("added_at", rawImg.optString("added_at", nowIso))
+                        if (existIdx >= 0) imageList[existIdx] = obj else imageList.add(obj)
+                    }
+                }
+
+                if (payload.has("photo") && !payload.isNull("photo")) {
+                    val pStr = payload.optString("photo", "").trim()
+                    if (pStr.isNotEmpty() && pStr != "null") appendImageAny(pStr, true)
+                }
+                val payImgs = payload.optJSONArray("images")
+                if (payImgs != null) {
+                    for (i in 0 until payImgs.length()) appendImageAny(payImgs.opt(i), false)
+                }
+                val addImgs = payload.optJSONArray("add_images")
+                if (addImgs != null) {
+                    for (i in 0 until addImgs.length()) appendImageAny(addImgs.opt(i), false)
+                }
+                val remImgIds = jsonArrayToStringSet(payload.optJSONArray("remove_image_ids"))
+                if (remImgIds.isNotEmpty()) {
+                    imageList.removeAll { remImgIds.contains(it.optString("id")) }
+                }
+                val setPrimId = payload.optString("set_primary_image_id", "").trim()
+                if (setPrimId.isNotEmpty() && imageList.any { it.optString("id") == setPrimId }) {
+                    for (img in imageList) img.put("is_primary", img.optString("id") == setPrimId)
+                }
+                if (imageList.isNotEmpty() && imageList.none { it.optBoolean("is_primary", false) }) {
+                    imageList[0].put("is_primary", true)
+                }
+                val primaryImgObj = imageList.firstOrNull { it.optBoolean("is_primary", false) } ?: imageList.firstOrNull()
+                val resolvedPhoto = primaryImgObj?.optString("url", "")?.takeIf { it.isNotEmpty() }
+                val imagesJson = JSONArray()
+                for (img in imageList) imagesJson.put(img)
+
+                // Dokumente (Rechnungen & Anleitungen) verwalten
+                val docList = mutableListOf<JSONObject>()
+                val prevDocs = prev?.optJSONArray("documents")
+                if (prevDocs != null) {
+                    for (i in 0 until prevDocs.length()) {
+                        val d = prevDocs.optJSONObject(i) ?: continue
+                        if (d.optString("url", "").trim().isNotEmpty()) docList.add(JSONObject(d.toString()))
+                    }
+                }
+                fun appendDocAny(rawDoc: JSONObject?) {
+                    if (rawDoc == null) return
+                    val url = firstNonBlank(rawDoc.optString("url", ""), rawDoc.optString("data", ""))
+                    if (url.isEmpty()) return
+                    val docId = rawDoc.optString("id", "").trim().ifEmpty { "doc-${System.currentTimeMillis()}-${docList.size}" }
+                    val dType = when (rawDoc.optString("type", "sonstiges")) {
+                        "rechnung", "anleitung" -> rawDoc.optString("type")
+                        else -> "sonstiges"
+                    }
+                    val title = firstNonBlank(
+                        rawDoc.optString("title", ""),
+                        rawDoc.optString("name", ""),
+                        if (dType == "rechnung") "Rechnung" else if (dType == "anleitung") "Bedienungsanleitung" else "Dokument"
+                    )
+                    val existIdx = docList.indexOfFirst { it.optString("id") == docId || it.optString("url") == url }
+                    val obj = JSONObject()
+                        .put("id", if (existIdx >= 0) docList[existIdx].optString("id") else docId)
+                        .put("title", title)
+                        .put("type", dType)
+                        .put("url", url)
+                        .put("added_at", rawDoc.optString("added_at", nowIso))
+                    val mime = optNullableString(rawDoc, "mime_type")
+                    if (mime != null) obj.put("mime_type", mime)
+                    if (existIdx >= 0) docList[existIdx] = obj else docList.add(obj)
+                }
+                val payDocs = payload.optJSONArray("documents")
+                if (payDocs != null) {
+                    for (i in 0 until payDocs.length()) appendDocAny(payDocs.optJSONObject(i))
+                }
+                val addDocs = payload.optJSONArray("add_documents")
+                if (addDocs != null) {
+                    for (i in 0 until addDocs.length()) appendDocAny(addDocs.optJSONObject(i))
+                }
+                val remDocIds = jsonArrayToStringSet(payload.optJSONArray("remove_document_ids"))
+                if (remDocIds.isNotEmpty()) {
+                    docList.removeAll { remDocIds.contains(it.optString("id")) }
+                }
+                val docsJson = JSONArray()
+                for (d in docList) docsJson.put(d)
 
                 val parsedInterval = record.optInt("interval_months", 6).coerceAtLeast(1)
                 val lastMaintIso = assertIsoDate(record.optString("last_maintenance", today), "last_maintenance")
@@ -1300,33 +1732,58 @@ class InfinityMcpDispatcher(
                     record.put("quantity", JSONObject.NULL)
                 }
 
-                val incomingPhoto = payload.optString("photo", "").trim().takeIf { !payload.isNull("photo") && it.isNotEmpty() && it != "null" }
-                val prevPhoto = prev?.optString("photo", "")?.trim()?.takeIf { !prev.isNull("photo") && it.isNotEmpty() && it != "null" }
-                val resolvedPhoto = if (payload.optBoolean("remove_photo", false)) null else (incomingPhoto ?: prevPhoto)
-                record.remove("has_photo")
-                record.remove("photo_count")
-                record.remove("remove_photo")
+                for (tmpKey in listOf(
+                    "has_photo", "photo_count", "image_count", "document_count", "remove_photo",
+                    "add_images", "replace_images", "remove_image_ids", "set_primary_image_id",
+                    "add_documents", "remove_document_ids", "sections", "remove_fields",
+                    "data_source", "source", "allow_duplicate", "accessories"
+                )) {
+                    record.remove(tmpKey)
+                }
+
+                val customSectionsJson = JSONArray()
+                for (s in sectionNamesSet) customSectionsJson.put(s)
 
                 record.put("item_type", itemType)
-                record.put("category", record.optString("category", if (itemType == "zubehoer") "zub_kette_schiene" else "motorsaegen"))
+                record.put("category", categoryVal)
                 if (!record.has("parent_equipment_id") || record.optString("parent_equipment_id", "").trim().isEmpty()) {
                     record.put("parent_equipment_id", JSONObject.NULL)
                 }
+                record.put("manufacturer", manufacturerVal)
+                record.put("model", modelVal)
                 record.put("name", nameVal)
-                record.put("model", record.optString("model", ""))
+                record.put("serial_number", serialNumberVal)
+                record.put("purchase_date", purchaseDateVal)
+                record.put("purchase_price", purchasePriceVal ?: JSONObject.NULL)
+                record.put("dealer", dealerVal)
                 record.put("photo", resolvedPhoto ?: JSONObject.NULL)
+                record.put("images", imagesJson)
+                record.put("documents", docsJson)
+                record.put("custom_fields", customFieldsJson)
+                record.put("custom_sections", customSectionsJson)
                 record.put("specs", mergedSpecs)
                 record.put("notes", record.optString("notes", ""))
                 record.put("status", statusVal)
                 record.put("last_maintenance", lastMaintIso)
                 record.put("next_maintenance", nextMaintIso)
-                record.put("maintenance_plan", record.optString("maintenance_plan", if (itemType == "zubehoer") "" else "Regelmäßige Prüfung"))
+                record.put("maintenance_plan", record.optString("maintenance_plan", ""))
                 record.put("interval_months", parsedInterval)
                 if (record.optJSONArray("history") == null) record.put("history", JSONArray())
                 record.put("created_at", prev?.optString("created_at")?.takeIf { it.isNotEmpty() } ?: nowIso)
                 record.put("updated_at", nowIso)
 
                 if (existingIdx >= 0) arr.put(existingIdx, record) else prependToArray(arr, record)
+
+                val accessoriesArr = payload.optJSONArray("accessories")
+                if (itemType == "geraet" && accessoriesArr != null) {
+                    for (i in 0 until accessoriesArr.length()) {
+                        val accObj = accessoriesArr.optJSONObject(i) ?: continue
+                        val accCopy = JSONObject(accObj.toString())
+                        accCopy.put("item_type", "zubehoer")
+                        accCopy.put("parent_equipment_id", id)
+                        upsertRecordInState(state, "equipments", accCopy)
+                    }
+                }
             }
 
             "materials" -> {
@@ -2593,6 +3050,7 @@ class InfinityMcpDispatcher(
                                                 .put("delete")
                                                 .put("toggle_lcr")
                                                 .put("maintenance")
+                                                .put("equipment_media")
                                                 .put("tax_settings")
                                         )
                                 )

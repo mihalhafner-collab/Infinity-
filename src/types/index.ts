@@ -221,15 +221,63 @@ export interface Order {
   updated_at?: string;
 }
 
+export type EquipmentFieldType = 'text' | 'number' | 'unit' | 'date' | 'boolean';
+
+export interface EquipmentDynamicField {
+  id: string;
+  key?: string;
+  label: string;
+  type: EquipmentFieldType;
+  value: string | number | boolean | null;
+  unit?: string;
+  section?: string;
+  source?: 'manufacturer' | 'individual';
+}
+
+export interface EquipmentImage {
+  id: string;
+  url: string;
+  title?: string;
+  caption?: string;
+  is_primary?: boolean;
+  source?: 'own' | 'manufacturer' | 'mcp';
+  license_note?: string;
+  created_at?: string;
+  added_at?: string;
+}
+
+export interface EquipmentDocument {
+  id: string;
+  name?: string;
+  title?: string;
+  doc_type?: 'rechnung' | 'anleitung' | 'sonstiges';
+  type?: 'rechnung' | 'anleitung' | 'sonstiges';
+  data_url?: string;
+  url?: string;
+  mime_type?: string;
+  size_bytes?: number;
+  created_at?: string;
+  added_at?: string;
+}
+
 export interface Equipment {
   id: string;
   item_type?: 'geraet' | 'zubehoer';
   category?: string;
   parent_equipment_id?: string | null;
+  manufacturer?: string;
   name: string;
   model: string;
+  serial_number?: string;
+  purchase_date?: string | null;
+  purchase_price?: number | null;
+  dealer?: string;
   photo?: string | null;
+  images?: EquipmentImage[];
+  documents?: EquipmentDocument[];
   specs?: Record<string, string>;
+  custom_fields?: EquipmentDynamicField[];
+  custom_sections?: string[];
   quantity?: number | null;
   notes?: string;
   status: 'faellig' | 'einsatzbereit' | 'wartung';

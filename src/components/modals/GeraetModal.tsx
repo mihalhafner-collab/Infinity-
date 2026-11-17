@@ -1,9 +1,8 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useApp, usePixelBackLayer } from '../../context/AppContext.tsx';
 import {
   X,
   Calendar,
-  Tag,
   Camera,
   ImagePlus,
   Package,
@@ -16,15 +15,36 @@ import {
   CheckCircle2,
   AlertTriangle,
   Clock,
-  History
+  History,
+  Star,
+  ChevronDown,
+  ChevronUp,
+  FolderPlus,
+  Paperclip,
+  ExternalLink,
+  Globe
 } from 'lucide-react';
+import {
+  EquipmentDocument,
+  EquipmentDynamicField,
+  EquipmentFieldType,
+  EquipmentImage
+} from '../../types/index.ts';
 import { compressImageFile, normalizePhotoSrc } from '../../utils/imageCompress.ts';
 import { getTodayLocalIso } from '../../utils/invoicePdf.ts';
 import {
-  getCategoriesByType,
-  getCategoryDef,
-  getFunctionalGroupInfo,
-  getSpecFieldLabel
+  DEFAULT_SECTION_NAMES,
+  SUGGESTED_CATEGORIES_GERAET,
+  SUGGESTED_CATEGORIES_ZUBEHOER,
+  formatDynamicFieldValue,
+  getCategoryLabel,
+  isDynamicFieldValueEmpty,
+  resolveEquipmentDocuments,
+  resolveEquipmentDynamicFields,
+  resolveEquipmentIdentity,
+  resolveEquipmentImages,
+  resolvePrimaryEquipmentPhoto,
+  syncSpecsFromDynamicFields
 } from '../../utils/equipmentConfig.ts';
 
 function addMonthsIso(isoDate: string, months: number): string {
@@ -36,6 +56,25 @@ function addMonthsIso(isoDate: string, months: number): string {
   }
   d.setMonth(d.getMonth() + months);
   return d.toISOString().slice(0, 10);
+}
+
+function formatDateDe(iso?: string | null): string {
+  const clean = String(iso || '').trim();
+  if (!clean) return '';
+  if (/^\d{4}-\d{2}-\d{2}$/.test(clean)) {
+    const [y, m, d] = clean.split('-');
+    return `${d}.${m}.${y}`;
+  }
+  return clean;
+}
+
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(new Error('Datei konnte nicht gelesen werden'));
+    reader.readAsDataURL(file);
+  });
 }
 
 export const GeraetModal: React.FC = () => {
@@ -59,80 +98,129 @@ export const GeraetModal: React.FC = () => {
     ? equipments.find((e) => e.id === selectedEquipmentId) || null
     : null;
 
-  // Schreibgeschützte Detailansicht zuerst beim Antippen eines bestehenden Geräts/Zubehörs
+  // Schreibgeschützte Detailansicht zuerst beim Antippen eines bestehenden Geräts
   const [isEditMode, setIsEditMode] = useState<boolean>(!isEditing);
+  const [activeGalleryIdx, setActiveGalleryIdx] = useState<number>(0);
   const [enlargePhoto, setEnlargePhoto] = useState<boolean>(false);
+  const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({});
 
-  const availableGeraete = equipments.filter(
-    (e) => (e.item_type || 'geraet') === 'geraet' && (!isEditing || e.id !== existingItem?.id)
+  const availableGeraete = useMemo(
+    () =>
+      equipments.filter(
+        (e) => (e.item_type || 'geraet') === 'geraet' && (!isEditing || e.id !== existingItem?.id)
+      ),
+    [equipments, isEditing, existingItem?.id]
   );
 
+  // Universelle Standardfelder (alle optional)
   const [itemType, setItemType] = useState<'geraet' | 'zubehoer'>('geraet');
-  const [category, setCategory] = useState<string>('motorsaegen');
-  const [parentEquipmentId, setParentEquipmentId] = useState<string>('');
-  const [photo, setPhoto] = useState<string | null>(null);
-  const [name, setName] = useState('');
-  const [model, setModel] = useState('');
+  const [category, setCategory] = useState<string>('');
+  const [manufacturer, setManufacturer] = useState<string>('');
+  const [model, setModel] = useState<string>('');
+  const [name, setName] = useState<string>('');
+  const [serialNumber, setSerialNumber] = useState<string>('');
+  const [purchaseDate, setPurchaseDate] = useState<string>('');
+  const [purchasePriceStr, setPurchasePriceStr] = useState<string>('');
+  const [dealer, setDealer] = useState<string>('');
   const [status, setStatus] = useState<'einsatzbereit' | 'faellig' | 'wartung'>('einsatzbereit');
-  const [specs, setSpecs] = useState<Record<string, string>>({});
-  const [customSpecKey, setCustomSpecKey] = useState('');
-  const [customSpecVal, setCustomSpecVal] = useState('');
+  const [parentEquipmentId, setParentEquipmentId] = useState<string>('');
   const [quantityStr, setQuantityStr] = useState<string>('1');
-  const [notes, setNotes] = useState('');
+  const [notes, setNotes] = useState<string>('');
 
-  const [maintenancePlan, setMaintenancePlan] = useState(
-    'Kette schärfen, Schwertnut & Luftfilter reinigen, Kettenbremse prüfen'
+  // Bilder & Dokumente
+  const [images, setImages] = useState<EquipmentImage[]>([]);
+  const [newImageUrl, setNewImageUrl] = useState<string>('');
+  const [newImageSource, setNewImageSource] = useState<'own' | 'manufacturer'>('own');
+  const [documents, setDocuments] = useState<EquipmentDocument[]>([]);
+  const [newDocType, setNewDocType] = useState<'rechnung' | 'anleitung' | 'sonstiges'>('rechnung');
+  const [newDocTitle, setNewDocTitle] = useState<string>('');
+
+  // Dynamische Felder & Bereiche
+  const [dynamicFields, setDynamicFields] = useState<EquipmentDynamicField[]>([]);
+  const [customSections, setCustomSections] = useState<string[]>([]);
+  const [newSectionInput, setNewSectionInput] = useState<string>('');
+  const [showNewSectionBox, setShowNewSectionBox] = useState<boolean>(false);
+
+  // Neues dynamisches Feld anlegen
+  const [draftFieldLabel, setDraftFieldLabel] = useState<string>('');
+  const [draftFieldType, setDraftFieldType] = useState<EquipmentFieldType>('text');
+  const [draftFieldValue, setDraftFieldValue] = useState<string>('');
+  const [draftFieldUnit, setDraftFieldUnit] = useState<string>('');
+  const [draftFieldSection, setDraftFieldSection] = useState<string>('Technische Daten');
+  const [draftFieldSource, setDraftFieldSource] = useState<'manufacturer' | 'individual'>('individual');
+
+  // Wartung
+  const [maintenancePlan, setMaintenancePlan] = useState<string>('');
+  const [intervalMonths, setIntervalMonths] = useState<string>('6');
+  const [lastMaintenance, setLastMaintenance] = useState<string>(() => getTodayLocalIso());
+  const [nextMaintenance, setNextMaintenance] = useState<string>(() =>
+    addMonthsIso(getTodayLocalIso(), 6)
   );
-  const [intervalMonths, setIntervalMonths] = useState('3');
-  const [lastMaintenance, setLastMaintenance] = useState(() => getTodayLocalIso());
-  const [nextMaintenance, setNextMaintenance] = useState(() => addMonthsIso(getTodayLocalIso(), 3));
-  const [confirmDelete, setConfirmDelete] = useState(false);
-  const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
 
-  const cameraInputRef = useRef<HTMLInputElement>(null);
+  const [confirmDelete, setConfirmDelete] = useState<boolean>(false);
+  const [isUploadingPhoto, setIsUploadingPhoto] = useState<boolean>(false);
+
   const initializedModalKeyRef = useRef<string | null>(null);
 
-  const extractMatchingAccessorySpecs = (
-    parentSpecs: Record<string, string> | undefined,
-    accCategoryId: string
-  ): Record<string, string> => {
-    if (!parentSpecs) return {};
-    const accCat = getCategoryDef(accCategoryId);
-    const allowedKeys = new Set((accCat?.fields || []).map((f) => f.key));
-    const filtered: Record<string, string> = {};
-    for (const [k, v] of Object.entries(parentSpecs)) {
-      if (allowedKeys.has(k) && v !== undefined && v !== null && String(v).trim() !== '') {
-        filtered[k] = String(v).trim();
-      }
-    }
-    return filtered;
-  };
+  const allSectionOptions = useMemo(() => {
+    const fromFields = dynamicFields
+      .map((f) => (f.section || '').trim())
+      .filter(Boolean);
+    return Array.from(
+      new Set([...DEFAULT_SECTION_NAMES, ...customSections, ...fromFields])
+    );
+  }, [dynamicFields, customSections]);
+
+  const categorySuggestions = useMemo(() => {
+    const existingCats = equipments
+      .filter((e) => (e.item_type || 'geraet') === itemType)
+      .map((e) => getCategoryLabel(e.category, e.item_type))
+      .filter(Boolean);
+    const defaults =
+      itemType === 'zubehoer'
+        ? SUGGESTED_CATEGORIES_ZUBEHOER
+        : SUGGESTED_CATEGORIES_GERAET;
+    return Array.from(new Set([...existingCats, ...defaults]));
+  }, [equipments, itemType]);
 
   const populateFromExisting = (item: NonNullable<typeof existingItem>) => {
     const eType = item.item_type || 'geraet';
-    const defaultCat = eType === 'zubehoer' ? 'zub_kette_schiene' : 'motorsaegen';
     setItemType(eType);
-    setCategory(item.category || defaultCat);
-    setParentEquipmentId(item.parent_equipment_id || '');
-    setPhoto(normalizePhotoSrc(item.photo));
-    setName(item.name || '');
+    setCategory(item.category ? getCategoryLabel(item.category, eType) : '');
+    setManufacturer(item.manufacturer || '');
     setModel(item.model || '');
+    setName(item.name || '');
+    setSerialNumber(item.serial_number || '');
+    setPurchaseDate(item.purchase_date || '');
+    setPurchasePriceStr(
+      item.purchase_price !== null && item.purchase_price !== undefined
+        ? String(item.purchase_price)
+        : ''
+    );
+    setDealer(item.dealer || '');
     setStatus(item.status || 'einsatzbereit');
-    const cleanExistingSpecs = { ...(item.specs || {}) };
-    delete cleanExistingSpecs.created_at;
-    delete cleanExistingSpecs.updated_at;
-    delete cleanExistingSpecs.has_photo;
-    delete cleanExistingSpecs.photo_count;
-    setSpecs(cleanExistingSpecs);
-    setCustomSpecKey('');
-    setCustomSpecVal('');
-    setQuantityStr(item.quantity !== null && item.quantity !== undefined ? String(item.quantity) : '1');
+    setParentEquipmentId(item.parent_equipment_id || '');
+    setQuantityStr(
+      item.quantity !== null && item.quantity !== undefined ? String(item.quantity) : '1'
+    );
     setNotes(item.notes || '');
+
+    const resolvedImgs = resolveEquipmentImages(item);
+    setImages(resolvedImgs);
+    setActiveGalleryIdx(0);
+    setDocuments(resolveEquipmentDocuments(item));
+
+    const resolvedFields = resolveEquipmentDynamicFields(item);
+    setDynamicFields(resolvedFields);
+    setCustomSections(Array.isArray(item.custom_sections) ? item.custom_sections : []);
+
     setMaintenancePlan(item.maintenance_plan || '');
     setIntervalMonths(String(item.interval_months || 6));
     const todayIso = getTodayLocalIso();
     setLastMaintenance(item.last_maintenance || todayIso);
-    setNextMaintenance(item.next_maintenance || addMonthsIso(todayIso, item.interval_months || 6));
+    setNextMaintenance(
+      item.next_maintenance || addMonthsIso(todayIso, item.interval_months || 6)
+    );
   };
 
   useEffect(() => {
@@ -149,6 +237,13 @@ export const GeraetModal: React.FC = () => {
 
     setConfirmDelete(false);
     setEnlargePhoto(false);
+    setActiveGalleryIdx(0);
+    setCollapsedSections({});
+    setDraftFieldLabel('');
+    setDraftFieldValue('');
+    setDraftFieldUnit('');
+    setNewImageUrl('');
+    setNewDocTitle('');
 
     if (isEditing && existingItem) {
       setIsEditMode(false);
@@ -156,69 +251,53 @@ export const GeraetModal: React.FC = () => {
     } else if (isCreatingZubehoer) {
       setIsEditMode(true);
       setItemType('zubehoer');
-      const preselectedParent = availableGeraete.find((g) => g.id === selectedEquipmentId) || null;
+      const preselectedParent =
+        availableGeraete.find((g) => g.id === selectedEquipmentId) || null;
       setParentEquipmentId(preselectedParent?.id || '');
-
-      let initCat = 'zub_kette_schiene';
-      if (preselectedParent?.category === 'freischneider') {
-        initCat = 'zub_faden_messer';
-      } else if (
-        preselectedParent?.category === 'bewaesserung_spritze' ||
-        preselectedParent?.category === 'handwerkzeuge_garten'
-      ) {
-        initCat = 'zub_bewaesserung_gardena';
-      } else if (preselectedParent?.category === 'felco_silky_schnitt') {
-        initCat = 'zub_feilen_schaerfen';
-      } else if (preselectedParent?.category === 'milwaukee_geraete') {
-        initCat = 'zub_akku_ladung';
-      } else if (
-        preselectedParent?.category === 'elektrowerkzeuge_allgemein' ||
-        preselectedParent?.category === 'bau_pflaster_geraete'
-      ) {
-        initCat = 'zub_bohrer_trennscheiben';
-      } else if (
-        preselectedParent?.category &&
-        preselectedParent.category !== 'motorsaegen'
-      ) {
-        initCat = 'zub_filter_psa_sonstiges';
-      }
-      setCategory(initCat);
-      setPhoto(null);
-      setName('');
+      setCategory('Ersatzteil / Zubehör');
+      setManufacturer(preselectedParent?.manufacturer || '');
       setModel('');
+      setName('');
+      setSerialNumber('');
+      setPurchaseDate('');
+      setPurchasePriceStr('');
+      setDealer('');
       setStatus('einsatzbereit');
-      setSpecs(extractMatchingAccessorySpecs(preselectedParent?.specs, initCat));
-      setCustomSpecKey('');
-      setCustomSpecVal('');
+      setImages([]);
+      setDocuments([]);
+      setDynamicFields([]);
+      setCustomSections([]);
       setQuantityStr('1');
       setNotes('');
     } else if (isCreatingGeraet) {
       setIsEditMode(true);
       setItemType('geraet');
-      const initCat = 'motorsaegen';
-      const catDef = getCategoryDef(initCat);
-      setCategory(initCat);
+      setCategory('');
       setParentEquipmentId('');
-      setPhoto(null);
-      setName('');
+      setManufacturer('');
       setModel('');
+      setName('');
+      setSerialNumber('');
+      setPurchaseDate('');
+      setPurchasePriceStr('');
+      setDealer('');
       setStatus('einsatzbereit');
-      setSpecs({});
-      setCustomSpecKey('');
-      setCustomSpecVal('');
+      setImages([]);
+      setDocuments([]);
+      setDynamicFields([]);
+      setCustomSections([]);
       setQuantityStr('1');
       setNotes('');
-      const defMonths = catDef?.defaultIntervalMonths || 6;
-      setMaintenancePlan(catDef?.defaultMaintenancePlan || 'Regelmäßige Prüfung');
-      setIntervalMonths(String(defMonths));
+      setMaintenancePlan('');
+      setIntervalMonths('6');
       const todayIso = getTodayLocalIso();
       setLastMaintenance(todayIso);
-      setNextMaintenance(addMonthsIso(todayIso, defMonths));
+      setNextMaintenance(addMonthsIso(todayIso, 6));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, activeModal, selectedEquipmentId, existingItem?.id]);
 
-  // Synchronisiere Formularzustand im Hintergrund NUR solange die Detailansicht schreibgeschützt offen ist
+  // Synchronisiere Zustand im Hintergrund, solange die Detailansicht schreibgeschützt offen ist (z.B. bei MCP-Updates durch ChatGPT)
   useEffect(() => {
     if (isEditing && existingItem && !isEditMode) {
       populateFromExisting(existingItem);
@@ -229,6 +308,7 @@ export const GeraetModal: React.FC = () => {
     existingItem?.updated_at,
     existingItem?.photo,
     existingItem?.name,
+    existingItem?.manufacturer,
     existingItem?.model,
     existingItem?.status,
     existingItem?.last_maintenance,
@@ -251,54 +331,43 @@ export const GeraetModal: React.FC = () => {
 
   if (!isOpen) return null;
 
-  const typeCategories = getCategoriesByType(itemType);
-  const currentCatDef = getCategoryDef(category) || typeCategories[0];
-
-  const handleSwitchType = (nextType: 'geraet' | 'zubehoer') => {
-    setItemType(nextType);
-    const nextCats = getCategoriesByType(nextType);
-    const firstCat = nextCats[0];
-    if (firstCat) {
-      setCategory(firstCat.id);
-      if (nextType === 'geraet' && !isEditing) {
-        const m = firstCat.defaultIntervalMonths || 6;
-        setMaintenancePlan(firstCat.defaultMaintenancePlan || 'Regelmäßige Prüfung');
-        setIntervalMonths(String(m));
-        setNextMaintenance(addMonthsIso(lastMaintenance, m));
-      }
-    }
+  const toggleSectionCollapse = (secKey: string) => {
+    setCollapsedSections((prev) => ({ ...prev, [secKey]: !prev[secKey] }));
   };
 
-  const handleSelectCategory = (catId: string) => {
-    setCategory(catId);
-    const def = getCategoryDef(catId);
-    if (def && itemType === 'geraet' && !isEditing) {
-      const m = def.defaultIntervalMonths || 6;
-      setMaintenancePlan(def.defaultMaintenancePlan || 'Regelmäßige Prüfung');
-      setIntervalMonths(String(m));
-      setNextMaintenance(addMonthsIso(lastMaintenance, m));
-    }
-  };
-
-  const handleParentChange = (nextParentId: string) => {
-    setParentEquipmentId(nextParentId);
-    const parent = availableGeraete.find((g) => g.id === nextParentId);
-    if (parent?.specs && Object.keys(specs).every((k) => !specs[k]?.trim())) {
-      setSpecs(extractMatchingAccessorySpecs(parent.specs, category));
-    }
-  };
-
-  const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  // Multi-Image Handler (Kamera / Galerie / URL)
+  const handleImageFilesUpload = async (
+    e: React.ChangeEvent<HTMLInputElement>,
+    sourceType: 'own' | 'manufacturer' = 'own'
+  ) => {
+    const fileList = e.target.files;
+    if (!fileList || fileList.length === 0) return;
     setIsUploadingPhoto(true);
     try {
-      const compressed = await compressImageFile(file, 760, 0.82);
-      setPhoto(compressed);
-      // Bei bestehendem Gerät Foto sofort dauerhaft im Datensatz sichern, damit es auch
-      // beim Wechsel zwischen Kamera/Galerie und App sofort gespeichert und sichtbar ist.
+      const added: EquipmentImage[] = [];
+      for (let i = 0; i < fileList.length; i++) {
+        const file = fileList[i];
+        const compressed = await compressImageFile(file, 760, 0.82);
+        added.push({
+          id: `img-${Date.now().toString(36)}-${i}`,
+          url: compressed,
+          caption: file.name ? file.name.replace(/\.[^.]+$/, '') : 'Gerätebild',
+          source: sourceType,
+          is_primary: images.length === 0 && i === 0,
+          added_at: new Date().toISOString()
+        });
+      }
+      const nextImages = [...images, ...added];
+      if (!nextImages.some((img) => img.is_primary) && nextImages.length > 0) {
+        nextImages[0].is_primary = true;
+      }
+      setImages(nextImages);
+      const primary = nextImages.find((img) => img.is_primary) || nextImages[0];
       if (isEditing && existingItem) {
-        updateEquipment(existingItem.id, { photo: compressed });
+        updateEquipment(existingItem.id, {
+          images: nextImages,
+          photo: primary ? primary.url : null
+        });
       }
     } finally {
       setIsUploadingPhoto(false);
@@ -306,78 +375,200 @@ export const GeraetModal: React.FC = () => {
     }
   };
 
-  const handleRemovePhoto = () => {
-    setPhoto(null);
+  const handleAddImageUrl = () => {
+    const cleanUrl = normalizePhotoSrc(newImageUrl.trim());
+    if (!cleanUrl) return;
+    const newImg: EquipmentImage = {
+      id: `img-${Date.now().toString(36)}`,
+      url: cleanUrl,
+      caption: newImageSource === 'manufacturer' ? 'Herstellerbild' : 'Gerätebild',
+      source: newImageSource,
+      is_primary: images.length === 0,
+      added_at: new Date().toISOString()
+    };
+    const nextImages = [...images, newImg];
+    setImages(nextImages);
+    setNewImageUrl('');
     if (isEditing && existingItem && !isEditMode) {
-      updateEquipment(existingItem.id, { photo: null });
+      const primary = nextImages.find((img) => img.is_primary) || nextImages[0];
+      updateEquipment(existingItem.id, {
+        images: nextImages,
+        photo: primary ? primary.url : null
+      });
     }
   };
 
-  const updateSpec = (key: string, val: string) => {
-    setSpecs((prev) => ({ ...prev, [key]: val }));
-  };
-
-  const removeSpecKey = (key: string) => {
-    setSpecs((prev) => {
-      const copy = { ...prev };
-      delete copy[key];
-      return copy;
-    });
-  };
-
-  const handleAddCustomSpec = () => {
-    const cleanKey = customSpecKey.trim();
-    const cleanVal = customSpecVal.trim();
-    if (cleanKey && cleanVal) {
-      setSpecs((prev) => ({ ...prev, [cleanKey]: cleanVal }));
-      setCustomSpecKey('');
-      setCustomSpecVal('');
-      return;
+  const handleSetPrimaryImage = (imgId: string) => {
+    const nextImages = images.map((img) => ({
+      ...img,
+      is_primary: img.id === imgId
+    }));
+    setImages(nextImages);
+    const primary = nextImages.find((img) => img.is_primary) || nextImages[0];
+    if (isEditing && existingItem) {
+      updateEquipment(existingItem.id, {
+        images: nextImages,
+        photo: primary ? primary.url : null
+      });
     }
-    if (cleanKey && !cleanVal && cleanKey.includes(':')) {
-      const sepIdx = cleanKey.indexOf(':');
-      const k = cleanKey.slice(0, sepIdx).trim();
-      const v = cleanKey.slice(sepIdx + 1).trim();
-      if (k && v) {
-        setSpecs((prev) => ({ ...prev, [k]: v }));
-        setCustomSpecKey('');
-        setCustomSpecVal('');
+  };
+
+  const handleRemoveImage = (imgId: string) => {
+    const filtered = images.filter((img) => img.id !== imgId);
+    if (filtered.length > 0 && !filtered.some((img) => img.is_primary)) {
+      filtered[0].is_primary = true;
+    }
+    setImages(filtered);
+    const primary = filtered.find((img) => img.is_primary) || filtered[0];
+    if (isEditing && existingItem && !isEditMode) {
+      updateEquipment(existingItem.id, {
+        images: filtered,
+        photo: primary ? primary.url : null
+      });
+    }
+  };
+
+  // Dokument-Upload (Rechnungen & Bedienungsanleitungen)
+  const handleDocumentUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const isImage = file.type.startsWith('image/');
+      const dataUrl = isImage
+        ? await compressImageFile(file, 1200, 0.85)
+        : await readFileAsDataUrl(file);
+      const docTitle =
+        newDocTitle.trim() ||
+        file.name ||
+        (newDocType === 'rechnung'
+          ? 'Kaufbeleg / Rechnung'
+          : newDocType === 'anleitung'
+            ? 'Bedienungsanleitung'
+            : 'Dokument');
+      const newDoc: EquipmentDocument = {
+        id: `doc-${Date.now().toString(36)}`,
+        title: docTitle,
+        type: newDocType,
+        url: dataUrl,
+        mime_type: file.type || 'application/octet-stream',
+        added_at: new Date().toISOString()
+      };
+      const nextDocs = [...documents, newDoc];
+      setDocuments(nextDocs);
+      setNewDocTitle('');
+      if (isEditing && existingItem && !isEditMode) {
+        updateEquipment(existingItem.id, { documents: nextDocs });
+      }
+    } finally {
+      e.target.value = '';
+    }
+  };
+
+  const handleRemoveDocument = (docId: string) => {
+    const nextDocs = documents.filter((d) => d.id !== docId);
+    setDocuments(nextDocs);
+    if (isEditing && existingItem && !isEditMode) {
+      updateEquipment(existingItem.id, { documents: nextDocs });
+    }
+  };
+
+  // Dynamische Felder verwalten
+  const handleAddCustomSection = () => {
+    const clean = newSectionInput.trim();
+    if (!clean) return;
+    if (!customSections.includes(clean)) {
+      setCustomSections((prev) => [...prev, clean]);
+    }
+    setDraftFieldSection(clean);
+    setNewSectionInput('');
+    setShowNewSectionBox(false);
+  };
+
+  const handleAddDynamicField = () => {
+    const cleanLabel = draftFieldLabel.trim();
+    if (!cleanLabel) return;
+
+    let normalizedVal: string | number | boolean = draftFieldValue.trim();
+    if (draftFieldType === 'boolean') {
+      normalizedVal =
+        draftFieldValue === 'true' ||
+        draftFieldValue.toLowerCase() === 'ja' ||
+        draftFieldValue === '1';
+    } else if (draftFieldType === 'number' || draftFieldType === 'unit') {
+      const parsed = Number(String(draftFieldValue).replace(',', '.'));
+      if (!Number.isNaN(parsed) && String(draftFieldValue).trim() !== '') {
+        normalizedVal = parsed;
       }
     }
+
+    const newField: EquipmentDynamicField = {
+      id: `cf-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 5)}`,
+      label: cleanLabel,
+      type: draftFieldType,
+      value: normalizedVal,
+      unit: draftFieldType === 'unit' ? draftFieldUnit.trim() : undefined,
+      section: draftFieldSection.trim() || 'Technische Daten',
+      source: draftFieldSource
+    };
+
+    setDynamicFields((prev) => [...prev, newField]);
+    setDraftFieldLabel('');
+    setDraftFieldValue('');
+    setDraftFieldUnit('');
+  };
+
+  const handleUpdateDynamicField = (
+    fieldId: string,
+    patch: Partial<EquipmentDynamicField>
+  ) => {
+    setDynamicFields((prev) =>
+      prev.map((f) => (f.id === fieldId ? { ...f, ...patch } : f))
+    );
+  };
+
+  const handleRemoveDynamicField = (fieldId: string) => {
+    setDynamicFields((prev) => prev.filter((f) => f.id !== fieldId));
   };
 
   const handleSave = () => {
+    // Falls noch ein neues Feld im Entwurf steht, automatisch übernehmen
+    let finalDynamicFields = [...dynamicFields];
+    if (draftFieldLabel.trim() && draftFieldValue.trim()) {
+      const newField: EquipmentDynamicField = {
+        id: `cf-${Date.now().toString(36)}`,
+        label: draftFieldLabel.trim(),
+        type: draftFieldType,
+        value:
+          draftFieldType === 'boolean'
+            ? draftFieldValue === 'true' || draftFieldValue.toLowerCase() === 'ja'
+            : draftFieldValue.trim(),
+        unit: draftFieldType === 'unit' ? draftFieldUnit.trim() : undefined,
+        section: draftFieldSection.trim() || 'Technische Daten',
+        source: draftFieldSource
+      };
+      finalDynamicFields.push(newField);
+    }
+
+    const cleanManufacturer = manufacturer.trim();
+    const cleanModel = model.trim();
+    const cleanCategory = category.trim() || (itemType === 'zubehoer' ? 'Zubehör' : 'Allgemein');
+    const autoTitle = [cleanManufacturer, cleanModel].filter(Boolean).join(' ');
     const effectiveName =
-      name.trim() || existingItem?.name?.trim() || currentCatDef?.label || 'Gerät';
+      name.trim() ||
+      autoTitle ||
+      existingItem?.name?.trim() ||
+      cleanCategory ||
+      (itemType === 'zubehoer' ? 'Zubehör' : 'Gerät');
 
-    const cleanedSpecs: Record<string, string> = {};
-    for (const [k, v] of Object.entries(specs)) {
-      const cleanK = k.trim();
-      if (
-        cleanK &&
-        cleanK !== 'created_at' &&
-        cleanK !== 'updated_at' &&
-        cleanK !== 'has_photo' &&
-        cleanK !== 'photo_count' &&
-        v !== undefined &&
-        v !== null &&
-        String(v).trim()
-      ) {
-        cleanedSpecs[cleanK] = String(v).trim();
-      }
-    }
-    if (customSpecKey.trim() && customSpecVal.trim()) {
-      cleanedSpecs[customSpecKey.trim()] = customSpecVal.trim();
-    } else if (customSpecKey.trim() && !customSpecVal.trim() && customSpecKey.includes(':')) {
-      const sepIdx = customSpecKey.indexOf(':');
-      const k = customSpecKey.slice(0, sepIdx).trim();
-      const v = customSpecKey.slice(sepIdx + 1).trim();
-      if (k && v) {
-        cleanedSpecs[k] = v;
-      }
-    }
+    const parsedPrice =
+      purchasePriceStr.trim() === ''
+        ? null
+        : Number(purchasePriceStr.replace(',', '.'));
+    const normalizedPrice =
+      parsedPrice !== null && Number.isFinite(parsedPrice) ? parsedPrice : null;
 
-    const parsedQty = quantityStr.trim() === '' ? null : Math.max(0, parseInt(quantityStr, 10));
+    const parsedQty =
+      quantityStr.trim() === '' ? null : Math.max(0, parseInt(quantityStr, 10));
     const normalizedQty =
       parsedQty !== null && !Number.isNaN(parsedQty)
         ? parsedQty
@@ -385,19 +576,33 @@ export const GeraetModal: React.FC = () => {
           ? 1
           : null;
 
+    const primaryImg = images.find((img) => img.is_primary) || images[0] || null;
+    const syncedSpecs = syncSpecsFromDynamicFields(finalDynamicFields);
+
     const payload = {
       item_type: itemType,
-      category: currentCatDef?.id || category,
-      parent_equipment_id: itemType === 'zubehoer' && parentEquipmentId ? parentEquipmentId : null,
+      category: cleanCategory,
+      parent_equipment_id:
+        itemType === 'zubehoer' && parentEquipmentId ? parentEquipmentId : null,
+      manufacturer: cleanManufacturer,
+      model: cleanModel,
       name: effectiveName,
-      model: model.trim(),
-      photo: normalizePhotoSrc(photo),
+      serial_number: serialNumber.trim(),
+      purchase_date: purchaseDate.trim(),
+      purchase_price: normalizedPrice,
+      dealer: dealer.trim(),
+      photo: primaryImg ? primaryImg.url : null,
+      images,
+      documents,
       status: itemType === 'geraet' ? status : ('einsatzbereit' as const),
-      specs: cleanedSpecs,
+      custom_fields: finalDynamicFields,
+      custom_sections: customSections,
+      specs: syncedSpecs,
       quantity: normalizedQty,
       notes: notes.trim(),
       maintenance_plan: itemType === 'geraet' ? maintenancePlan.trim() : '',
-      interval_months: itemType === 'geraet' ? Math.max(1, parseInt(intervalMonths, 10) || 6) : 12,
+      interval_months:
+        itemType === 'geraet' ? Math.max(1, parseInt(intervalMonths, 10) || 6) : 12,
       last_maintenance: lastMaintenance,
       next_maintenance: nextMaintenance
     };
@@ -405,9 +610,10 @@ export const GeraetModal: React.FC = () => {
     if (isEditing && existingItem) {
       updateEquipment(existingItem.id, payload);
       setName(effectiveName);
-      setSpecs(cleanedSpecs);
-      setCustomSpecKey('');
-      setCustomSpecVal('');
+      setDynamicFields(finalDynamicFields);
+      setDraftFieldLabel('');
+      setDraftFieldValue('');
+      setDraftFieldUnit('');
       setIsEditMode(false);
     } else {
       addEquipment(payload);
@@ -423,18 +629,20 @@ export const GeraetModal: React.FC = () => {
     setActiveModal(null);
   };
 
-  // Alle anzuzeigenden Spec-Felder im Bearbeiten-Modus (Kategorie-Felder + evtl. zusätzliche MCP-Felder)
-  const standardFieldKeys = new Set((currentCatDef?.fields || []).map((f) => f.key));
-  const extraSpecKeys = Object.keys(specs).filter((k) => !standardFieldKeys.has(k));
-  const normalizedCurrentPhoto = normalizePhotoSrc(photo);
-
   // ============================================================================
-  // 1. SCHREIBGESCHÜTZTE DETAILANSICHT (beim Antippen eines bestehenden Geräts)
+  // 1. SCHREIBGESCHÜTZTE DETAILANSICHT (Einheitlich, leere Felder ausgeblendet)
   // ============================================================================
   if (isEditing && existingItem && !isEditMode) {
     const isZubehoer = existingItem.item_type === 'zubehoer';
-    const catDef = getCategoryDef(existingItem.category);
-    const funcGroup = getFunctionalGroupInfo(existingItem.category, existingItem.item_type);
+    const catLabel = getCategoryLabel(existingItem.category, existingItem.item_type);
+    const identity = resolveEquipmentIdentity(existingItem);
+    const galleryImages = resolveEquipmentImages(existingItem);
+    const activeImage =
+      galleryImages[Math.min(activeGalleryIdx, Math.max(0, galleryImages.length - 1))] ||
+      null;
+    const detailPhotoSrc = activeImage?.url || resolvePrimaryEquipmentPhoto(existingItem);
+    const docList = resolveEquipmentDocuments(existingItem);
+
     const parentDevice = existingItem.parent_equipment_id
       ? equipments.find((g) => g.id === existingItem.parent_equipment_id) || null
       : null;
@@ -443,19 +651,73 @@ export const GeraetModal: React.FC = () => {
           (z) => z.item_type === 'zubehoer' && z.parent_equipment_id === existingItem.id
         )
       : [];
-    const specEntries = Object.entries(existingItem.specs || {}).filter(
-      ([k, val]) =>
-        k !== 'created_at' &&
-        k !== 'updated_at' &&
-        k !== 'has_photo' &&
-        k !== 'photo_count' &&
-        val !== undefined &&
-        val !== null &&
-        String(val).trim() !== ''
+
+    // Nur nicht-leere dynamische Felder in der normalen Ansicht anzeigen!
+    const nonEmptyFields = resolveEquipmentDynamicFields(existingItem).filter(
+      (f) => !isDynamicFieldValueEmpty(f)
     );
+
+    // Gruppierung nach Bereich (Section)
+    const groupedSections: Array<{
+      sectionName: string;
+      fields: EquipmentDynamicField[];
+    }> = [];
+    for (const f of nonEmptyFields) {
+      const sec = (f.section || 'Technische Daten').trim() || 'Technische Daten';
+      let group = groupedSections.find((g) => g.sectionName === sec);
+      if (!group) {
+        group = { sectionName: sec, fields: [] };
+        groupedSections.push(group);
+      }
+      group.fields.push(f);
+    }
+
     const isDue = existingItem.status === 'faellig';
     const isInMaintenance = existingItem.status === 'wartung';
-    const detailPhotoSrc = normalizePhotoSrc(existingItem.photo) || normalizedCurrentPhoto;
+
+    // Basisdaten-Paare (leere Werte werden ausgeblendet)
+    const baseInfoItems: Array<{ label: string; value: string }> = [];
+    if (identity.manufacturer) {
+      baseInfoItems.push({ label: 'Hersteller', value: identity.manufacturer });
+    }
+    if (identity.model) {
+      baseInfoItems.push({ label: 'Modell', value: identity.model });
+    }
+    if (existingItem.serial_number?.trim()) {
+      baseInfoItems.push({
+        label: 'Seriennummer',
+        value: existingItem.serial_number.trim()
+      });
+    }
+    if (existingItem.purchase_date?.trim()) {
+      baseInfoItems.push({
+        label: 'Kaufdatum',
+        value: formatDateDe(existingItem.purchase_date)
+      });
+    }
+    if (
+      existingItem.purchase_price !== null &&
+      existingItem.purchase_price !== undefined &&
+      Number.isFinite(Number(existingItem.purchase_price))
+    ) {
+      baseInfoItems.push({
+        label: 'Kaufpreis',
+        value: `${Number(existingItem.purchase_price).toFixed(2)} €`
+      });
+    }
+    if (existingItem.dealer?.trim()) {
+      baseInfoItems.push({ label: 'Händler', value: existingItem.dealer.trim() });
+    }
+    if (
+      existingItem.quantity !== null &&
+      existingItem.quantity !== undefined &&
+      (isZubehoer || existingItem.quantity > 1)
+    ) {
+      baseInfoItems.push({
+        label: 'Bestand / Anzahl',
+        value: `${existingItem.quantity} Stk.`
+      });
+    }
 
     return (
       <div className="absolute inset-0 z-50 bg-black/45 backdrop-blur-2xs flex flex-col justify-end animate-fade-in">
@@ -473,7 +735,7 @@ export const GeraetModal: React.FC = () => {
             <div className="min-w-0">
               <div className="flex items-center gap-1.5 flex-wrap mb-1">
                 <span className="px-2 py-0.5 rounded-md bg-indigo-50 text-[#3138A0] text-[10px] font-bold">
-                  {catDef?.label || funcGroup.title}
+                  {catLabel}
                 </span>
                 {!isZubehoer ? (
                   <span
@@ -508,12 +770,22 @@ export const GeraetModal: React.FC = () => {
                   </span>
                 )}
               </div>
+
+              {identity.manufacturer && (
+                <span className="text-[11px] font-bold uppercase tracking-wider text-[#3138A0] block">
+                  {identity.manufacturer}
+                </span>
+              )}
               <h2 className="text-base font-bold text-slate-900 leading-snug break-words">
-                {existingItem.name}
+                {identity.model
+                  ? identity.manufacturer
+                    ? identity.model
+                    : identity.title
+                  : identity.title}
               </h2>
-              {existingItem.model && (
+              {identity.subtitle && (
                 <p className="text-xs font-semibold text-slate-600 mt-0.5">
-                  {existingItem.model}
+                  {identity.subtitle}
                 </p>
               )}
             </div>
@@ -533,37 +805,64 @@ export const GeraetModal: React.FC = () => {
 
           {/* Read-Only Content */}
           <div className="flex-1 overflow-y-auto py-3 space-y-3 text-xs text-slate-700 overscroll-contain">
-            {/* Großes Gerätefoto + Direkte Kamera-/Galerie-Auswahl + Basisdaten */}
+            {/* 1. Hauptbild, Galerie & Basisdaten */}
             <div className="p-3 bg-slate-50 border border-slate-200 rounded-2xl space-y-2.5">
               {detailPhotoSrc && enlargePhoto && (
-                <button
-                  type="button"
-                  onClick={() => setEnlargePhoto(false)}
-                  className="w-full focus:outline-hidden"
-                  title="Foto verkleinern"
-                >
-                  <img
-                    src={detailPhotoSrc}
-                    alt={existingItem.name}
-                    className="w-full max-h-64 rounded-2xl object-contain bg-white border border-slate-200 p-1 shadow-xs transition-all"
-                  />
-                </button>
+                <div className="space-y-2">
+                  <button
+                    type="button"
+                    onClick={() => setEnlargePhoto(false)}
+                    className="w-full focus:outline-hidden"
+                    title="Foto verkleinern"
+                  >
+                    <img
+                      src={detailPhotoSrc}
+                      alt={identity.title}
+                      className="w-full max-h-64 rounded-2xl object-contain bg-white border border-slate-200 p-1 shadow-xs transition-all"
+                    />
+                  </button>
+                  {activeImage && (
+                    <div className="flex items-center justify-between px-1 text-[11px]">
+                      <span className="text-slate-600 font-semibold truncate">
+                        {activeImage.caption ||
+                          (activeImage.source === 'manufacturer'
+                            ? 'Herstellerbild'
+                            : 'Eigenes Foto')}
+                      </span>
+                      {!activeImage.is_primary && (
+                        <button
+                          type="button"
+                          onClick={() => handleSetPrimaryImage(activeImage.id)}
+                          className="px-2 py-0.5 rounded-lg bg-indigo-50 text-[#3138A0] font-bold flex items-center gap-1"
+                        >
+                          <Star size={11} />
+                          <span>Als Hauptbild</span>
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
               )}
 
-              <div className="flex items-center gap-3">
+              <div className="flex items-start gap-3">
                 {detailPhotoSrc ? (
                   !enlargePhoto && (
                     <button
                       type="button"
                       onClick={() => setEnlargePhoto(true)}
-                      className="shrink-0 focus:outline-hidden"
+                      className="shrink-0 focus:outline-hidden relative"
                       title="Gerätefoto groß anzeigen"
                     >
                       <img
                         src={detailPhotoSrc}
-                        alt={existingItem.name}
+                        alt={identity.title}
                         className="w-24 h-24 rounded-2xl object-cover border border-slate-200 bg-white shadow-2xs transition-all"
                       />
+                      {activeImage?.source === 'manufacturer' && (
+                        <span className="absolute bottom-1 left-1 px-1.5 py-0.5 rounded bg-black/70 text-white text-[9px] font-bold">
+                          Hersteller
+                        </span>
+                      )}
                     </button>
                   )
                 ) : (
@@ -581,45 +880,52 @@ export const GeraetModal: React.FC = () => {
                       type="file"
                       accept="image/*"
                       capture="environment"
-                      onChange={handlePhotoUpload}
+                      onChange={(e) => handleImageFilesUpload(e, 'own')}
                       className="hidden"
                     />
                   </label>
                 )}
 
                 <div className="flex-1 min-w-0 space-y-2">
-                  <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-[11px]">
-                    <div>
-                      <span className="text-slate-400 block">Kategorie</span>
-                      <span className="font-bold text-slate-800 truncate block">
-                        {catDef?.label || funcGroup.title}
-                      </span>
-                    </div>
-                    <div>
-                      <span className="text-slate-400 block">Bestand / Anzahl</span>
-                      <span className="font-bold text-slate-800">
-                        {existingItem.quantity ?? 1} Stk.
-                      </span>
-                    </div>
-                    {parentDevice && (
-                      <div className="col-span-2 pt-0.5">
-                        <span className="text-slate-400 block">Zugeordnetes Hauptgerät</span>
-                        <button
-                          type="button"
-                          onClick={() => setSelectedEquipmentId(parentDevice.id)}
-                          className="font-bold text-[#3138A0] hover:underline flex items-center gap-1 text-left"
-                        >
-                          <Link2 size={11} />
-                          <span>
-                            {parentDevice.name}
-                            {parentDevice.model ? ` (${parentDevice.model})` : ''}
+                  {baseInfoItems.length > 0 ? (
+                    <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-[11px]">
+                      {baseInfoItems.map((item) => (
+                        <div key={item.label} className="min-w-0">
+                          <span className="text-slate-400 block text-[10px]">
+                            {item.label}
                           </span>
-                        </button>
-                      </div>
-                    )}
-                  </div>
+                          <span className="font-bold text-slate-800 truncate block">
+                            {item.value}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-[11px] text-slate-500">
+                      Kategorie: <strong className="text-slate-800">{catLabel}</strong>
+                    </div>
+                  )}
 
-                  {/* Direkte Foto-Buttons auch in der Detailansicht */}
+                  {parentDevice && (
+                    <div className="pt-0.5 text-[11px]">
+                      <span className="text-slate-400 block text-[10px]">
+                        Zugeordnetes Hauptgerät
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedEquipmentId(parentDevice.id)}
+                        className="font-bold text-[#3138A0] hover:underline flex items-center gap-1 text-left"
+                      >
+                        <Link2 size={11} />
+                        <span>
+                          {parentDevice.name}
+                          {parentDevice.model ? ` (${parentDevice.model})` : ''}
+                        </span>
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Direkte Kamera & Galerie Buttons zum schnellen Ergänzen weiterer Bilder */}
                   <div className="flex items-center gap-1.5 pt-0.5">
                     <label
                       className={`flex-1 h-8 px-2 bg-white hover:bg-slate-100 border border-slate-200 text-slate-800 rounded-xl text-[10px] font-bold flex items-center justify-center gap-1 cursor-pointer shadow-2xs ${
@@ -627,13 +933,13 @@ export const GeraetModal: React.FC = () => {
                       }`}
                     >
                       <Camera size={12} className="text-[#3138A0]" />
-                      <span>Kamera</span>
+                      <span>Kamera +</span>
                       <input
                         type="file"
                         accept="image/*"
                         capture="environment"
                         disabled={isUploadingPhoto}
-                        onChange={handlePhotoUpload}
+                        onChange={(e) => handleImageFilesUpload(e, 'own')}
                         className="hidden"
                       />
                     </label>
@@ -643,67 +949,211 @@ export const GeraetModal: React.FC = () => {
                       }`}
                     >
                       <ImagePlus size={12} className="text-[#3138A0]" />
-                      <span>Galerie</span>
+                      <span>Galerie +</span>
                       <input
                         type="file"
                         accept="image/*"
+                        multiple
                         disabled={isUploadingPhoto}
-                        onChange={handlePhotoUpload}
+                        onChange={(e) => handleImageFilesUpload(e, 'own')}
                         className="hidden"
                       />
                     </label>
                   </div>
                 </div>
               </div>
-            </div>
 
-            {/* Technische Daten & Parameter */}
-            <div className="p-3 bg-white border border-slate-200 rounded-2xl space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-[11px] font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
-                  <Sliders size={12} className="text-[#3138A0]" />
-                  <span>Technische Daten ({specEntries.length})</span>
-                </span>
-              </div>
-
-              {specEntries.length === 0 ? (
-                <p className="text-[11px] text-slate-400 italic">
-                  Keine technischen Parameter hinterlegt. Über „Bearbeiten“ oder ChatGPT ergänzbar.
-                </p>
-              ) : (
-                <div className="grid grid-cols-2 gap-1.5">
-                  {specEntries.map(([key, val]) => {
-                    const strVal = String(val).trim();
-                    const label = getSpecFieldLabel(key, existingItem.category);
-                    const isWide = strVal.length > 22 || label.length > 22;
-                    return (
-                      <div
-                        key={key}
-                        className={`px-2.5 py-2 bg-slate-50 border border-slate-100 rounded-xl ${
-                          isWide ? 'col-span-2' : 'col-span-1'
-                        }`}
-                      >
-                        <span className="text-[10px] font-semibold text-slate-500 block">
-                          {label}
-                        </span>
-                        <span className="text-xs font-bold text-slate-900 break-words leading-snug block mt-0.5">
-                          {strVal}
-                        </span>
-                      </div>
-                    );
-                  })}
+              {/* Bildergalerie (wenn mehrere Bilder vorhanden sind) */}
+              {galleryImages.length > 1 && (
+                <div className="pt-2 border-t border-slate-200/80 space-y-1.5">
+                  <div className="flex items-center justify-between text-[10px] text-slate-500 font-bold">
+                    <span>Bildergalerie ({galleryImages.length} Bilder)</span>
+                    <span>Antippen für Vorschau · Stern = Hauptbild</span>
+                  </div>
+                  <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar">
+                    {galleryImages.map((img, idx) => {
+                      const isSelected = idx === activeGalleryIdx;
+                      return (
+                        <div key={img.id} className="relative shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setActiveGalleryIdx(idx);
+                              setEnlargePhoto(true);
+                            }}
+                            className={`w-14 h-14 rounded-xl overflow-hidden border-2 transition-all block ${
+                              isSelected
+                                ? 'border-[#3138A0] shadow-xs'
+                                : 'border-slate-200 opacity-85 hover:opacity-100'
+                            }`}
+                          >
+                            <img
+                              src={img.url}
+                              alt={img.caption || `Bild ${idx + 1}`}
+                              className="w-full h-full object-cover"
+                            />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleSetPrimaryImage(img.id);
+                            }}
+                            className={`absolute -top-1 -right-1 w-5 h-5 rounded-full flex items-center justify-center shadow-xs ${
+                              img.is_primary
+                                ? 'bg-amber-400 text-slate-950'
+                                : 'bg-white/90 text-slate-400 hover:text-slate-700 border border-slate-200'
+                            }`}
+                            title={
+                              img.is_primary ? 'Hauptbild' : 'Als Hauptbild festlegen'
+                            }
+                          >
+                            <Star size={10} fill={img.is_primary ? 'currentColor' : 'none'} />
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               )}
             </div>
 
-            {/* Wartung & Intervall (für Geräte) */}
-            {!isZubehoer && (
-              <div className="p-3 bg-white border border-slate-200 rounded-2xl space-y-2.5">
-                <div className="flex items-center justify-between gap-2">
+            {/* 2. Dynamische Bereiche & Felder (wachsen automatisch mit den vorhandenen Daten, aufklappbar) */}
+            {groupedSections.map((group, secIdx) => {
+              const secKey = `sec_${group.sectionName}`;
+              const isCollapsed = Boolean(collapsedSections[secKey]);
+              return (
+                <div
+                  key={group.sectionName}
+                  className="bg-white border border-slate-200 rounded-2xl overflow-hidden"
+                >
+                  <button
+                    type="button"
+                    onClick={() => toggleSectionCollapse(secKey)}
+                    className="w-full p-3 flex items-center justify-between text-left hover:bg-slate-50/70 transition-colors"
+                  >
+                    <span className="text-[11px] font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+                      <Sliders
+                        size={12}
+                        className={secIdx === 0 ? 'text-[#3138A0]' : 'text-emerald-700'}
+                      />
+                      <span>
+                        {group.sectionName} ({group.fields.length})
+                      </span>
+                    </span>
+                    {isCollapsed ? (
+                      <ChevronDown size={15} className="text-slate-400" />
+                    ) : (
+                      <ChevronUp size={15} className="text-slate-400" />
+                    )}
+                  </button>
+
+                  {!isCollapsed && (
+                    <div className="px-3 pb-3 grid grid-cols-2 gap-1.5">
+                      {group.fields.map((field) => {
+                        const formatted = formatDynamicFieldValue(field);
+                        const isWide =
+                          formatted.length > 22 || field.label.length > 22;
+                        return (
+                          <div
+                            key={field.id}
+                            className={`px-2.5 py-2 bg-slate-50 border border-slate-100 rounded-xl ${
+                              isWide ? 'col-span-2' : 'col-span-1'
+                            }`}
+                          >
+                            <div className="flex items-center justify-between gap-1">
+                              <span className="text-[10px] font-semibold text-slate-500 truncate">
+                                {field.label}
+                              </span>
+                              {field.source === 'manufacturer' && (
+                                <span
+                                  className="text-[9px] font-bold px-1 py-0.2 rounded bg-indigo-50 text-[#3138A0] shrink-0"
+                                  title="Herstellerangabe"
+                                >
+                                  Hersteller
+                                </span>
+                              )}
+                            </div>
+                            <span className="text-xs font-bold text-slate-900 break-words leading-snug block mt-0.5">
+                              {formatted}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+
+            {/* 3. Dokumente (Rechnungen & Bedienungsanleitungen) – nur wenn vorhanden oder direkt zum Anhängen */}
+            {docList.length > 0 && (
+              <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden">
+                <button
+                  type="button"
+                  onClick={() => toggleSectionCollapse('sec_docs')}
+                  className="w-full p-3 flex items-center justify-between text-left hover:bg-slate-50/70 transition-colors"
+                >
                   <span className="text-[11px] font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
-                    <Calendar size={12} className="text-[#2C7738]" />
-                    <span>Wartung & Intervall</span>
+                    <Paperclip size={12} className="text-[#3138A0]" />
+                    <span>Rechnungen & Anleitungen ({docList.length})</span>
                   </span>
+                  {collapsedSections.sec_docs ? (
+                    <ChevronDown size={15} className="text-slate-400" />
+                  ) : (
+                    <ChevronUp size={15} className="text-slate-400" />
+                  )}
+                </button>
+                {!collapsedSections.sec_docs && (
+                  <div className="px-3 pb-3 space-y-1.5">
+                    {docList.map((doc) => (
+                      <a
+                        key={doc.id}
+                        href={doc.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        download={doc.title}
+                        className="p-2.5 bg-slate-50 hover:bg-indigo-50/50 border border-slate-200 rounded-xl flex items-center justify-between gap-2 transition-colors"
+                      >
+                        <div className="min-w-0">
+                          <span className="text-xs font-bold text-slate-900 block truncate">
+                            {doc.title}
+                          </span>
+                          <span className="text-[10px] font-semibold text-slate-500 uppercase">
+                            {doc.type === 'rechnung'
+                              ? 'Rechnung / Kaufbeleg'
+                              : doc.type === 'anleitung'
+                                ? 'Bedienungsanleitung'
+                                : 'Dokument'}
+                          </span>
+                        </div>
+                        <ExternalLink size={14} className="text-[#3138A0] shrink-0" />
+                      </a>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* 4. Wartung & Wartungshistorie (für Geräte) */}
+            {!isZubehoer && (
+              <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden">
+                <div className="p-3 flex items-center justify-between gap-2">
+                  <button
+                    type="button"
+                    onClick={() => toggleSectionCollapse('sec_maint')}
+                    className="flex items-center gap-1.5 text-left"
+                  >
+                    <Calendar size={12} className="text-[#2C7738]" />
+                    <span className="text-[11px] font-bold text-slate-800 uppercase tracking-wider">
+                      Wartung & Historie
+                    </span>
+                    {collapsedSections.sec_maint ? (
+                      <ChevronDown size={14} className="text-slate-400" />
+                    ) : (
+                      <ChevronUp size={14} className="text-slate-400" />
+                    )}
+                  </button>
                   <button
                     type="button"
                     onClick={() => setActiveModal('WARTUNG_DOKUMENTIEREN')}
@@ -714,79 +1164,90 @@ export const GeraetModal: React.FC = () => {
                   </button>
                 </div>
 
-                {existingItem.maintenance_plan && (
-                  <div className="p-2 bg-slate-50 rounded-xl border border-slate-100">
-                    <span className="text-[10px] font-semibold text-slate-500 block">
-                      Wartungsplan
-                    </span>
-                    <span className="text-xs font-medium text-slate-900">
-                      {existingItem.maintenance_plan}
-                    </span>
-                  </div>
-                )}
+                {!collapsedSections.sec_maint && (
+                  <div className="px-3 pb-3 space-y-2.5">
+                    {existingItem.maintenance_plan && (
+                      <div className="p-2 bg-slate-50 rounded-xl border border-slate-100">
+                        <span className="text-[10px] font-semibold text-slate-500 block">
+                          Wartungsplan
+                        </span>
+                        <span className="text-xs font-medium text-slate-900">
+                          {existingItem.maintenance_plan}
+                        </span>
+                      </div>
+                    )}
 
-                <div className="grid grid-cols-3 gap-2 text-[11px]">
-                  <div className="p-2 bg-slate-50 rounded-xl border border-slate-100">
-                    <span className="text-[10px] text-slate-500 block">Intervall</span>
-                    <span className="font-bold text-slate-900">
-                      alle {existingItem.interval_months || 6} Mon.
-                    </span>
-                  </div>
-                  <div className="p-2 bg-slate-50 rounded-xl border border-slate-100">
-                    <span className="text-[10px] text-slate-500 block">Letzte Wartung</span>
-                    <span className="font-bold text-slate-900 tabular-nums">
-                      {existingItem.last_maintenance || '–'}
-                    </span>
-                  </div>
-                  <div
-                    className={`p-2 rounded-xl border ${
-                      isDue
-                        ? 'bg-fuchsia-50 border-fuchsia-200 text-[#9A1B8D]'
-                        : 'bg-slate-50 border-slate-100 text-slate-900'
-                    }`}
-                  >
-                    <span className="text-[10px] opacity-75 block">Nächste Fälligkeit</span>
-                    <span className="font-bold tabular-nums">
-                      {existingItem.next_maintenance || '–'}
-                    </span>
-                  </div>
-                </div>
-
-                {/* Bisherige Wartungshistorie */}
-                {existingItem.history && existingItem.history.length > 0 && (
-                  <div className="pt-1.5 border-t border-slate-100 space-y-1.5">
-                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1">
-                      <History size={11} />
-                      <span>Wartungsverlauf ({existingItem.history.length})</span>
-                    </span>
-                    <div className="max-h-32 overflow-y-auto space-y-1 pr-1 overscroll-contain">
-                      {existingItem.history.map((h, idx) => (
-                        <div
-                          key={`${h.date}-${idx}`}
-                          className="p-2 bg-slate-50 rounded-lg border border-slate-100 text-[11px]"
-                        >
-                          <div className="flex items-center justify-between font-bold text-slate-800">
-                            <span>{h.plan || 'Wartung'}</span>
-                            <span className="text-[10px] text-slate-500 tabular-nums">{h.date}</span>
-                          </div>
-                          {h.note && (
-                            <p className="text-[10px] text-slate-600 mt-0.5">{h.note}</p>
-                          )}
-                        </div>
-                      ))}
+                    <div className="grid grid-cols-3 gap-2 text-[11px]">
+                      <div className="p-2 bg-slate-50 rounded-xl border border-slate-100">
+                        <span className="text-[10px] text-slate-500 block">Intervall</span>
+                        <span className="font-bold text-slate-900">
+                          alle {existingItem.interval_months || 6} Mon.
+                        </span>
+                      </div>
+                      <div className="p-2 bg-slate-50 rounded-xl border border-slate-100">
+                        <span className="text-[10px] text-slate-500 block">
+                          Letzte Wartung
+                        </span>
+                        <span className="font-bold text-slate-900 tabular-nums">
+                          {existingItem.last_maintenance || '–'}
+                        </span>
+                      </div>
+                      <div
+                        className={`p-2 rounded-xl border ${
+                          isDue
+                            ? 'bg-fuchsia-50 border-fuchsia-200 text-[#9A1B8D]'
+                            : 'bg-slate-50 border-slate-100 text-slate-900'
+                        }`}
+                      >
+                        <span className="text-[10px] opacity-75 block">
+                          Nächste Fälligkeit
+                        </span>
+                        <span className="font-bold tabular-nums">
+                          {existingItem.next_maintenance || '–'}
+                        </span>
+                      </div>
                     </div>
+
+                    {existingItem.history && existingItem.history.length > 0 && (
+                      <div className="pt-1.5 border-t border-slate-100 space-y-1.5">
+                        <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1">
+                          <History size={11} />
+                          <span>Wartungsverlauf ({existingItem.history.length})</span>
+                        </span>
+                        <div className="max-h-36 overflow-y-auto space-y-1 pr-1 overscroll-contain">
+                          {existingItem.history.map((h, idx) => (
+                            <div
+                              key={`${h.date}-${idx}`}
+                              className="p-2 bg-slate-50 rounded-lg border border-slate-100 text-[11px]"
+                            >
+                              <div className="flex items-center justify-between font-bold text-slate-800">
+                                <span>{h.plan || 'Wartung'}</span>
+                                <span className="text-[10px] text-slate-500 tabular-nums">
+                                  {h.date}
+                                </span>
+                              </div>
+                              {h.note && (
+                                <p className="text-[10px] text-slate-600 mt-0.5">
+                                  {h.note}
+                                </p>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
             )}
 
-            {/* Zugeordnetes Zubehör (für Geräte) */}
+            {/* 5. Zugeordnetes Zubehör & Ersatzteile (für Geräte) */}
             {!isZubehoer && (
               <div className="p-3 bg-white border border-slate-200 rounded-2xl space-y-2">
                 <div className="flex items-center justify-between">
                   <span className="text-[11px] font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
                     <Package size={12} className="text-[#3138A0]" />
-                    <span>Passendes Zubehör ({linkedAccessories.length})</span>
+                    <span>Zubehör & Ersatzteile ({linkedAccessories.length})</span>
                   </span>
                   <button
                     type="button"
@@ -803,12 +1264,15 @@ export const GeraetModal: React.FC = () => {
 
                 {linkedAccessories.length === 0 ? (
                   <p className="text-[11px] text-slate-400 italic">
-                    Noch kein Zubehör direkt zugeordnet.
+                    Noch kein Zubehör oder Ersatzteil zugeordnet.
                   </p>
                 ) : (
                   <div className="divide-y divide-slate-100 border border-slate-100 rounded-xl overflow-hidden">
                     {linkedAccessories.map((acc) => {
-                      const accSpecs = Object.values(acc.specs || {}).filter(Boolean);
+                      const accIdentity = resolveEquipmentIdentity(acc);
+                      const accFields = resolveEquipmentDynamicFields(acc)
+                        .filter((f) => !isDynamicFieldValueEmpty(f))
+                        .map((f) => formatDynamicFieldValue(f));
                       return (
                         <button
                           key={acc.id}
@@ -818,11 +1282,11 @@ export const GeraetModal: React.FC = () => {
                         >
                           <div className="min-w-0">
                             <span className="text-xs font-bold text-slate-900 block truncate">
-                              {acc.name}
+                              {accIdentity.title}
                             </span>
-                            {accSpecs.length > 0 && (
+                            {accFields.length > 0 && (
                               <span className="text-[10px] text-slate-500 block truncate">
-                                {accSpecs.join(' · ')}
+                                {accFields.join(' · ')}
                               </span>
                             )}
                           </div>
@@ -837,7 +1301,7 @@ export const GeraetModal: React.FC = () => {
               </div>
             )}
 
-            {/* Notizen / Lagerort */}
+            {/* 6. Notizen */}
             {existingItem.notes && (
               <div className="p-3 bg-slate-50 border border-slate-200 rounded-2xl space-y-1">
                 <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1">
@@ -850,9 +1314,9 @@ export const GeraetModal: React.FC = () => {
               </div>
             )}
 
-            {/* Dezente MCP-Kennung am Ende */}
+            {/* Eindeutige MCP-ID */}
             <div className="px-1 pt-0.5 flex items-center justify-between text-[10px] text-slate-400">
-              <span>MCP-ID</span>
+              <span>Eindeutige Geräte-ID (MCP)</span>
               <span className="font-mono select-all">{existingItem.id}</span>
             </div>
           </div>
@@ -887,8 +1351,10 @@ export const GeraetModal: React.FC = () => {
   }
 
   // ============================================================================
-  // 2. BEARBEITEN- / ANLEGEN-ANSICHT (Einfache Text-, Zahlen- & Auswahlfelder)
+  // 2. UNIVERSELLE BEARBEITEN- / ANLEGEN-ANSICHT (Alle Angaben optional & flexibel)
   // ============================================================================
+  const primaryImageObj = images.find((img) => img.is_primary) || images[0] || null;
+
   return (
     <div className="absolute inset-0 z-50 bg-black/40 backdrop-blur-2xs flex flex-col justify-end animate-fade-in">
       <div className="flex-1" onClick={handleCancelEdit} />
@@ -907,7 +1373,7 @@ export const GeraetModal: React.FC = () => {
                   : 'Neues Gerät anlegen'}
             </h2>
             <p className="text-[11px] text-slate-500">
-              Alle Felder direkt als Text, Zahl oder Auswahl bearbeitbar
+              Universelle Erfassung · Alle Angaben optional & jederzeit erweiterbar
             </p>
           </div>
           <button
@@ -921,263 +1387,656 @@ export const GeraetModal: React.FC = () => {
         </div>
 
         {/* Body */}
-        <div className="flex-1 overflow-y-auto py-3 space-y-3 text-xs text-slate-700 overscroll-contain">
-          {/* 1. Gerätefoto ganz oben für sofortige Sichtbarkeit */}
-          <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-2xl flex items-center gap-3">
-            {normalizedCurrentPhoto ? (
-              <img
-                src={normalizedCurrentPhoto}
-                alt="Gerätefoto"
-                className="w-20 h-20 rounded-2xl object-cover border border-slate-200 shrink-0 bg-white shadow-2xs"
-              />
-            ) : (
-              <div className="w-20 h-20 rounded-2xl bg-white border border-dashed border-slate-300 flex flex-col items-center justify-center text-slate-400 shrink-0">
-                <Camera size={22} />
-                <span className="text-[9px] font-bold mt-0.5">Kein Foto</span>
-              </div>
-            )}
-
-            <div className="flex-1 space-y-1.5">
-              <span className="text-[11px] font-bold text-slate-700 block">
-                Gerätefoto {isUploadingPhoto ? '(wird verarbeitet...)' : ''}
-              </span>
-              <div className="flex items-center gap-1.5">
-                <label
-                  className={`flex-1 h-9 px-2 bg-white hover:bg-slate-100 border border-slate-200 text-slate-800 rounded-xl text-[11px] font-bold flex items-center justify-center gap-1 cursor-pointer shadow-2xs ${
-                    isUploadingPhoto ? 'opacity-60 pointer-events-none' : ''
-                  }`}
-                >
-                  <Camera size={13} className="text-[#3138A0]" />
-                  <span>Kamera</span>
-                  <input
-                    ref={cameraInputRef}
-                    type="file"
-                    accept="image/*"
-                    capture="environment"
-                    disabled={isUploadingPhoto}
-                    onChange={handlePhotoUpload}
-                    className="hidden"
-                  />
-                </label>
-
-                <label
-                  className={`flex-1 h-9 px-2 bg-white hover:bg-slate-100 border border-slate-200 text-slate-800 rounded-xl text-[11px] font-bold flex items-center justify-center gap-1 cursor-pointer shadow-2xs ${
-                    isUploadingPhoto ? 'opacity-60 pointer-events-none' : ''
-                  }`}
-                >
-                  <ImagePlus size={13} className="text-[#3138A0]" />
-                  <span>Galerie</span>
-                  <input
-                    type="file"
-                    accept="image/*"
-                    disabled={isUploadingPhoto}
-                    onChange={handlePhotoUpload}
-                    className="hidden"
-                  />
-                </label>
-
-                {normalizedCurrentPhoto && (
-                  <button
-                    type="button"
-                    onClick={handleRemovePhoto}
-                    className="w-9 h-9 bg-red-50 hover:bg-red-100 text-[#B42318] rounded-xl flex items-center justify-center shrink-0"
-                    title="Foto entfernen"
-                  >
-                    <Trash2 size={14} />
-                  </button>
-                )}
-              </div>
-            </div>
-          </div>
-
-          {/* 2. Typ & Funktions-Kategorie */}
-          <div className="grid grid-cols-12 gap-2.5">
-            <div className="col-span-5">
-              <label className="font-semibold text-slate-700 block mb-1 text-[11px]">
-                Eintragstyp
-              </label>
-              <select
-                value={itemType}
-                onChange={(e) => handleSwitchType(e.target.value as 'geraet' | 'zubehoer')}
-                className="w-full h-10 px-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-[#3138A0] outline-hidden text-xs font-bold text-slate-900"
-              >
-                <option value="geraet">Gerät / Maschine</option>
-                <option value="zubehoer">Zubehör / Teil</option>
-              </select>
-            </div>
-
-            <div className="col-span-7">
-              <label className="font-semibold text-slate-700 block mb-1 text-[11px]">
-                Kategorie
-              </label>
-              <select
-                value={currentCatDef?.id || category}
-                onChange={(e) => handleSelectCategory(e.target.value)}
-                className="w-full h-10 px-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-[#3138A0] outline-hidden text-xs font-bold text-slate-900"
-              >
-                {typeCategories.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          {/* 3. Bezeichnung & Modell / Artikel-Nr. (Freitext mit Datalist-Vorschlägen) */}
+        <div className="flex-1 overflow-y-auto py-3 space-y-3.5 text-xs text-slate-700 overscroll-contain">
+          {/* 1. Bilder & Galerie (Hauptbild + weitere eigene Fotos / Herstellerbilder) */}
           <div className="p-3 bg-slate-50 border border-slate-200 rounded-2xl space-y-2.5">
-            <div>
-              <label className="font-semibold text-slate-700 block mb-1 text-[11px]">
-                Bezeichnung *
-              </label>
-              <input
-                type="text"
-                required
-                list="equipment-preset-names"
-                placeholder={currentCatDef?.namePlaceholder || 'Geräte- oder Zubehörname eingeben'}
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                className="w-full h-10 px-3 bg-white border border-slate-200 rounded-xl focus:border-[#3138A0] outline-hidden text-xs font-bold text-slate-900"
-              />
-              {currentCatDef?.presetNames && currentCatDef.presetNames.length > 0 && (
-                <datalist id="equipment-preset-names">
-                  {currentCatDef.presetNames.map((preset) => (
-                    <option key={preset} value={preset} />
-                  ))}
-                </datalist>
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-bold text-slate-800 uppercase tracking-wider">
+                Gerätebilder ({images.length})
+              </span>
+              {images.length > 0 && (
+                <span className="text-[10px] text-slate-500">
+                  Stern = Hauptbild in der Geräteliste
+                </span>
               )}
             </div>
 
-            <div className="grid grid-cols-12 gap-2.5">
-              <div className="col-span-8">
-                <label className="font-semibold text-slate-600 mb-1 text-[11px] flex items-center gap-1">
-                  <Tag size={11} className="text-slate-400" />
-                  <span>Modell / Artikel- oder Serien-Nr.</span>
+            <div className="flex items-center gap-3">
+              {primaryImageObj ? (
+                <img
+                  src={primaryImageObj.url}
+                  alt="Hauptbild"
+                  className="w-20 h-20 rounded-2xl object-cover border border-slate-200 shrink-0 bg-white shadow-2xs"
+                />
+              ) : (
+                <div className="w-20 h-20 rounded-2xl bg-white border border-dashed border-slate-300 flex flex-col items-center justify-center text-slate-400 shrink-0">
+                  <Camera size={22} />
+                  <span className="text-[9px] font-bold mt-0.5">Kein Bild</span>
+                </div>
+              )}
+
+              <div className="flex-1 space-y-1.5">
+                <div className="flex items-center gap-1.5">
+                  <label
+                    className={`flex-1 h-9 px-2 bg-white hover:bg-slate-100 border border-slate-200 text-slate-800 rounded-xl text-[11px] font-bold flex items-center justify-center gap-1 cursor-pointer shadow-2xs ${
+                      isUploadingPhoto ? 'opacity-60 pointer-events-none' : ''
+                    }`}
+                  >
+                    <Camera size={13} className="text-[#3138A0]" />
+                    <span>Kamera</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      capture="environment"
+                      disabled={isUploadingPhoto}
+                      onChange={(e) => handleImageFilesUpload(e, 'own')}
+                      className="hidden"
+                    />
+                  </label>
+
+                  <label
+                    className={`flex-1 h-9 px-2 bg-white hover:bg-slate-100 border border-slate-200 text-slate-800 rounded-xl text-[11px] font-bold flex items-center justify-center gap-1 cursor-pointer shadow-2xs ${
+                      isUploadingPhoto ? 'opacity-60 pointer-events-none' : ''
+                    }`}
+                  >
+                    <ImagePlus size={13} className="text-[#3138A0]" />
+                    <span>Galerie</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      multiple
+                      disabled={isUploadingPhoto}
+                      onChange={(e) => handleImageFilesUpload(e, 'own')}
+                      className="hidden"
+                    />
+                  </label>
+                </div>
+
+                {/* Externe Bild-URL (z.B. Herstellerbild) */}
+                <div className="flex items-center gap-1">
+                  <input
+                    type="url"
+                    value={newImageUrl}
+                    onChange={(e) => setNewImageUrl(e.target.value)}
+                    placeholder="Bild-URL (z. B. Herstellerbild)..."
+                    className="flex-1 h-8 px-2 bg-white border border-slate-200 rounded-lg text-[11px] text-slate-900 outline-hidden focus:border-[#3138A0]"
+                  />
+                  <select
+                    value={newImageSource}
+                    onChange={(e) =>
+                      setNewImageSource(e.target.value as 'own' | 'manufacturer')
+                    }
+                    className="h-8 px-1.5 bg-white border border-slate-200 rounded-lg text-[10px] font-semibold text-slate-700"
+                  >
+                    <option value="own">Eigenes</option>
+                    <option value="manufacturer">Hersteller</option>
+                  </select>
+                  <button
+                    type="button"
+                    onClick={handleAddImageUrl}
+                    disabled={!newImageUrl.trim()}
+                    className="h-8 px-2 bg-[#3138A0] disabled:opacity-40 text-white rounded-lg text-[10px] font-bold flex items-center gap-1 shrink-0"
+                  >
+                    <Globe size={11} />
+                    <span>+</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {images.length > 0 && (
+              <div className="flex items-center gap-2 overflow-x-auto pt-1 pb-0.5 no-scrollbar">
+                {images.map((img, idx) => (
+                  <div
+                    key={img.id}
+                    className="relative shrink-0 p-1 bg-white border border-slate-200 rounded-xl flex flex-col items-center gap-1"
+                  >
+                    <img
+                      src={img.url}
+                      alt={img.caption || `Bild ${idx + 1}`}
+                      className="w-14 h-14 rounded-lg object-cover"
+                    />
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => handleSetPrimaryImage(img.id)}
+                        className={`px-1.5 py-0.5 rounded text-[9px] font-bold flex items-center gap-0.5 ${
+                          img.is_primary
+                            ? 'bg-amber-400 text-slate-950'
+                            : 'bg-slate-100 text-slate-600'
+                        }`}
+                        title="Als Hauptbild festlegen"
+                      >
+                        <Star size={9} fill={img.is_primary ? 'currentColor' : 'none'} />
+                        <span>{img.is_primary ? 'Haupt' : 'Wählen'}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveImage(img.id)}
+                        className="p-0.5 text-[#B42318] hover:bg-red-50 rounded"
+                        title="Bild entfernen"
+                      >
+                        <Trash2 size={11} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* 2. Standardfelder: Hersteller, Modell, Kategorie, Bezeichnung, Status */}
+          <div className="p-3 bg-slate-50 border border-slate-200 rounded-2xl space-y-2.5">
+            <span className="text-[11px] font-bold text-slate-800 uppercase tracking-wider block">
+              Basisdaten (optional)
+            </span>
+
+            <div className="grid grid-cols-12 gap-2">
+              <div className="col-span-5">
+                <label className="font-semibold text-slate-700 block mb-1 text-[11px]">
+                  Eintragstyp
+                </label>
+                <select
+                  value={itemType}
+                  onChange={(e) => setItemType(e.target.value as 'geraet' | 'zubehoer')}
+                  className="w-full h-9 px-2 bg-white border border-slate-200 rounded-xl focus:border-[#3138A0] outline-hidden text-xs font-bold text-slate-900"
+                >
+                  <option value="geraet">Gerät / Maschine</option>
+                  <option value="zubehoer">Zubehör / Teil</option>
+                </select>
+              </div>
+
+              <div className="col-span-7">
+                <label className="font-semibold text-slate-700 block mb-1 text-[11px]">
+                  Kategorie (frei wählbar)
                 </label>
                 <input
                   type="text"
-                  placeholder={currentCatDef?.modelPlaceholder || 'Freitext / Nummer'}
-                  value={model}
-                  onChange={(e) => setModel(e.target.value)}
-                  className="w-full h-10 px-3 bg-white border border-slate-200 rounded-xl focus:border-[#3138A0] outline-hidden text-xs text-slate-900"
+                  list="equipment-category-suggestions"
+                  value={category}
+                  onChange={(e) => setCategory(e.target.value)}
+                  placeholder="z. B. Motorsäge, Rasenmäher, Akku..."
+                  className="w-full h-9 px-2.5 bg-white border border-slate-200 rounded-xl focus:border-[#3138A0] outline-hidden text-xs font-semibold text-slate-900"
+                />
+                <datalist id="equipment-category-suggestions">
+                  {categorySuggestions.map((cat) => (
+                    <option key={cat} value={cat} />
+                  ))}
+                </datalist>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="font-semibold text-slate-700 block mb-1 text-[11px]">
+                  Hersteller
+                </label>
+                <input
+                  type="text"
+                  value={manufacturer}
+                  onChange={(e) => setManufacturer(e.target.value)}
+                  placeholder="z. B. STIHL, Sabo, Milwaukee..."
+                  className="w-full h-9 px-2.5 bg-white border border-slate-200 rounded-xl focus:border-[#3138A0] outline-hidden text-xs font-semibold text-slate-900"
                 />
               </div>
 
+              <div>
+                <label className="font-semibold text-slate-700 block mb-1 text-[11px]">
+                  Modell
+                </label>
+                <input
+                  type="text"
+                  value={model}
+                  onChange={(e) => setModel(e.target.value)}
+                  placeholder="z. B. MS 261 C-M, 47-Pro..."
+                  className="w-full h-9 px-2.5 bg-white border border-slate-200 rounded-xl focus:border-[#3138A0] outline-hidden text-xs font-semibold text-slate-900"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-12 gap-2">
+              <div className="col-span-7">
+                <label className="font-semibold text-slate-700 block mb-1 text-[11px]">
+                  Anzeigename / Kurzbezeichnung
+                </label>
+                <input
+                  type="text"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder={
+                    [manufacturer.trim(), model.trim()].filter(Boolean).join(' ') ||
+                    'Wird automatisch aus Hersteller & Modell gebildet'
+                  }
+                  className="w-full h-9 px-2.5 bg-white border border-slate-200 rounded-xl focus:border-[#3138A0] outline-hidden text-xs text-slate-900"
+                />
+              </div>
+
+              <div className="col-span-5">
+                <label className="font-semibold text-slate-700 block mb-1 text-[11px]">
+                  Seriennummer
+                </label>
+                <input
+                  type="text"
+                  value={serialNumber}
+                  onChange={(e) => setSerialNumber(e.target.value)}
+                  placeholder="SN / Gerätenr."
+                  className="w-full h-9 px-2.5 bg-white border border-slate-200 rounded-xl focus:border-[#3138A0] outline-hidden text-xs text-slate-900"
+                />
+              </div>
+            </div>
+
+            {/* Kaufdatum, Kaufpreis, Händler */}
+            <div className="grid grid-cols-3 gap-2">
+              <div>
+                <label className="font-semibold text-slate-700 block mb-1 text-[11px]">
+                  Kaufdatum
+                </label>
+                <input
+                  type="date"
+                  value={purchaseDate}
+                  onChange={(e) => setPurchaseDate(e.target.value)}
+                  className="w-full h-9 px-2 bg-white border border-slate-200 rounded-xl focus:border-[#3138A0] outline-hidden text-[11px] text-slate-900"
+                />
+              </div>
+              <div>
+                <label className="font-semibold text-slate-700 block mb-1 text-[11px]">
+                  Kaufpreis (€)
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={purchasePriceStr}
+                  onChange={(e) => setPurchasePriceStr(e.target.value)}
+                  placeholder="0,00"
+                  className="w-full h-9 px-2.5 bg-white border border-slate-200 rounded-xl focus:border-[#3138A0] outline-hidden text-xs text-slate-900"
+                />
+              </div>
+              <div>
+                <label className="font-semibold text-slate-700 block mb-1 text-[11px]">
+                  Händler
+                </label>
+                <input
+                  type="text"
+                  value={dealer}
+                  onChange={(e) => setDealer(e.target.value)}
+                  placeholder="z. B. Lagerhaus"
+                  className="w-full h-9 px-2.5 bg-white border border-slate-200 rounded-xl focus:border-[#3138A0] outline-hidden text-xs text-slate-900"
+                />
+              </div>
+            </div>
+
+            {/* Gerätestatus, Anzahl & ggf. Hauptgerät */}
+            <div className="grid grid-cols-12 gap-2">
+              {itemType === 'geraet' ? (
+                <div className="col-span-8">
+                  <label className="font-semibold text-slate-700 block mb-1 text-[11px]">
+                    Gerätestatus
+                  </label>
+                  <select
+                    value={status}
+                    onChange={(e) =>
+                      setStatus(
+                        e.target.value as 'einsatzbereit' | 'faellig' | 'wartung'
+                      )
+                    }
+                    className="w-full h-9 px-2.5 bg-white border border-slate-200 rounded-xl focus:border-[#3138A0] outline-hidden text-xs font-bold text-slate-900"
+                  >
+                    <option value="einsatzbereit">Einsatzbereit</option>
+                    <option value="faellig">Wartung fällig</option>
+                    <option value="wartung">In Wartung / Werkstatt</option>
+                  </select>
+                </div>
+              ) : (
+                <div className="col-span-8">
+                  <label className="font-semibold text-slate-700 block mb-1 text-[11px]">
+                    Zugeordnetes Hauptgerät
+                  </label>
+                  <select
+                    value={parentEquipmentId}
+                    onChange={(e) => setParentEquipmentId(e.target.value)}
+                    className="w-full h-9 px-2.5 bg-white border border-slate-200 rounded-xl focus:border-[#3138A0] outline-hidden text-xs font-semibold text-slate-900"
+                  >
+                    <option value="">Keinem bestimmten Gerät zugeordnet</option>
+                    {availableGeraete.map((g) => (
+                      <option key={g.id} value={g.id}>
+                        {g.name}
+                        {g.model ? ` (${g.model})` : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
               <div className="col-span-4">
-                <label className="font-semibold text-slate-600 mb-1 block text-[11px]">
+                <label className="font-semibold text-slate-700 block mb-1 text-[11px]">
                   Anzahl (Stk.)
                 </label>
                 <input
                   type="number"
-                  inputMode="numeric"
-                  min="0"
-                  step="1"
+                  min={0}
                   value={quantityStr}
                   onChange={(e) => setQuantityStr(e.target.value)}
-                  className="w-full h-10 px-2.5 bg-white border border-slate-200 rounded-xl focus:border-[#3138A0] outline-hidden text-xs font-bold text-slate-900 text-center tabular-nums"
+                  className="w-full h-9 px-2.5 bg-white border border-slate-200 rounded-xl focus:border-[#3138A0] outline-hidden text-xs font-bold text-slate-900"
                 />
               </div>
             </div>
+          </div>
 
-            {/* Status (für Gerät) oder Hauptgerät-Zuordnung (für Zubehör) */}
-            {itemType === 'geraet' ? (
+          {/* 3. Dynamische Eingabefelder & Eigene Bereiche */}
+          <div className="p-3 bg-slate-50 border border-slate-200 rounded-2xl space-y-2.5">
+            <div className="flex items-center justify-between gap-2">
               <div>
-                <label className="font-semibold text-slate-600 mb-1 block text-[11px]">
-                  Status
-                </label>
-                <select
-                  value={status}
-                  onChange={(e) =>
-                    setStatus(e.target.value as 'einsatzbereit' | 'faellig' | 'wartung')
-                  }
-                  className="w-full h-10 px-3 bg-white border border-slate-200 rounded-xl focus:border-[#3138A0] outline-hidden text-xs font-semibold text-slate-900"
+                <span className="text-[11px] font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+                  <Sliders size={12} className="text-[#3138A0]" />
+                  <span>Dynamische Felder & Bereiche ({dynamicFields.length})</span>
+                </span>
+                <p className="text-[10px] text-slate-500">
+                  Beliebige eigene oder von ChatGPT recherchierte Felder (Text, Zahl, Einheit, Datum, Ja/Nein)
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowNewSectionBox((prev) => !prev)}
+                className="px-2 py-1 bg-white hover:bg-indigo-50 text-[#3138A0] border border-slate-200 rounded-lg text-[10px] font-bold flex items-center gap-1 shrink-0"
+              >
+                <FolderPlus size={11} />
+                <span>+ Bereich</span>
+              </button>
+            </div>
+
+            {showNewSectionBox && (
+              <div className="p-2 bg-white border border-indigo-200 rounded-xl flex items-center gap-1.5">
+                <input
+                  type="text"
+                  value={newSectionInput}
+                  onChange={(e) => setNewSectionInput(e.target.value)}
+                  placeholder="Name des neuen Bereichs (z. B. Motor, Schneidgarnitur, Akku)..."
+                  className="flex-1 h-8 px-2.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-900 outline-hidden focus:border-[#3138A0]"
+                />
+                <button
+                  type="button"
+                  onClick={handleAddCustomSection}
+                  className="h-8 px-2.5 bg-[#3138A0] text-white rounded-lg text-[11px] font-bold"
                 >
-                  <option value="einsatzbereit">Einsatzbereit</option>
-                  <option value="faellig">Wartung fällig</option>
-                  <option value="wartung">In Wartung / Werkstatt</option>
+                  Erstellen
+                </button>
+              </div>
+            )}
+
+            {/* Bestehende dynamische Felder bearbeiten oder entfernen */}
+            {dynamicFields.length > 0 && (
+              <div className="space-y-2">
+                {dynamicFields.map((field) => (
+                  <div
+                    key={field.id}
+                    className="p-2 bg-white border border-slate-200 rounded-xl space-y-1.5"
+                  >
+                    <div className="grid grid-cols-12 gap-1.5 items-center">
+                      <input
+                        type="text"
+                        value={field.label}
+                        onChange={(e) =>
+                          handleUpdateDynamicField(field.id, { label: e.target.value })
+                        }
+                        placeholder="Feldname"
+                        className="col-span-5 h-8 px-2 bg-slate-50 border border-slate-200 rounded-lg text-[11px] font-bold text-slate-900"
+                      />
+                      <select
+                        value={field.section || 'Technische Daten'}
+                        onChange={(e) =>
+                          handleUpdateDynamicField(field.id, { section: e.target.value })
+                        }
+                        className="col-span-4 h-8 px-1.5 bg-slate-50 border border-slate-200 rounded-lg text-[10px] font-semibold text-slate-700"
+                      >
+                        {allSectionOptions.map((sec) => (
+                          <option key={sec} value={sec}>
+                            {sec}
+                          </option>
+                        ))}
+                      </select>
+                      <select
+                        value={field.type}
+                        onChange={(e) =>
+                          handleUpdateDynamicField(field.id, {
+                            type: e.target.value as EquipmentFieldType
+                          })
+                        }
+                        className="col-span-2 h-8 px-1 bg-slate-50 border border-slate-200 rounded-lg text-[10px] font-semibold text-slate-700"
+                      >
+                        <option value="text">Text</option>
+                        <option value="number">Zahl</option>
+                        <option value="unit">Einheit</option>
+                        <option value="date">Datum</option>
+                        <option value="boolean">Ja/Nein</option>
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveDynamicField(field.id)}
+                        className="col-span-1 h-8 flex items-center justify-center text-slate-400 hover:text-[#B42318]"
+                        title="Feld löschen"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-12 gap-1.5 items-center">
+                      {field.type === 'boolean' ? (
+                        <select
+                          value={
+                            field.value === true ||
+                            String(field.value).toLowerCase() === 'true' ||
+                            String(field.value).toLowerCase() === 'ja'
+                              ? 'true'
+                              : 'false'
+                          }
+                          onChange={(e) =>
+                            handleUpdateDynamicField(field.id, {
+                              value: e.target.value === 'true'
+                            })
+                          }
+                          className="col-span-8 h-8 px-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-semibold text-slate-900"
+                        >
+                          <option value="true">Ja</option>
+                          <option value="false">Nein</option>
+                        </select>
+                      ) : (
+                        <input
+                          type={
+                            field.type === 'date'
+                              ? 'date'
+                              : field.type === 'number' || field.type === 'unit'
+                                ? 'number'
+                                : 'text'
+                          }
+                          step="any"
+                          value={String(field.value ?? '')}
+                          onChange={(e) =>
+                            handleUpdateDynamicField(field.id, { value: e.target.value })
+                          }
+                          placeholder="Wert (leer = wird in Ansicht ausgeblendet)"
+                          className={`${
+                            field.type === 'unit' ? 'col-span-5' : 'col-span-8'
+                          } h-8 px-2 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-900`}
+                        />
+                      )}
+
+                      {field.type === 'unit' && (
+                        <input
+                          type="text"
+                          value={field.unit || ''}
+                          onChange={(e) =>
+                            handleUpdateDynamicField(field.id, { unit: e.target.value })
+                          }
+                          placeholder="Einheit (cm, PS...)"
+                          className="col-span-3 h-8 px-2 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-900"
+                        />
+                      )}
+
+                      <select
+                        value={field.source || 'individual'}
+                        onChange={(e) =>
+                          handleUpdateDynamicField(field.id, {
+                            source: e.target.value as 'manufacturer' | 'individual'
+                          })
+                        }
+                        className="col-span-4 h-8 px-1.5 bg-slate-50 border border-slate-200 rounded-lg text-[10px] font-semibold text-slate-600"
+                      >
+                        <option value="individual">Individuell</option>
+                        <option value="manufacturer">Herstellerangabe</option>
+                      </select>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Neues dynamisches Feld hinzufügen */}
+            <div className="p-2.5 bg-white border border-dashed border-slate-300 rounded-xl space-y-2">
+              <span className="text-[10px] font-bold text-slate-600 block">
+                + Neues Feld hinzufügen
+              </span>
+              <div className="grid grid-cols-12 gap-1.5">
+                <input
+                  type="text"
+                  value={draftFieldLabel}
+                  onChange={(e) => setDraftFieldLabel(e.target.value)}
+                  placeholder="Bezeichnung (z. B. Schnittlänge, Leistung, Gewicht)"
+                  className="col-span-7 h-8 px-2 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-900"
+                />
+                <select
+                  value={draftFieldType}
+                  onChange={(e) =>
+                    setDraftFieldType(e.target.value as EquipmentFieldType)
+                  }
+                  className="col-span-5 h-8 px-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-semibold text-slate-800"
+                >
+                  <option value="text">Typ: Text</option>
+                  <option value="number">Typ: Zahl</option>
+                  <option value="unit">Typ: Zahl + Einheit</option>
+                  <option value="date">Typ: Datum</option>
+                  <option value="boolean">Typ: Ja / Nein</option>
                 </select>
               </div>
-            ) : (
-              <div>
-                <label className="font-semibold text-slate-700 mb-1 flex items-center gap-1 text-[11px]">
-                  <Link2 size={12} className="text-[#3138A0]" />
-                  <span>Zugeordnetes Hauptgerät (optional)</span>
-                </label>
+
+              <div className="grid grid-cols-12 gap-1.5">
+                {draftFieldType === 'boolean' ? (
+                  <select
+                    value={draftFieldValue || 'true'}
+                    onChange={(e) => setDraftFieldValue(e.target.value)}
+                    className="col-span-6 h-8 px-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-semibold text-slate-900"
+                  >
+                    <option value="true">Ja</option>
+                    <option value="false">Nein</option>
+                  </select>
+                ) : (
+                  <input
+                    type={
+                      draftFieldType === 'date'
+                        ? 'date'
+                        : draftFieldType === 'number' || draftFieldType === 'unit'
+                          ? 'number'
+                          : 'text'
+                    }
+                    step="any"
+                    value={draftFieldValue}
+                    onChange={(e) => setDraftFieldValue(e.target.value)}
+                    placeholder="Wert eingeben..."
+                    className={`${
+                      draftFieldType === 'unit' ? 'col-span-4' : 'col-span-6'
+                    } h-8 px-2 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-900`}
+                  />
+                )}
+
+                {draftFieldType === 'unit' && (
+                  <input
+                    type="text"
+                    value={draftFieldUnit}
+                    onChange={(e) => setDraftFieldUnit(e.target.value)}
+                    placeholder="Einheit (kW, cm...)"
+                    className="col-span-2 h-8 px-2 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-900"
+                  />
+                )}
+
                 <select
-                  value={parentEquipmentId}
-                  onChange={(e) => handleParentChange(e.target.value)}
-                  className="w-full h-10 px-2.5 bg-white border border-slate-200 rounded-xl focus:border-[#3138A0] outline-hidden text-xs font-medium text-slate-900"
+                  value={draftFieldSection}
+                  onChange={(e) => setDraftFieldSection(e.target.value)}
+                  className="col-span-4 h-8 px-1.5 bg-slate-50 border border-slate-200 rounded-lg text-[10px] font-semibold text-slate-700"
                 >
-                  <option value="">Allgemein / Werkstattbestand</option>
-                  {availableGeraete.map((g) => (
-                    <option key={g.id} value={g.id}>
-                      {g.name} {g.model ? `(${g.model})` : ''}
+                  {allSectionOptions.map((sec) => (
+                    <option key={sec} value={sec}>
+                      {sec}
                     </option>
                   ))}
                 </select>
+
+                <button
+                  type="button"
+                  onClick={handleAddDynamicField}
+                  disabled={!draftFieldLabel.trim()}
+                  className="col-span-2 h-8 bg-[#3138A0] disabled:opacity-40 text-white rounded-lg text-xs font-bold flex items-center justify-center gap-1"
+                >
+                  <Plus size={13} />
+                  <span>Feld</span>
+                </button>
               </div>
-            )}
+
+              <div className="flex items-center justify-between pt-0.5">
+                <span className="text-[10px] text-slate-400">Datenquelle:</span>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setDraftFieldSource('individual')}
+                    className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                      draftFieldSource === 'individual'
+                        ? 'bg-slate-800 text-white'
+                        : 'bg-slate-100 text-slate-600'
+                    }`}
+                  >
+                    Individuell
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDraftFieldSource('manufacturer')}
+                    className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                      draftFieldSource === 'manufacturer'
+                        ? 'bg-[#3138A0] text-white'
+                        : 'bg-slate-100 text-slate-600'
+                    }`}
+                  >
+                    Herstellerangabe
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
 
-          {/* 4. Technische Daten (specs) – einfache Text-/Zahlenfelder */}
-          <div className="p-3 bg-slate-50 border border-slate-200 rounded-2xl space-y-2.5">
-            <span className="font-bold text-slate-800 flex items-center gap-1.5 text-xs">
-              <Sliders size={13} className="text-[#3138A0]" />
-              <span>Technische Daten & Maße</span>
+          {/* 4. Dokumente (Rechnungen & Bedienungsanleitungen) */}
+          <div className="p-3 bg-slate-50 border border-slate-200 rounded-2xl space-y-2">
+            <span className="text-[11px] font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+              <Paperclip size={12} className="text-[#3138A0]" />
+              <span>Rechnungen & Bedienungsanleitungen ({documents.length})</span>
             </span>
 
-            {currentCatDef && currentCatDef.fields.length > 0 && (
-              <div className="grid grid-cols-2 gap-2">
-                {currentCatDef.fields.map((field) => {
-                  const listId = `spec-opts-${field.key}`;
-                  return (
-                    <div key={field.key}>
-                      <label className="text-[11px] font-semibold text-slate-600 block mb-1 truncate">
-                        {field.label}
-                      </label>
-                      <input
-                        type="text"
-                        list={field.quickOptions ? listId : undefined}
-                        value={specs[field.key] || ''}
-                        onChange={(e) => updateSpec(field.key, e.target.value)}
-                        placeholder={field.placeholder}
-                        className="w-full h-9 px-2.5 bg-white border border-slate-200 rounded-xl focus:border-[#3138A0] outline-hidden text-xs text-slate-900"
-                      />
-                      {field.quickOptions && (
-                        <datalist id={listId}>
-                          {field.quickOptions.map((opt) => (
-                            <option key={opt} value={opt} />
-                          ))}
-                        </datalist>
-                      )}
+            {documents.length > 0 && (
+              <div className="space-y-1.5">
+                {documents.map((doc) => (
+                  <div
+                    key={doc.id}
+                    className="p-2 bg-white border border-slate-200 rounded-xl flex items-center justify-between gap-2"
+                  >
+                    <div className="min-w-0">
+                      <span className="text-xs font-bold text-slate-900 block truncate">
+                        {doc.title}
+                      </span>
+                      <span className="text-[10px] text-slate-500 uppercase">
+                        {doc.type}
+                      </span>
                     </div>
-                  );
-                })}
-              </div>
-            )}
-
-            {/* Zusätzliche benutzerdefinierte / MCP-Felder */}
-            {extraSpecKeys.length > 0 && (
-              <div className="space-y-1.5 pt-1 border-t border-slate-200/70">
-                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
-                  Weitere Parameter (MCP / Eigene)
-                </span>
-                {extraSpecKeys.map((k) => (
-                  <div key={k} className="flex items-center gap-1.5">
-                    <span className="w-28 text-[11px] font-semibold text-slate-700 truncate shrink-0">
-                      {getSpecFieldLabel(k, category)}
-                    </span>
-                    <input
-                      type="text"
-                      value={specs[k] || ''}
-                      onChange={(e) => updateSpec(k, e.target.value)}
-                      className="flex-1 h-9 px-2.5 bg-white border border-slate-200 rounded-xl focus:border-[#3138A0] outline-hidden text-xs text-slate-900"
-                    />
                     <button
                       type="button"
-                      onClick={() => removeSpecKey(k)}
-                      className="w-8 h-8 flex items-center justify-center text-slate-400 hover:text-[#B42318] rounded-lg"
-                      title="Feld entfernen"
+                      onClick={() => handleRemoveDocument(doc.id)}
+                      className="p-1 text-slate-400 hover:text-[#B42318]"
+                      title="Dokument entfernen"
                     >
                       <Trash2 size={13} />
                     </button>
@@ -1186,166 +2045,154 @@ export const GeraetModal: React.FC = () => {
               </div>
             )}
 
-            {/* Neues eigenes Feld hinzufügen */}
-            <div className="pt-1.5 border-t border-slate-200/70">
-              <span className="text-[10px] font-semibold text-slate-500 block mb-1">
-                Eigenes Datenfeld ergänzen (optional)
-              </span>
-              <div className="flex items-center gap-1.5">
+            <div className="grid grid-cols-12 gap-1.5 items-center pt-1">
+              <select
+                value={newDocType}
+                onChange={(e) =>
+                  setNewDocType(
+                    e.target.value as 'rechnung' | 'anleitung' | 'sonstiges'
+                  )
+                }
+                className="col-span-4 h-9 px-2 bg-white border border-slate-200 rounded-xl text-[11px] font-semibold text-slate-800"
+              >
+                <option value="rechnung">Rechnung</option>
+                <option value="anleitung">Anleitung</option>
+                <option value="sonstiges">Sonstiges</option>
+              </select>
+              <input
+                type="text"
+                value={newDocTitle}
+                onChange={(e) => setNewDocTitle(e.target.value)}
+                placeholder="Titel (optional)"
+                className="col-span-4 h-9 px-2 bg-white border border-slate-200 rounded-xl text-xs text-slate-900"
+              />
+              <label className="col-span-4 h-9 px-2 bg-white hover:bg-slate-100 border border-slate-200 rounded-xl text-[11px] font-bold text-[#3138A0] flex items-center justify-center gap-1 cursor-pointer shadow-2xs">
+                <Paperclip size={12} />
+                <span>Datei wählen</span>
                 <input
-                  type="text"
-                  placeholder="Feld (z. B. Gewicht)"
-                  value={customSpecKey}
-                  onChange={(e) => setCustomSpecKey(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      handleAddCustomSpec();
-                    }
-                  }}
-                  className="w-32 h-9 px-2.5 bg-white border border-slate-200 rounded-xl focus:border-[#3138A0] outline-hidden text-xs text-slate-900"
+                  type="file"
+                  accept="application/pdf,image/*"
+                  onChange={handleDocumentUpload}
+                  className="hidden"
                 />
-                <input
-                  type="text"
-                  placeholder="Wert (z. B. 4,9 kg)"
-                  value={customSpecVal}
-                  onChange={(e) => setCustomSpecVal(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      handleAddCustomSpec();
-                    }
-                  }}
-                  className="flex-1 h-9 px-2.5 bg-white border border-slate-200 rounded-xl focus:border-[#3138A0] outline-hidden text-xs text-slate-900"
-                />
-                <button
-                  type="button"
-                  onClick={handleAddCustomSpec}
-                  disabled={!customSpecKey.trim() || (!customSpecVal.trim() && !customSpecKey.includes(':'))}
-                  className="h-9 px-2.5 bg-indigo-50 hover:bg-indigo-100 disabled:opacity-40 text-[#3138A0] font-bold rounded-xl text-xs flex items-center justify-center shrink-0"
-                >
-                  <Plus size={14} />
-                </button>
-              </div>
+              </label>
             </div>
           </div>
 
-          {/* 5. Wartungsplan & Termine (für Geräte) */}
+          {/* 5. Wartung (für Geräte) */}
           {itemType === 'geraet' && (
             <div className="p-3 bg-slate-50 border border-slate-200 rounded-2xl space-y-2.5">
-              <label className="font-bold text-slate-800 block text-xs">
-                Wartung & Intervall
-              </label>
+              <span className="text-[11px] font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+                <Calendar size={12} className="text-[#2C7738]" />
+                <span>Wartung & Intervall (optional)</span>
+              </span>
+
               <div>
-                <label className="text-[11px] font-semibold text-slate-600 block mb-1">
-                  Wartungsplan (Freitext)
+                <label className="font-semibold text-slate-700 block mb-1 text-[11px]">
+                  Wartungsplan / Prüfpunkte
                 </label>
                 <input
                   type="text"
                   value={maintenancePlan}
                   onChange={(e) => setMaintenancePlan(e.target.value)}
-                  placeholder="Regelmäßige Wartungsarbeiten..."
-                  className="w-full h-9 px-2.5 bg-white border border-slate-200 rounded-xl focus:border-[#3138A0] outline-hidden text-xs text-slate-900"
+                  placeholder="z. B. Luftfilter, Zündkerze, Messer schärfen..."
+                  className="w-full h-9 px-2.5 bg-white border border-slate-200 rounded-xl text-xs text-slate-900"
                 />
               </div>
 
               <div className="grid grid-cols-3 gap-2">
                 <div>
-                  <label className="text-[11px] font-semibold text-slate-600 block mb-1">
+                  <label className="font-semibold text-slate-700 block mb-1 text-[11px]">
                     Intervall (Mon.)
                   </label>
                   <input
                     type="number"
-                    inputMode="numeric"
-                    min="1"
-                    max="60"
+                    min={1}
+                    max={60}
                     value={intervalMonths}
                     onChange={(e) => {
-                      setIntervalMonths(e.target.value);
-                      const m = parseInt(e.target.value, 10) || 6;
+                      const val = e.target.value;
+                      setIntervalMonths(val);
+                      const m = Math.max(1, parseInt(val, 10) || 6);
                       setNextMaintenance(addMonthsIso(lastMaintenance, m));
                     }}
-                    className="w-full h-9 px-2.5 bg-white border border-slate-200 rounded-xl focus:border-[#3138A0] outline-hidden text-xs text-slate-900 font-semibold tabular-nums"
+                    className="w-full h-9 px-2 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-900"
                   />
                 </div>
                 <div>
-                  <label className="text-[11px] font-semibold text-slate-600 block mb-1">
+                  <label className="font-semibold text-slate-700 block mb-1 text-[11px]">
                     Letzte Wartung
                   </label>
                   <input
                     type="date"
                     value={lastMaintenance}
                     onChange={(e) => {
-                      setLastMaintenance(e.target.value);
-                      const m = parseInt(intervalMonths, 10) || 6;
-                      setNextMaintenance(addMonthsIso(e.target.value, m));
+                      const val = e.target.value;
+                      setLastMaintenance(val);
+                      const m = Math.max(1, parseInt(intervalMonths, 10) || 6);
+                      setNextMaintenance(addMonthsIso(val, m));
                     }}
-                    className="w-full h-9 px-2 bg-white border border-slate-200 rounded-xl focus:border-[#3138A0] outline-hidden text-[11px] font-semibold text-slate-900"
+                    className="w-full h-9 px-2 bg-white border border-slate-200 rounded-xl text-[11px] text-slate-900"
                   />
                 </div>
                 <div>
-                  <label className="text-[11px] font-semibold text-slate-600 block mb-1">
-                    Fällig am
+                  <label className="font-semibold text-slate-700 block mb-1 text-[11px]">
+                    Nächste Wartung
                   </label>
                   <input
                     type="date"
                     value={nextMaintenance}
                     onChange={(e) => setNextMaintenance(e.target.value)}
-                    className="w-full h-9 px-2 bg-white border border-slate-200 rounded-xl focus:border-[#3138A0] outline-hidden text-[11px] font-semibold text-[#2C7738]"
+                    className="w-full h-9 px-2 bg-white border border-slate-200 rounded-xl text-[11px] text-slate-900"
                   />
                 </div>
               </div>
             </div>
           )}
 
-          {/* 6. Notiz / Lagerort */}
+          {/* 6. Notizen */}
           <div>
-            <label className="font-semibold text-slate-700 mb-1 flex items-center gap-1 text-[11px]">
-              <FileText size={12} className="text-slate-500" />
-              <span>Notiz / Lagerort</span>
+            <label className="font-semibold text-slate-700 block mb-1 text-[11px]">
+              Notiz / Lagerort / Besonderheiten
             </label>
             <textarea
               rows={2}
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
-              placeholder={
-                itemType === 'zubehoer'
-                  ? 'z. B. Forst-Kiste im Bus, 1x geschärft auf Reserve'
-                  : 'z. B. Lagerort, Besonderheiten, Seriennummer...'
-              }
-              className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-[#3138A0] outline-hidden text-xs text-slate-900 resize-none"
+              placeholder="Optionale Hinweise..."
+              className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-[#3138A0] outline-hidden text-xs text-slate-900"
             />
           </div>
 
-          {/* 7. Löschen beim Bearbeiten */}
+          {/* Löschen-Option im Bearbeiten-Modus */}
           {isEditing && existingItem && (
-            <div className="pt-1 border-t border-slate-100">
+            <div className="pt-1">
               {!confirmDelete ? (
                 <button
                   type="button"
                   onClick={() => setConfirmDelete(true)}
-                  className="w-full h-9 rounded-xl border border-red-200 bg-red-50/60 hover:bg-red-50 text-[#B42318] font-semibold text-xs flex items-center justify-center gap-1.5 transition-colors"
+                  className="w-full h-9 border border-red-200 text-[#B42318] bg-red-50/60 hover:bg-red-100/70 rounded-xl font-semibold text-xs flex items-center justify-center gap-1.5 transition-colors"
                 >
-                  <Trash2 size={13} />
-                  <span>{itemType === 'zubehoer' ? 'Zubehör löschen' : 'Gerät löschen'}</span>
+                  <Trash2 size={14} />
+                  <span>Eintrag löschen</span>
                 </button>
               ) : (
                 <div className="p-2.5 bg-red-50 border border-red-200 rounded-xl flex items-center justify-between gap-2">
-                  <span className="text-xs font-semibold text-[#B42318]">
-                    Wirklich endgültig löschen?
+                  <span className="text-[11px] font-bold text-[#B42318]">
+                    Wirklich unwiderruflich löschen?
                   </span>
                   <div className="flex items-center gap-1.5">
                     <button
                       type="button"
                       onClick={() => setConfirmDelete(false)}
-                      className="px-2.5 py-1 bg-white border border-slate-200 rounded-lg text-xs font-semibold text-slate-600"
+                      className="px-2.5 py-1 bg-white border border-slate-200 rounded-lg text-[11px] font-semibold text-slate-700"
                     >
                       Nein
                     </button>
                     <button
                       type="button"
                       onClick={handleDelete}
-                      className="px-2.5 py-1 bg-[#B42318] text-white rounded-lg text-xs font-semibold"
+                      className="px-2.5 py-1 bg-[#B42318] text-white rounded-lg text-[11px] font-bold"
                     >
                       Ja, löschen
                     </button>
@@ -1356,7 +2203,7 @@ export const GeraetModal: React.FC = () => {
           )}
         </div>
 
-        {/* Footer: Abbrechen & Speichern */}
+        {/* Footer */}
         <div className="pt-3 border-t border-slate-100 flex items-center gap-2 shrink-0">
           <button
             type="button"
@@ -1368,10 +2215,9 @@ export const GeraetModal: React.FC = () => {
           <button
             type="button"
             onClick={handleSave}
-            disabled={!name.trim() && !isEditing}
-            className="flex-1 h-11 bg-[#3138A0] hover:bg-[#272d82] active:scale-98 disabled:opacity-50 text-white font-bold rounded-xl text-xs transition-all shadow-xs"
+            className="flex-1 h-11 bg-[#3138A0] hover:bg-[#272d82] active:scale-98 text-white font-bold rounded-xl text-xs transition-all shadow-xs"
           >
-            Speichern
+            {isEditing ? 'Änderungen speichern' : 'Speichern'}
           </button>
         </div>
       </div>

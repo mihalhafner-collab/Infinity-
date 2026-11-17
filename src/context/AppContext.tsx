@@ -17,8 +17,18 @@ import {
   OfferItem,
   BusinessExpense,
   TaxSettings,
-  DeletedTombstoneMap
+  DeletedTombstoneMap,
+  EquipmentDynamicField,
+  EquipmentImage,
+  EquipmentDocument
 } from '../types/index.ts';
+import {
+  resolveEquipmentDocuments,
+  resolveEquipmentDynamicFields,
+  resolveEquipmentImages,
+  resolvePrimaryEquipmentPhoto,
+  syncSpecsFromDynamicFields
+} from '../utils/equipmentConfig.ts';
 import {
   addDaysIso,
   buildLineItemsFromRecords,
@@ -156,18 +166,18 @@ interface AppContextType {
   expenses: BusinessExpense[];
   taxSettings: TaxSettings;
 
-  // Undo notification state (e.g. 5 seconds payment undo)
+  // Undo / confirmation notification state
   undoToast: {
     visible: boolean;
     message: string;
-    actionLabel: string;
-    onUndo: () => void;
+    actionLabel?: string;
+    onUndo?: () => void;
   } | null;
   setUndoToast: React.Dispatch<React.SetStateAction<{
     visible: boolean;
     message: string;
-    actionLabel: string;
-    onUndo: () => void;
+    actionLabel?: string;
+    onUndo?: () => void;
   } | null>>;
 
   // CRUD & Business operations
@@ -228,7 +238,7 @@ interface AppContextType {
   deleteInquiry: (id: string) => void;
   deleteOffer: (id: string) => void;
 
-  addEquipment: (eq: Partial<Equipment> & { name: string }) => Equipment;
+  addEquipment: (eq: Partial<Equipment>) => Equipment;
   updateEquipment: (id: string, eq: Partial<Equipment>) => void;
   deleteEquipment: (id: string) => void;
   recordMaintenance: (
@@ -386,12 +396,12 @@ export const AppProvider: React.FC<{
 
   const [pixelFrameEnabled, setPixelFrameEnabled] = useState(true);
 
-  // Undo Toast (e.g. 5 seconds payment undo)
+  // Undo / confirmation Toast
   const [undoToast, setUndoToast] = useState<{
     visible: boolean;
     message: string;
-    actionLabel: string;
-    onUndo: () => void;
+    actionLabel?: string;
+    onUndo?: () => void;
   } | null>(null);
 
   // Clear any previously saved active work session data (REQ: Timer & Arbeit starten entfernt)
@@ -532,7 +542,15 @@ export const AppProvider: React.FC<{
     safeSetLocalStorage(
       `${STORAGE_KEY}_equipments`,
       JSON.stringify(equipments),
-      () => JSON.stringify(equipments.map((e) => ({ ...e, photo: null })))
+      () =>
+        JSON.stringify(
+          equipments.map((e) => ({
+            ...e,
+            photo: null,
+            images: [],
+            documents: []
+          }))
+        )
     );
   }, [equipments]);
 
@@ -797,6 +815,22 @@ export const AppProvider: React.FC<{
       other.photos.length > 0
     ) {
       patched = { ...patched, photos: other.photos };
+    }
+    if (
+      ('images' in other || 'images' in winner) &&
+      (!Array.isArray(winner.images) || winner.images.length === 0) &&
+      Array.isArray(other.images) &&
+      other.images.length > 0
+    ) {
+      patched = { ...patched, images: other.images };
+    }
+    if (
+      ('documents' in other || 'documents' in winner) &&
+      (!Array.isArray(winner.documents) || winner.documents.length === 0) &&
+      Array.isArray(other.documents) &&
+      other.documents.length > 0
+    ) {
+      patched = { ...patched, documents: other.documents };
     }
     return patched;
   };
@@ -3001,27 +3035,71 @@ export const AppProvider: React.FC<{
     );
   };
 
-  // Equipment & Zubehör
-  const addEquipment = (eq: Partial<Equipment> & { name: string }): Equipment => {
+  // Equipment & Zubehör (Universelle Geräteverwaltung Infinity)
+  const addEquipment = (eq: Partial<Equipment>): Equipment => {
     const nowIso = new Date().toISOString();
     const itemType = eq.item_type || 'geraet';
     const intervalMonths = eq.interval_months || 6;
     const lastMaint = eq.last_maintenance || getTodayLocalIso();
-    const cleanSpecs: Record<string, string> = {};
+    const manufacturer = (eq.manufacturer || '').trim();
+    const model = (eq.model || '').trim();
+    const rawName = (eq.name || '').trim();
+    const resolvedName =
+      rawName ||
+      [manufacturer, model].filter(Boolean).join(' ').trim() ||
+      (eq.category || '').trim() ||
+      (itemType === 'zubehoer' ? 'Zubehör' : 'Gerät');
+
+    const dynamicFields: EquipmentDynamicField[] = resolveEquipmentDynamicFields(eq);
+    const syncedSpecs = syncSpecsFromDynamicFields(dynamicFields);
     for (const [k, v] of Object.entries(eq.specs || {})) {
-      if (k !== 'created_at' && k !== 'updated_at' && v !== undefined && v !== null && String(v).trim() !== '') {
-        cleanSpecs[k.trim()] = String(v).trim();
+      if (
+        k !== 'created_at' &&
+        k !== 'updated_at' &&
+        k !== 'has_photo' &&
+        k !== 'photo_count' &&
+        v !== undefined &&
+        v !== null &&
+        String(v).trim() !== '' &&
+        !(k in syncedSpecs)
+      ) {
+        syncedSpecs[k.trim()] = String(v).trim();
       }
     }
+
+    const normalizedImages: EquipmentImage[] = resolveEquipmentImages({
+      ...eq,
+      name: resolvedName
+    });
+    const primaryPhoto = resolvePrimaryEquipmentPhoto({
+      ...eq,
+      images: normalizedImages
+    });
+    const normalizedDocs: EquipmentDocument[] = resolveEquipmentDocuments(eq);
+
     const newEq: Equipment = {
       id: eq.id || `eq-${Date.now()}`,
       item_type: itemType,
-      category: eq.category || (itemType === 'zubehoer' ? 'zub_kette_schiene' : 'motorsaegen'),
+      category: (eq.category || '').trim() || (itemType === 'zubehoer' ? 'Zubehör' : 'Allgemein'),
       parent_equipment_id: eq.parent_equipment_id || null,
-      name: eq.name.trim(),
-      model: eq.model || '',
-      photo: eq.photo ?? null,
-      specs: cleanSpecs,
+      manufacturer,
+      name: resolvedName,
+      model,
+      serial_number: (eq.serial_number || '').trim(),
+      purchase_date: eq.purchase_date ? eq.purchase_date.trim() : null,
+      purchase_price:
+        eq.purchase_price !== undefined && eq.purchase_price !== null && Number.isFinite(Number(eq.purchase_price))
+          ? Math.round(Number(eq.purchase_price) * 100) / 100
+          : null,
+      dealer: (eq.dealer || '').trim(),
+      photo: primaryPhoto,
+      images: normalizedImages,
+      documents: normalizedDocs,
+      specs: syncedSpecs,
+      custom_fields: dynamicFields,
+      custom_sections: Array.isArray(eq.custom_sections)
+        ? Array.from(new Set(eq.custom_sections.map((s) => s.trim()).filter(Boolean)))
+        : [],
       quantity: eq.quantity !== undefined ? eq.quantity : itemType === 'zubehoer' ? 1 : null,
       notes: eq.notes || '',
       status: eq.status || 'einsatzbereit',
@@ -3032,7 +3110,7 @@ export const AppProvider: React.FC<{
           ? eq.maintenance_plan
           : itemType === 'zubehoer'
             ? ''
-            : 'Regelmäßige Prüfung',
+            : '',
       interval_months: intervalMonths,
       history: eq.history || [],
       created_at: eq.created_at || nowIso,
@@ -3047,25 +3125,106 @@ export const AppProvider: React.FC<{
       prev.map(eq => {
         if (eq.id !== id) return eq;
         const nextIso = nextMonotonicIso(eq.updated_at);
-        const nextSpecs =
-          patch.specs !== undefined
-            ? Object.fromEntries(
-                Object.entries(patch.specs).filter(
-                  ([k, v]) =>
-                    k !== 'created_at' &&
-                    k !== 'updated_at' &&
-                    k !== 'has_photo' &&
-                    k !== 'photo_count' &&
-                    v !== undefined &&
-                    v !== null &&
-                    String(v).trim() !== ''
-                )
-              )
-            : eq.specs || {};
+        const mergedCandidate: Equipment = {
+          ...eq,
+          ...patch
+        };
+
+        const manufacturer = (mergedCandidate.manufacturer || '').trim();
+        const model = (mergedCandidate.model || '').trim();
+        const rawName = (mergedCandidate.name || '').trim();
+        const resolvedName =
+          rawName ||
+          [manufacturer, model].filter(Boolean).join(' ').trim() ||
+          eq.name ||
+          'Gerät';
+
+        let nextCustomFields: EquipmentDynamicField[];
+        let nextSpecs: Record<string, string>;
+
+        if (patch.custom_fields !== undefined) {
+          nextCustomFields = resolveEquipmentDynamicFields({
+            custom_fields: patch.custom_fields,
+            specs: patch.specs !== undefined ? patch.specs : undefined
+          });
+          nextSpecs = syncSpecsFromDynamicFields(nextCustomFields);
+        } else if (patch.specs !== undefined) {
+          nextCustomFields = resolveEquipmentDynamicFields({
+            custom_fields: eq.custom_fields,
+            specs: patch.specs
+          });
+          nextSpecs = syncSpecsFromDynamicFields(nextCustomFields);
+        } else {
+          nextCustomFields = resolveEquipmentDynamicFields(eq);
+          nextSpecs = eq.specs || syncSpecsFromDynamicFields(nextCustomFields);
+        }
+
+        let nextImages: EquipmentImage[];
+        let nextPhoto: string | null;
+        if (patch.images !== undefined) {
+          nextImages = resolveEquipmentImages({
+            images: patch.images,
+            photo: patch.photo !== undefined ? patch.photo : undefined,
+            name: resolvedName
+          });
+          nextPhoto = resolvePrimaryEquipmentPhoto({ images: nextImages, photo: null });
+        } else if (patch.photo !== undefined) {
+          if (patch.photo === null) {
+            const existingImgs = resolveEquipmentImages(eq).filter((img) => img.url !== eq.photo);
+            nextImages = resolveEquipmentImages({ images: existingImgs, photo: null });
+            nextPhoto = resolvePrimaryEquipmentPhoto({ images: nextImages, photo: null });
+          } else {
+            const existingImgs = resolveEquipmentImages(eq).map((img) => ({
+              ...img,
+              is_primary: img.url === patch.photo
+            }));
+            if (!existingImgs.some((img) => img.url === patch.photo)) {
+              existingImgs.unshift({
+                id: `img-${Date.now()}`,
+                url: patch.photo,
+                title: resolvedName,
+                is_primary: true,
+                source: 'own',
+                created_at: nextIso
+              });
+            }
+            nextImages = resolveEquipmentImages({ images: existingImgs, photo: patch.photo });
+            nextPhoto = patch.photo;
+          }
+        } else {
+          nextImages = resolveEquipmentImages(eq);
+          nextPhoto = resolvePrimaryEquipmentPhoto({ images: nextImages, photo: eq.photo });
+        }
+
+        const nextDocs =
+          patch.documents !== undefined
+            ? resolveEquipmentDocuments({ documents: patch.documents })
+            : resolveEquipmentDocuments(eq);
+
         return {
           ...eq,
           ...patch,
+          manufacturer,
+          model,
+          name: resolvedName,
+          serial_number: (mergedCandidate.serial_number || '').trim(),
+          purchase_date: mergedCandidate.purchase_date ? mergedCandidate.purchase_date.trim() : null,
+          purchase_price:
+            mergedCandidate.purchase_price !== undefined &&
+            mergedCandidate.purchase_price !== null &&
+            Number.isFinite(Number(mergedCandidate.purchase_price))
+              ? Math.round(Number(mergedCandidate.purchase_price) * 100) / 100
+              : null,
+          dealer: (mergedCandidate.dealer || '').trim(),
+          photo: nextPhoto,
+          images: nextImages,
+          documents: nextDocs,
           specs: nextSpecs,
+          custom_fields: nextCustomFields,
+          custom_sections:
+            patch.custom_sections !== undefined
+              ? Array.from(new Set(patch.custom_sections.map((s) => s.trim()).filter(Boolean)))
+              : eq.custom_sections || [],
           created_at: eq.created_at || nextIso,
           updated_at: nextIso
         };
