@@ -28,6 +28,7 @@ import {
   Share2,
   Download,
   FileText,
+  RotateCcw,
   X
 } from 'lucide-react';
 import { Invoice, PaymentItem } from '../../types/index.ts';
@@ -61,6 +62,7 @@ export const AbrechnungView: React.FC = () => {
     setSendingInvoiceId,
     updateWorkRecord,
     updateInvoice,
+    resetInvoiceToOpen,
     deleteInvoice,
     payInvoice,
     updatePayment,
@@ -464,13 +466,26 @@ export const AbrechnungView: React.FC = () => {
 
               return (
                 <div className="p-3.5 bg-white border border-slate-200 rounded-2xl shadow-2xs space-y-2.5">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">
-                      Arbeitsaufzeichnungen ({boundWorkRecords.length})
-                    </span>
-                    <span className="text-[10px] text-slate-400">
-                      Tippen zum Bearbeiten · Freigeben = zurück in Offene Std.
-                    </span>
+                  <div className="flex items-center justify-between gap-2">
+                    <div>
+                      <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
+                        Arbeitsaufzeichnungen ({boundWorkRecords.length})
+                      </span>
+                      <span className="text-[10px] text-slate-400">
+                        Tippen zum Bearbeiten · Freigeben = zurück in Offene Std.
+                      </span>
+                    </div>
+                    {boundWorkRecords.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => deleteInvoice(selectedInvoice.id)}
+                        className="px-2.5 h-8 bg-red-50 hover:bg-red-100 text-[#B42318] border border-red-200 rounded-xl text-[10px] font-bold flex items-center gap-1 shrink-0 transition-colors"
+                        title="Rechnung löschen und alle gebundenen Arbeiten in den Offenstatus versetzen"
+                      >
+                        <Trash2 size={12} />
+                        <span>Beleg löschen (Std. → Offen)</span>
+                      </button>
+                    )}
                   </div>
 
                   {boundWorkRecords.length === 0 ? (
@@ -671,30 +686,42 @@ export const AbrechnungView: React.FC = () => {
               {/* OBEN: Reine Übersichten (Kennzahlen, Unbezahlte Rechnungen, Alle Rechnungen) */}
               <div className="space-y-3">
                 <div className="grid grid-cols-3 gap-2">
-                  <div className="py-2.5 px-2.5 bg-white border border-slate-200 rounded-2xl shadow-2xs text-center">
-                    <span className="text-[11px] font-bold text-slate-500 uppercase tracking-tight block">
-                      Ausgestellt
+                  <div className="py-2.5 px-2 bg-white border border-slate-200 rounded-2xl shadow-2xs text-center">
+                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-tight block">
+                      Verrechnet gesamt
                     </span>
-                    <span className="text-base font-bold text-[#B4470B] block mt-0.5 font-mono tabular-nums">
-                      {issuedTotal.toFixed(0)} €
+                    <span className="text-sm font-bold text-[#3138A0] block mt-0.5 font-mono tabular-nums">
+                      {issuedTotal.toLocaleString('de-DE', {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2
+                      })}{' '}
+                      €
                     </span>
                   </div>
 
-                  <div className="py-2.5 px-2.5 bg-white border border-slate-200 rounded-2xl shadow-2xs text-center">
-                    <span className="text-[11px] font-bold text-slate-500 uppercase tracking-tight block">
+                  <div className="py-2.5 px-2 bg-white border border-slate-200 rounded-2xl shadow-2xs text-center">
+                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-tight block">
                       Bezahlt
                     </span>
-                    <span className="text-base font-bold text-[#2C7738] block mt-0.5 font-mono tabular-nums">
-                      {paidTotal.toFixed(0)} €
+                    <span className="text-sm font-bold text-[#2C7738] block mt-0.5 font-mono tabular-nums">
+                      {paidTotal.toLocaleString('de-DE', {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2
+                      })}{' '}
+                      €
                     </span>
                   </div>
 
-                  <div className="py-2.5 px-2.5 bg-white border border-slate-200 rounded-2xl shadow-2xs text-center">
-                    <span className="text-[11px] font-bold text-slate-500 uppercase tracking-tight block">
-                      Unbezahlt
+                  <div className="py-2.5 px-2 bg-white border border-slate-200 rounded-2xl shadow-2xs text-center">
+                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-tight block">
+                      Offen (Unbezahlt)
                     </span>
-                    <span className="text-base font-bold text-[#B4470B] block mt-0.5 font-mono tabular-nums">
-                      {openTotal.toFixed(0)} €
+                    <span className="text-sm font-bold text-[#B4470B] block mt-0.5 font-mono tabular-nums">
+                      {openTotal.toLocaleString('de-DE', {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2
+                      })}{' '}
+                      €
                     </span>
                   </div>
                 </div>
@@ -734,7 +761,7 @@ export const AbrechnungView: React.FC = () => {
                           >
                             <div
                               onClick={() => setSelectedInvoiceId(inv.id)}
-                              className="p-3 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between gap-2.5 cursor-pointer hover:border-[#3138A0] transition-colors"
+                              className="p-3 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between gap-2 cursor-pointer hover:border-[#3138A0] transition-colors"
                             >
                               <div className="min-w-0 flex-1">
                                 <span className="font-bold text-slate-950 block text-sm leading-snug truncate">
@@ -757,10 +784,10 @@ export const AbrechnungView: React.FC = () => {
                                 </div>
                               </div>
 
-                              <div className="flex items-center gap-2 shrink-0">
-                                <span className="font-bold text-sm text-[#B4470B] tabular-nums whitespace-nowrap">
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                <span className="font-bold text-sm text-[#B4470B] tabular-nums whitespace-nowrap pr-0.5">
                                   {openRest.toLocaleString('de-DE', {
-                                    minimumFractionDigits: 0,
+                                    minimumFractionDigits: 2,
                                     maximumFractionDigits: 2
                                   })}{' '}
                                   €
@@ -771,11 +798,23 @@ export const AbrechnungView: React.FC = () => {
                                     e.stopPropagation();
                                     setSendingInvoiceId(inv.id);
                                   }}
-                                  className="w-9 h-9 rounded-xl bg-white border border-slate-200 hover:bg-indigo-50 flex items-center justify-center text-[#3138A0] transition-colors"
+                                  className="w-8 h-8 rounded-xl bg-white border border-slate-200 hover:bg-indigo-50 flex items-center justify-center text-[#3138A0] transition-colors"
                                   title="Rechnung versenden"
                                   aria-label="Rechnung versenden"
                                 >
-                                  <Share2 size={15} />
+                                  <Share2 size={14} />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    deleteInvoice(inv.id);
+                                  }}
+                                  className="w-8 h-8 rounded-xl bg-red-50 border border-red-200/80 hover:bg-red-100 flex items-center justify-center text-[#B42318] transition-colors"
+                                  title="Rechnung löschen (Arbeiten wieder in Offene Stunden versetzen)"
+                                  aria-label="Rechnung löschen"
+                                >
+                                  <Trash2 size={14} />
                                 </button>
                               </div>
                             </div>
@@ -789,9 +828,21 @@ export const AbrechnungView: React.FC = () => {
                 {/* Alle Rechnungen */}
                 <div className="bg-white border border-slate-200 rounded-2xl shadow-2xs px-3.5 py-3 space-y-2.5">
                   <div className="flex items-center justify-between">
-                    <span className="text-sm font-bold text-slate-950">
-                      Alle Rechnungen
-                    </span>
+                    <div>
+                      <span className="text-sm font-bold text-slate-950 block">
+                        Alle erstellten Rechnungen
+                      </span>
+                      <span className="text-[11px] text-slate-500">
+                        Verrechnete Gesamtsumme:{' '}
+                        <strong className="text-[#3138A0] tabular-nums">
+                          {issuedTotal.toLocaleString('de-DE', {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2
+                          })}{' '}
+                          €
+                        </strong>
+                      </span>
+                    </div>
                     <span className="text-xs font-semibold text-slate-500">{invoices.length} Belege</span>
                   </div>
 
@@ -809,7 +860,7 @@ export const AbrechnungView: React.FC = () => {
                           <SwipeToDeleteRow
                             key={inv.id}
                             onDelete={() => deleteInvoice(inv.id)}
-                            deleteLabel="Eintrag löschen"
+                            deleteLabel="Rechnung löschen"
                           >
                             <div
                               onClick={() => setSelectedInvoiceId(inv.id)}
@@ -838,14 +889,14 @@ export const AbrechnungView: React.FC = () => {
                                 </div>
                               </div>
 
-                              <div className="flex items-center gap-1.5 shrink-0">
+                              <div className="flex items-center gap-1 shrink-0">
                                 <div className="text-right pr-1">
                                   <span
                                     className={`font-bold text-sm block leading-tight tabular-nums whitespace-nowrap ${
                                       inv.is_storno ? 'text-[#B42318]' : 'text-slate-950'
                                     }`}
                                   >
-                                    {inv.total_amount.toLocaleString('de-DE', {
+                                    {(inv.total_amount ?? 0).toLocaleString('de-DE', {
                                       minimumFractionDigits: 2,
                                       maximumFractionDigits: 2
                                     })}{' '}
@@ -866,9 +917,24 @@ export const AbrechnungView: React.FC = () => {
                                         ? 'Storniert'
                                         : inv.status === 'partially_paid'
                                           ? 'Teilbezahlt'
-                                          : 'Unbezahlt'}
+                                          : 'Offen'}
                                   </span>
                                 </div>
+
+                                {!inv.is_storno && inv.status !== 'unpaid' && (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      resetInvoiceToOpen(inv.id);
+                                    }}
+                                    className="h-8 px-2 rounded-xl bg-amber-50 border border-amber-200 hover:bg-amber-100 flex items-center gap-1 text-[#B4470B] text-[10px] font-bold transition-colors shrink-0"
+                                    title="Rechnung in den Offenstatus versetzen (Unbezahlt)"
+                                  >
+                                    <RotateCcw size={12} />
+                                    <span>Offen</span>
+                                  </button>
+                                )}
 
                                 <button
                                   type="button"
@@ -876,7 +942,7 @@ export const AbrechnungView: React.FC = () => {
                                     e.stopPropagation();
                                     setSendingInvoiceId(inv.id);
                                   }}
-                                  className="w-9 h-9 rounded-xl bg-white border border-slate-200 hover:bg-indigo-50 flex items-center justify-center text-[#3138A0] transition-colors shrink-0"
+                                  className="w-8 h-8 rounded-xl bg-white border border-slate-200 hover:bg-indigo-50 flex items-center justify-center text-[#3138A0] transition-colors shrink-0"
                                   title="Rechnung versenden"
                                   aria-label="Rechnung versenden"
                                 >
@@ -889,11 +955,24 @@ export const AbrechnungView: React.FC = () => {
                                     e.stopPropagation();
                                     openEditInvoiceModal(inv);
                                   }}
-                                  className="w-9 h-9 rounded-xl bg-white border border-slate-200 hover:bg-slate-100 flex items-center justify-center text-[#3138A0] transition-colors shrink-0"
+                                  className="w-8 h-8 rounded-xl bg-white border border-slate-200 hover:bg-slate-100 flex items-center justify-center text-[#3138A0] transition-colors shrink-0"
                                   title="Buchung bearbeiten"
                                   aria-label="Buchung bearbeiten"
                                 >
                                   <Pencil size={14} />
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    deleteInvoice(inv.id);
+                                  }}
+                                  className="w-8 h-8 rounded-xl bg-red-50 border border-red-200/80 hover:bg-red-100 flex items-center justify-center text-[#B42318] transition-colors shrink-0"
+                                  title="Rechnung löschen (Arbeiten wieder in Offene Stunden versetzen)"
+                                  aria-label="Rechnung löschen"
+                                >
+                                  <Trash2 size={14} />
                                 </button>
                               </div>
                             </div>
@@ -1659,6 +1738,17 @@ export const AbrechnungView: React.FC = () => {
                 </div>
               )}
 
+            {!selectedInvoice.is_storno && selectedInvoice.status !== 'unpaid' && (
+              <button
+                type="button"
+                onClick={() => resetInvoiceToOpen(selectedInvoice.id)}
+                className="w-full h-11 bg-amber-50 hover:bg-amber-100 border border-amber-200 active:scale-98 text-[#B4470B] font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 transition-all"
+              >
+                <RotateCcw size={15} />
+                <span>Rechnung in Offenstatus versetzen (Unbezahlt)</span>
+              </button>
+            )}
+
             <div className="flex items-center gap-1.5">
               <button
                 type="button"
@@ -1713,8 +1803,8 @@ export const AbrechnungView: React.FC = () => {
                 type="button"
                 onClick={() => deleteInvoice(selectedInvoice.id)}
                 className="w-12 h-12 bg-red-50 hover:bg-red-100 text-[#B42318] font-bold rounded-xl flex items-center justify-center transition-colors shrink-0"
-                title="Beleg löschen"
-                aria-label="Beleg löschen"
+                title="Rechnung löschen (Arbeiten wieder in Offene Stunden versetzen)"
+                aria-label="Rechnung löschen"
               >
                 <Trash2 size={17} />
               </button>

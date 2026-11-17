@@ -704,7 +704,7 @@ export function computeNextInvoiceNumber(
   const existingSeqs = invoices
     .filter((i) => !i.is_storno)
     .map((i) => {
-      const slashMatch = i.invoice_number.trim().match(/^RE-(\d+)\/(\d{4})$/i);
+      const slashMatch = (i.invoice_number || '').trim().match(/^RE-(\d+)\/(\d{4})$/i);
       if (slashMatch && slashMatch[2] === year) {
         return parseInt(slashMatch[1], 10);
       }

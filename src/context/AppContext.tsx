@@ -33,29 +33,21 @@ import {
   sanitizeIntroTextSalutation
 } from '../utils/invoicePdf.ts';
 import {
-  DEFAULT_INFINITY_CLOUD_URL,
-  configureNativeMcpSync,
   getNativeBackupMeta,
   isNativeAndroidApp,
   loadNativeStoreJson,
-  migrateLegacyWebStorageCredentialsIfNeeded,
-  pairNativeMcpWithCode,
   registerNativeBackHandler,
-  resolveBackendEndpoint,
   restoreNativeVerifiedBackup,
   runNativeVerifiedBackup,
   saveNativeStoreJson,
   subscribeNativeRemoteState,
-  syncNativeCanGoBack,
-  triggerNativeMcpSyncNow
+  syncNativeCanGoBack
 } from '../services/nativeBridge.ts';
-import { validateFirestoreBootConnection } from '../services/firebaseClient.ts';
 import {
   consumeOAuthReturnScreen,
-  isGoogleConnected,
-  refreshOwnerServerSessionIfPossible,
-  subscribeOwnerSession
+  isGoogleConnected
 } from '../services/gmailService.ts';
+import { buildLightWebBackupObject } from '../utils/backupZip.ts';
 import {
   attachGoogleEventIdToNotes,
   cleanGoogleEventNotes,
@@ -219,6 +211,7 @@ interface AppContextType {
     }
   ) => Invoice;
   updateInvoice: (invoiceId: string, patch: Partial<Invoice>) => void;
+  resetInvoiceToOpen: (invoiceId: string) => void;
   deleteInvoice: (invoiceId: string) => void;
   payInvoice: (invoiceId: string, customAmount?: number, customDate?: string) => void;
   updatePayment: (invoiceId: string, paymentId: string, patch: Partial<PaymentItem>) => void;
@@ -259,6 +252,7 @@ interface AppContextType {
   lastBackupDate: string | null;
   performBackup: (forcePickTarget?: boolean) => Promise<boolean>;
   restoreBackup: (pickExternalFile?: boolean) => Promise<boolean>;
+  importBackupData: (data: Record<string, unknown>, label?: string) => boolean;
 
   // Device orientation / Pixel frame toggle (for comfortable testing)
   pixelFrameEnabled: boolean;
@@ -838,10 +832,9 @@ export const AppProvider: React.FC<{
     };
   };
 
-  // Hydrate from Kotlin atomic filesDir storage + live NativeMcpSyncManager listener on Pixel 10 Pro
+  // Hydrate from Kotlin atomic filesDir storage + live direct Pixel-Tunnel listener on Pixel 10 Pro
   useEffect(() => {
     if (!isNativeAndroidApp()) return;
-    migrateLegacyWebStorageCredentialsIfNeeded();
 
     const localBootSnap = buildCurrentSnapshot();
     const rawNative = loadNativeStoreJson();
@@ -875,9 +868,6 @@ export const AppProvider: React.FC<{
       saveNativeStoreJson(initialStr);
     }
     nativeHydratedRef.current = true;
-    pairNativeMcpWithCode(DEFAULT_INFINITY_CLOUD_URL, 'AUTO');
-    configureNativeMcpSync(DEFAULT_INFINITY_CLOUD_URL, '');
-    triggerNativeMcpSyncNow();
 
     const unsubRemote = subscribeNativeRemoteState((stateJson, revision) => {
       try {
@@ -892,7 +882,7 @@ export const AppProvider: React.FC<{
           applyServerData(parsed);
         }
       } catch {
-        // Ignore malformed remote payload
+        // Ignore malformed local tunnel payload
       }
     });
 
@@ -902,526 +892,24 @@ export const AppProvider: React.FC<{
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  type RemoteStorePayload = {
-    revision: number;
-    lastActor?: string;
-    lastAndroidSyncAt?: string | null;
-    data?: Partial<ReturnType<typeof buildCurrentSnapshot>>;
-  };
-
-  const fetchBestRemoteStoreForWeb = async (): Promise<RemoteStorePayload | null> => {
-    let endpoint = resolveBackendEndpoint('/api/internal/state');
-    if (!endpoint.url) return null;
-    const isNative = isNativeAndroidApp();
-
-    try {
-      let res = await fetch(endpoint.url, {
-        headers: endpoint.headers,
-        credentials: isNative ? 'omit' : 'include'
-      });
-      if (res.status === 401 && !isNative) {
-        const refreshed = await refreshOwnerServerSessionIfPossible();
-        if (refreshed) {
-          endpoint = resolveBackendEndpoint('/api/internal/state');
-          if (endpoint.url) {
-            res = await fetch(endpoint.url, {
-              headers: endpoint.headers,
-              credentials: 'include'
-            });
-          }
-        }
-      }
-      if (res.ok) {
-        return (await res.json()) as RemoteStorePayload;
-      }
-      updateSyncMeta({
-        lastSyncError:
-          res.status === 401
-            ? 'Sitzung wird erneuert – bitte kurz warten oder auf Synchronisieren tippen'
-            : `Server-Abfrage fehlgeschlagen (HTTP ${res.status})`
-      });
-    } catch {
-      updateSyncMeta({
-        online: typeof navigator !== 'undefined' ? navigator.onLine : false,
-        lastSyncError: 'Offline oder Server vorübergehend nicht erreichbar'
-      });
-    }
-
-    return null;
-  };
-
-  const pushSnapshotToServer = useCallback(
-    async (
-      snap: ReturnType<typeof buildCurrentSnapshot>,
-      snapJson: string,
-      summary: string
-    ): Promise<boolean> => {
-      let endpoint = resolveBackendEndpoint('/api/internal/state');
-      if (!endpoint.url) return false;
-      const isNative = isNativeAndroidApp();
-      if (typeof navigator !== 'undefined' && !navigator.onLine) {
-        updateSyncMeta({
-          online: false,
-          syncInFlight: false,
-          lastSyncError: 'Offline – Synchronisation wartet auf Verbindung'
-        });
-        return false;
-      }
-
-      const countAtStart = pendingSyncCountRef.current;
-      syncInFlightRef.current = true;
-      updateSyncMeta({ syncInFlight: true, online: true });
-
-      const payloadStr = JSON.stringify({
-        data: snap,
-        baseRevision: lastKnownRevisionRef.current,
-        clientRevision: lastKnownRevisionRef.current,
-        summary,
-        source: isNative ? 'android' : 'web',
-        isPrimarySource: isNative
-      });
-
-      try {
-        let res = await fetch(endpoint.url, {
-          method: 'PUT',
-          credentials: isNative ? 'omit' : 'include',
-          headers: {
-            'Content-Type': 'application/json',
-            ...endpoint.headers
-          },
-          body: payloadStr
-        });
-
-        if (res.status === 401 && !isNative) {
-          const refreshed = await refreshOwnerServerSessionIfPossible();
-          if (refreshed) {
-            endpoint = resolveBackendEndpoint('/api/internal/state');
-            if (endpoint.url) {
-              res = await fetch(endpoint.url, {
-                method: 'PUT',
-                credentials: 'include',
-                headers: {
-                  'Content-Type': 'application/json',
-                  ...endpoint.headers
-                },
-                body: payloadStr
-              });
-            }
-          }
-        }
-
-        if (!res.ok) {
-          syncInFlightRef.current = false;
-          updateSyncMeta({
-            syncInFlight: false,
-            lastSyncError: `Synchronisation ausstehend (HTTP ${res.status})`
-          });
-          return false;
-        }
-
-        const info = (await res.json()) as {
-          revision: number;
-          lastActor?: string;
-          lastAndroidSyncAt?: string | null;
-          merged?: boolean;
-          data?: Partial<ReturnType<typeof buildCurrentSnapshot>>;
-        };
-
-        lastSyncedSnapshotJsonRef.current = snapJson;
-        const remaining = Math.max(0, pendingSyncCountRef.current - Math.max(1, countAtStart));
-        const nowIso = new Date().toISOString();
-
-        syncInFlightRef.current = false;
-        updateSyncMeta({
-          pendingSyncCount: remaining,
-          syncInFlight: false,
-          online: true,
-          revision: typeof info.revision === 'number' ? info.revision : lastKnownRevisionRef.current,
-          lastSyncAt: nowIso,
-          lastSyncError: null,
-          ...(info.lastActor ? { lastActor: info.lastActor } : {}),
-          ...(info.lastAndroidSyncAt !== undefined
-            ? { lastAndroidSyncAt: info.lastAndroidSyncAt }
-            : {})
-        });
-
-        if (info.merged && info.data) {
-          applyServerData(info.data);
-        }
-        return true;
-      } catch {
-        syncInFlightRef.current = false;
-        updateSyncMeta({
-          syncInFlight: false,
-          online: typeof navigator !== 'undefined' ? navigator.onLine : false,
-          lastSyncError: 'Verbindung unterbrochen – Synchronisation ausstehend'
-        });
-        return false;
-      }
-    },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [updateSyncMeta]
-  );
-
+  // Vollständig entkoppelt: Kein Server-Backend-Sync zwischen Android Infinity App und Web-App.
   const flushPendingAppSync = useCallback(async () => {
-    if (isNativeAndroidApp()) {
-      pairNativeMcpWithCode(DEFAULT_INFINITY_CLOUD_URL, 'AUTO');
-      configureNativeMcpSync(DEFAULT_INFINITY_CLOUD_URL, '');
-      triggerNativeMcpSyncNow();
-    }
-    const snap = latestSnapshotRef.current;
-    const snapJson = JSON.stringify(snap);
-    await pushSnapshotToServer(
-      snap,
-      snapJson,
-      isNativeAndroidApp()
-        ? 'Manueller Abgleich von Primärquelle (Pixel 10 Pro)'
-        : 'Manueller Abgleich aus Web-App'
-    );
-  }, [pushSnapshotToServer]);
+    updateSyncMeta({
+      pendingSyncCount: 0,
+      syncInFlight: false,
+      lastSyncAt: new Date().toISOString(),
+      lastSyncError: null
+    });
+  }, [updateSyncMeta]);
 
   const refreshFromServer = useCallback(async () => {
-    if (isNativeAndroidApp()) {
-      pairNativeMcpWithCode(DEFAULT_INFINITY_CLOUD_URL, 'AUTO');
-      configureNativeMcpSync(DEFAULT_INFINITY_CLOUD_URL, '');
-      triggerNativeMcpSyncNow();
-    }
-    updateSyncMeta({ syncInFlight: true });
-    try {
-      const store = await fetchBestRemoteStoreForWeb();
-      if (!store) {
-        updateSyncMeta({
-          syncInFlight: false,
-          lastSyncError: 'Abruf vom Server fehlgeschlagen'
-        });
-        return;
-      }
-
-      const localSnap = latestSnapshotRef.current;
-      const hasLocalData = hasAnySnapshotRecords(localSnap);
-      const hasRemoteData = hasAnySnapshotRecords(store.data);
-      const normalizedRemote = normalizeRemoteSnapshot(store.data);
-      const merged = mergeSnapshotsClientSide(normalizedRemote, localSnap);
-      const mergedJson = JSON.stringify(merged);
-      const remoteJson = JSON.stringify(normalizedRemote);
-
-      if (
-        hasLocalData &&
-        (!hasRemoteData ||
-          lastKnownRevisionRef.current > store.revision ||
-          pendingSyncCountRef.current > 0 ||
-          mergedJson !== remoteJson)
-      ) {
-        applyServerData(merged);
-        await pushSnapshotToServer(
-          merged,
-          mergedJson,
-          isNativeAndroidApp()
-            ? 'Abgleich von Primärquelle (Pixel 10 Pro)'
-            : 'Abgleich aus Web-App'
-        );
-        return;
-      }
-
-      if (store.data && (hasRemoteData || store.revision > 0)) {
-        applyServerData(store.data);
-      }
-      updateSyncMeta({
-        syncInFlight: false,
-        online: true,
-        revision: typeof store.revision === 'number' ? store.revision : lastKnownRevisionRef.current,
-        lastSyncAt: new Date().toISOString(),
-        lastSyncError: null,
-        lastActor: store.lastActor || null,
-        lastAndroidSyncAt: store.lastAndroidSyncAt || null
-      });
-    } catch {
-      updateSyncMeta({
-        syncInFlight: false,
-        lastSyncError: 'Verbindung zum Server fehlgeschlagen'
-      });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    customers,
-    properties,
-    appointments,
-    workRecords,
-    invoices,
-    inquiries,
-    offers,
-    orders,
-    equipments,
-    materials,
-    expenses,
-    taxSettings,
-    deletedIds,
-    pushSnapshotToServer,
-    updateSyncMeta
-  ]);
-
-  useEffect(() => {
-    if (!isNativeAndroidApp() && !ownerAuthenticated) {
-      serverSyncInitializedRef.current = false;
-      return;
-    }
-
-    if (!isNativeAndroidApp()) {
-      void validateFirestoreBootConnection();
-    }
-
-    let cancelled = false;
-    let eventSource: EventSource | null = null;
-
-    const pullLatestFromServerIfIdle = async () => {
-      if (cancelled || syncInFlightRef.current || mutationDebouncePendingRef.current) return;
-      if (pendingSyncCountRef.current > 0) {
-        const currentSnap = latestSnapshotRef.current;
-        await pushSnapshotToServer(
-          currentSnap,
-          JSON.stringify(currentSnap),
-          isNativeAndroidApp()
-            ? 'Nachsynchronisation von Primärquelle (Pixel 10 Pro)'
-            : 'Nachsynchronisation ausstehender Änderungen'
-        );
-        return;
-      }
-      const store = await fetchBestRemoteStoreForWeb();
-      if (!store || cancelled || syncInFlightRef.current || mutationDebouncePendingRef.current) {
-        return;
-      }
-
-      const localSnap = latestSnapshotRef.current;
-      const hasLocalData = hasAnySnapshotRecords(localSnap);
-      const hasRemoteData = hasAnySnapshotRecords(store.data);
-
-      if (hasLocalData && (!hasRemoteData || lastKnownRevisionRef.current > store.revision)) {
-        const merged = mergeSnapshotsClientSide(store.data, localSnap);
-        const mergedJson = JSON.stringify(merged);
-        applyServerData(merged);
-        await pushSnapshotToServer(
-          merged,
-          mergedJson,
-          isNativeAndroidApp()
-            ? 'Primärquellen-Abgleich (Pixel 10 Pro)'
-            : 'Datenstand-Abgleich mit Server'
-        );
-        return;
-      }
-
-      if (store.data && (store.revision > 0 || hasRemoteData)) {
-        const normalizedRemote = normalizeRemoteSnapshot(store.data);
-        const incomingSerialized = JSON.stringify(normalizedRemote);
-        if (
-          incomingSerialized !== lastSyncedSnapshotJsonRef.current ||
-          store.revision !== lastKnownRevisionRef.current
-        ) {
-          updateSyncMeta({
-            revision: store.revision,
-            online: true,
-            lastSyncAt: new Date().toISOString(),
-            lastSyncError: null,
-            lastActor: store.lastActor || null,
-            lastAndroidSyncAt: store.lastAndroidSyncAt || null
-          });
-          applyServerData(normalizedRemote);
-        } else {
-          updateSyncMeta({
-            online: true,
-            lastSyncError: null,
-            lastActor: store.lastActor || null,
-            lastAndroidSyncAt: store.lastAndroidSyncAt || null
-          });
-        }
-      }
-    };
-
-    const connectEventStream = () => {
-      if (isNativeAndroidApp()) return;
-      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
-        eventSource?.close();
-        eventSource = null;
-        return;
-      }
-      const eventsEndpoint = resolveBackendEndpoint('/api/internal/events');
-      if (!eventsEndpoint.url || cancelled) return;
-      eventSource?.close();
-      eventSource = new EventSource(eventsEndpoint.url, { withCredentials: true });
-      eventSource.onmessage = async (ev) => {
-        try {
-          const payload = JSON.parse(ev.data) as { revision?: number };
-          if (
-            typeof payload.revision === 'number' &&
-            payload.revision !== lastKnownRevisionRef.current
-          ) {
-            if (syncInFlightRef.current || mutationDebouncePendingRef.current) return;
-            if (pendingSyncCountRef.current > 0) {
-              const currentSnap = latestSnapshotRef.current;
-              await pushSnapshotToServer(
-                currentSnap,
-                JSON.stringify(currentSnap),
-                'Abgleich ausstehender Änderungen'
-              );
-              return;
-            }
-            await pullLatestFromServerIfIdle();
-          }
-        } catch {
-          // ignore keepalive/event parse errors
-        }
-      };
-    };
-
-    const initSync = async () => {
-      if (syncInFlightRef.current || mutationDebouncePendingRef.current) return;
-      try {
-        const initialSnap = latestSnapshotRef.current;
-        const initialJson = JSON.stringify(initialSnap);
-        if (!lastTrackedMutationJsonRef.current) {
-          lastTrackedMutationJsonRef.current = initialJson;
-        }
-
-        const store = await fetchBestRemoteStoreForWeb();
-        if (syncInFlightRef.current || mutationDebouncePendingRef.current) {
-          serverSyncInitializedRef.current = true;
-          return;
-        }
-
-        const localSnap = latestSnapshotRef.current;
-        const localJson = JSON.stringify(localSnap);
-
-        if (!store || cancelled) {
-          if (pendingSyncCountRef.current > 0) {
-            await pushSnapshotToServer(
-              localSnap,
-              localJson,
-              isNativeAndroidApp()
-                ? 'Synchronisation von Primärquelle (Pixel 10 Pro)'
-                : 'Nachsynchronisation ausstehender Änderungen'
-            );
-          }
-          serverSyncInitializedRef.current = true;
-          return;
-        }
-
-        const hasLocalData = hasAnySnapshotRecords(localSnap);
-        const hasRemoteData = hasAnySnapshotRecords(store.data);
-        const normalizedRemote = normalizeRemoteSnapshot(store.data);
-        const remoteJson = JSON.stringify(normalizedRemote);
-        const merged = mergeSnapshotsClientSide(normalizedRemote, localSnap);
-        const mergedJson = JSON.stringify(merged);
-
-        if (
-          hasLocalData &&
-          (!hasRemoteData ||
-            pendingSyncCountRef.current > 0 ||
-            lastKnownRevisionRef.current > store.revision ||
-            mergedJson !== remoteJson)
-        ) {
-          applyServerData(merged);
-          await pushSnapshotToServer(
-            merged,
-            mergedJson,
-            isNativeAndroidApp()
-              ? 'Synchronisation von Primärquelle (Pixel 10 Pro)'
-              : 'Abgleich lokaler & Server-Daten'
-          );
-        } else if (store.data && (hasRemoteData || store.revision > 0)) {
-          updateSyncMeta({
-            revision: store.revision,
-            online: true,
-            lastSyncAt: new Date().toISOString(),
-            lastSyncError: null,
-            lastActor: store.lastActor || null,
-            lastAndroidSyncAt: store.lastAndroidSyncAt || null
-          });
-          applyServerData(normalizedRemote);
-        } else {
-          lastSyncedSnapshotJsonRef.current = localJson;
-          lastTrackedMutationJsonRef.current = localJson;
-          updateSyncMeta({
-            revision: store.revision,
-            online: true,
-            lastSyncAt: new Date().toISOString(),
-            lastSyncError: null,
-            lastActor: store.lastActor || null,
-            lastAndroidSyncAt: store.lastAndroidSyncAt || null
-          });
-        }
-
-        serverSyncInitializedRef.current = true;
-        connectEventStream();
-      } catch {
-        updateSyncMeta({
-          online: typeof navigator !== 'undefined' ? navigator.onLine : false
-        });
-        serverSyncInitializedRef.current = true;
-      }
-    };
-
-    const pollTimer = setInterval(() => {
-      if (typeof document === 'undefined' || document.visibilityState === 'visible') {
-        void pullLatestFromServerIfIdle();
-      }
-    }, 6000);
-
-    const handleBrowserOnline = () => {
-      updateSyncMeta({ online: true });
-      if (serverSyncInitializedRef.current) {
-        void pullLatestFromServerIfIdle();
-      } else {
-        void initSync();
-      }
-    };
-
-    const handleBrowserOffline = () => {
-      updateSyncMeta({
-        online: false,
-        lastSyncError:
-          pendingSyncCountRef.current > 0
-            ? 'Offline – Synchronisation wartet auf Verbindung'
-            : null
-      });
-    };
-
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'hidden') {
-        eventSource?.close();
-        eventSource = null;
-      } else {
-        connectEventStream();
-        if (serverSyncInitializedRef.current) {
-          void pullLatestFromServerIfIdle();
-        } else {
-          void initSync();
-        }
-      }
-    };
-
-    const unsubOwner = !isNativeAndroidApp()
-      ? subscribeOwnerSession((state) => {
-          if (state.authenticated && !cancelled) {
-            void initSync();
-          }
-        })
-      : () => {};
-
-    void initSync();
-    window.addEventListener('online', handleBrowserOnline);
-    window.addEventListener('offline', handleBrowserOffline);
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-
-    return () => {
-      cancelled = true;
-      unsubOwner();
-      clearInterval(pollTimer);
-      window.removeEventListener('online', handleBrowserOnline);
-      window.removeEventListener('offline', handleBrowserOffline);
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-      eventSource?.close();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ownerAuthenticated]);
+    updateSyncMeta({
+      pendingSyncCount: 0,
+      syncInFlight: false,
+      lastSyncAt: new Date().toISOString(),
+      lastSyncError: null
+    });
+  }, [updateSyncMeta]);
 
   useEffect(() => {
     const snap = buildCurrentSnapshot();
@@ -1432,38 +920,16 @@ export const AppProvider: React.FC<{
       if (snapJson !== lastNativeSavedJsonRef.current) {
         lastNativeSavedJsonRef.current = snapJson;
         saveNativeStoreJson(snapJson);
+        updateSyncMeta({
+          pendingSyncCount: 0,
+          revision: lastKnownRevisionRef.current + 1,
+          lastSyncAt: new Date().toISOString(),
+          lastSyncError: null
+        });
       }
-    } else if (!ownerAuthenticated) {
-      return;
     }
-
-    if (!serverSyncInitializedRef.current) return;
-    if (snapJson === lastSyncedSnapshotJsonRef.current) return;
-
-    if (snapJson !== lastTrackedMutationJsonRef.current) {
-      lastTrackedMutationJsonRef.current = snapJson;
-      updateSyncMeta({
-        pendingSyncCount: pendingSyncCountRef.current + 1
-      });
-    }
-
-    mutationDebouncePendingRef.current = true;
-    const timer = setTimeout(() => {
-      mutationDebouncePendingRef.current = false;
-      void pushSnapshotToServer(
-        snap,
-        snapJson,
-        isNativeAndroidApp() ? 'Änderung auf Pixel 10 Pro' : 'Änderung in Web-App'
-      );
-    }, 180);
-
-    return () => {
-      mutationDebouncePendingRef.current = false;
-      clearTimeout(timer);
-    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
-    ownerAuthenticated,
     customers,
     properties,
     appointments,
@@ -2501,16 +1967,36 @@ export const AppProvider: React.FC<{
         // Fall 1: Arbeitsaufzeichnung wurde aus dieser Rechnung gelöst (z.B. Freigabe zurück in Offene Stunden)
         if (work.settlement_id === null && wasInInvoice) {
           const nextWorkIds = inv.work_record_ids.filter(wid => wid !== id);
-          const nextLineItems = (inv.line_items || []).filter(li => li.id !== `li-${id}`);
+          let nextLineItems = (inv.line_items || []).filter(li => li.id !== `li-${id}`);
           const boundRecords = nextRecords.filter(
             r => r.settlement_id === inv.id || nextWorkIds.includes(r.id)
           );
+          const boundSum =
+            Math.round(
+              boundRecords.reduce((s, r) => s + (r.accounting_amount || 0), 0) * 100
+            ) / 100;
+
+          if (
+            inv.is_pauschal &&
+            nextLineItems.length === 1 &&
+            (nextLineItems[0].id === 'li-pauschal-main' || nextLineItems[0].id === 'pauschal-main')
+          ) {
+            nextLineItems =
+              boundRecords.length > 0
+                ? [
+                    {
+                      ...nextLineItems[0],
+                      unit_price_label: `${boundSum.toFixed(2).replace('.', ',')} €`,
+                      amount: boundSum
+                    }
+                  ]
+                : [];
+          }
+
           const nextTotal =
             nextLineItems.length > 0
               ? Math.round(nextLineItems.reduce((s, li) => s + li.amount, 0) * 100) / 100
-              : Math.round(
-                  boundRecords.reduce((s, r) => s + (r.accounting_amount || 0), 0) * 100
-                ) / 100;
+              : boundSum;
           const paidSum = Math.round(inv.payments.reduce((s, p) => s + p.amount, 0) * 100) / 100;
           const nextStatus =
             inv.status === 'cancelled'
@@ -2885,6 +2371,10 @@ export const AppProvider: React.FC<{
 
     let nextPayments = patch.payments !== undefined ? patch.payments : [...existing.payments];
     let nextStatus = patch.status ?? existing.status;
+    let nextPaidInCash =
+      patch.paid_in_cash !== undefined ? patch.paid_in_cash : Boolean(existing.paid_in_cash);
+
+    const linkedStornoIdsToDelete: string[] = [];
 
     if (!existing.is_storno) {
       const currentPaid = nextPayments.reduce((s, p) => s + p.amount, 0);
@@ -2904,6 +2394,7 @@ export const AppProvider: React.FC<{
         ];
       } else if (patch.status === 'unpaid' && existing.status !== 'unpaid') {
         nextPayments = [];
+        nextPaidInCash = false;
       } else if (patch.status === undefined && nextStatus !== 'cancelled') {
         nextStatus =
           currentPaid >= nextTotal && nextTotal > 0
@@ -2913,10 +2404,27 @@ export const AppProvider: React.FC<{
               : 'unpaid';
       }
 
+      // Wenn eine stornierte Rechnung wieder in den Offen-/Bezahlt-Status versetzt wird, verknüpfte Stornobelege entfernen
+      if (existing.status === 'cancelled' && nextStatus !== 'cancelled') {
+        for (const inv of invoices) {
+          if (inv.is_storno && inv.storno_reference_id === invoiceId) {
+            linkedStornoIdsToDelete.push(inv.id);
+          }
+        }
+        if (linkedStornoIdsToDelete.length > 0) {
+          recordDeletedTombstones(linkedStornoIdsToDelete.map(sid => ['invoices', sid]));
+        }
+      }
+
       // Synchronisiere Arbeitsaufzeichnungen bei Statuswechsel auf/von Storniert oder Änderung der zugeordneten Arbeiten
       if (nextStatus === 'cancelled' && existing.status !== 'cancelled') {
+        const releaseIds = new Set(existing.work_record_ids);
         setWorkRecords(prev =>
-          prev.map(w => (w.settlement_id === invoiceId ? { ...w, settlement_id: null } : w))
+          prev.map(w =>
+            w.settlement_id === invoiceId || releaseIds.has(w.id)
+              ? { ...w, settlement_id: null }
+              : w
+          )
         );
       } else if (existing.status === 'cancelled' && nextStatus !== 'cancelled') {
         const targetRecordIds = patch.work_record_ids ?? existing.work_record_ids;
@@ -2953,27 +2461,131 @@ export const AppProvider: React.FC<{
       }
     }
 
+    // Wenn total_amount geändert wurde und die Rechnung genau 1 Pauschal-/Hauptposition hat, Positionsbetrag synchron halten
+    let nextLineItems = patch.line_items !== undefined ? patch.line_items : existing.line_items;
+    if (
+      patch.line_items === undefined &&
+      patch.total_amount !== undefined &&
+      nextLineItems &&
+      nextLineItems.length === 1
+    ) {
+      nextLineItems = [
+        {
+          ...nextLineItems[0],
+          unit_price_label: `${nextTotal.toFixed(2).replace('.', ',')} €`,
+          amount: nextTotal
+        }
+      ];
+    }
+
     const finalPaid = nextPayments.reduce((s, p) => s + p.amount, 0);
     const nextOpenRefund =
       nextStatus === 'cancelled' && !existing.is_storno ? Math.max(0, finalPaid) : 0;
 
     setInvoices(prev =>
-      prev.map(inv =>
-        inv.id === invoiceId
-          ? {
-              ...inv,
-              ...patch,
-              customer_id: nextCustomerId,
-              billing_customer_name: nextBillingName,
-              total_amount: nextTotal,
-              payments: nextPayments,
-              status: nextStatus,
-              open_refund_amount:
-                patch.open_refund_amount !== undefined ? patch.open_refund_amount : nextOpenRefund
-            }
-          : inv
-      )
+      prev
+        .filter(inv => !linkedStornoIdsToDelete.includes(inv.id))
+        .map(inv =>
+          inv.id === invoiceId
+            ? {
+                ...inv,
+                ...patch,
+                customer_id: nextCustomerId,
+                billing_customer_name: nextBillingName,
+                line_items: nextLineItems,
+                total_amount: nextTotal,
+                paid_in_cash: nextPaidInCash,
+                payments: nextPayments,
+                status: nextStatus,
+                storno_reason: nextStatus === 'cancelled' ? (patch.storno_reason ?? inv.storno_reason) : null,
+                open_refund_amount:
+                  patch.open_refund_amount !== undefined ? patch.open_refund_amount : nextOpenRefund
+              }
+            : inv
+        )
     );
+  };
+
+  const resetInvoiceToOpen = (invoiceId: string) => {
+    const target = invoices.find(i => i.id === invoiceId);
+    if (!target) return;
+
+    // Wenn ein Stornobeleg übergeben wird, die zugehörige Originalrechnung in den Offenstatus versetzen
+    if (target.is_storno && target.storno_reference_id) {
+      deleteInvoice(target.id);
+      return;
+    }
+
+    const snapshotInvoices = [...invoices];
+    const snapshotWorkRecords = [...workRecords];
+    const prevDeletedIds = { ...deletedIds };
+
+    const linkedStornos = invoices.filter(
+      i => i.is_storno && i.storno_reference_id === invoiceId
+    );
+    if (linkedStornos.length > 0) {
+      recordDeletedTombstones(linkedStornos.map(s => ['invoices', s.id]));
+    }
+    const stornoIds = new Set(linkedStornos.map(s => s.id));
+
+    // Gebundene Arbeiten der Rechnung wieder aktiv an die Rechnung binden (falls sie zuvor storniert war)
+    const boundIds = new Set(target.work_record_ids);
+    const updatedRecords = workRecords.map(w =>
+      boundIds.has(w.id) && (!w.settlement_id || w.settlement_id === invoiceId)
+        ? { ...w, settlement_id: invoiceId, is_lcr: false }
+        : w
+    );
+    setWorkRecords(updatedRecords);
+
+    // Verrechnete Gesamtsumme anhand der Positionen bzw. verknüpften Arbeiten aktualisieren
+    const actualBound = updatedRecords.filter(
+      w => w.settlement_id === invoiceId || boundIds.has(w.id)
+    );
+    const boundSum =
+      Math.round(actualBound.reduce((s, r) => s + (r.accounting_amount || 0), 0) * 100) / 100;
+    const lineItemSum =
+      target.line_items && target.line_items.length > 0
+        ? Math.round(target.line_items.reduce((s, li) => s + li.amount, 0) * 100) / 100
+        : 0;
+    const refreshedTotal =
+      target.is_pauschal
+        ? target.total_amount > 0
+          ? target.total_amount
+          : boundSum
+        : lineItemSum > 0
+          ? lineItemSum
+          : boundSum > 0
+            ? boundSum
+            : target.total_amount;
+
+    setInvoices(prev =>
+      prev
+        .filter(i => !stornoIds.has(i.id))
+        .map(i =>
+          i.id === invoiceId
+            ? {
+                ...i,
+                status: 'unpaid',
+                payments: [],
+                paid_in_cash: false,
+                open_refund_amount: 0,
+                storno_reason: null,
+                total_amount: refreshedTotal
+              }
+            : i
+        )
+    );
+
+    setUndoToast({
+      visible: true,
+      message: `${target.invoice_number} auf Offen gesetzt`,
+      actionLabel: 'Rückgängig',
+      onUndo: () => {
+        setInvoices(snapshotInvoices);
+        setWorkRecords(snapshotWorkRecords);
+        setDeletedIds(prevDeletedIds);
+      }
+    });
   };
 
   const deleteInvoice = (invoiceId: string) => {
@@ -2988,9 +2600,8 @@ export const AppProvider: React.FC<{
       setSelectedInvoiceId(null);
     }
 
-    recordDeletedTombstones([['invoices', invoiceId]]);
-
     if (target.is_storno) {
+      recordDeletedTombstones([['invoices', invoiceId]]);
       // Wenn ein Stornobeleg gelöscht wird: Ursprüngliche Rechnung reaktivieren, falls vorhanden
       const origId = target.storno_reference_id;
       const otherStornoExists =
@@ -3030,21 +2641,36 @@ export const AppProvider: React.FC<{
         );
       }
     } else {
-      // Reguläre Rechnung löschen -> Gebundene Arbeiten sofort wieder freigeben
+      // Reguläre Rechnung löschen -> Auch etwaige zugehörige Stornobelege bereinigen und alle gebundenen Arbeiten in den Offenstatus versetzen
+      const linkedStornos = invoices.filter(
+        i => i.is_storno && i.storno_reference_id === invoiceId
+      );
+      const deleteIds = new Set([invoiceId, ...linkedStornos.map(s => s.id)]);
+      recordDeletedTombstones(Array.from(deleteIds).map(id => ['invoices', id]));
+
+      const boundWorkIds = new Set(target.work_record_ids);
+
       setInvoices(prev =>
         prev
-          .filter(i => i.id !== invoiceId)
+          .filter(i => !deleteIds.has(i.id))
           .map(i => (i.storno_reference_id === invoiceId ? { ...i, storno_reference_id: null } : i))
       );
 
       setWorkRecords(prev =>
-        prev.map(w => (w.settlement_id === invoiceId ? { ...w, settlement_id: null } : w))
+        prev.map(w =>
+          w.settlement_id === invoiceId ||
+          (boundWorkIds.has(w.id) && (!w.settlement_id || w.settlement_id === invoiceId))
+            ? { ...w, settlement_id: null, is_lcr: false, updated_at: new Date().toISOString() }
+            : w
+        )
       );
     }
 
     setUndoToast({
       visible: true,
-      message: `${target.invoice_number} gelöscht`,
+      message: target.is_storno
+        ? `${target.invoice_number} gelöscht`
+        : `${target.invoice_number} gelöscht · Arbeiten wieder offen`,
       actionLabel: 'Rückgängig',
       onUndo: () => {
         setInvoices(snapshotInvoices);
@@ -3556,7 +3182,7 @@ export const AppProvider: React.FC<{
     setTaxSettings(prev => ({ ...prev, ...patch }));
   };
 
-  // Backup & Restore (REQ-020 bis REQ-022, M12 – echt verifiziertes ZIP über Kotlin SAF auf Pixel 10 Pro)
+  // Backup & Restore (REQ-020 bis REQ-022, M12 – echt verifiziertes ZIP über Kotlin SAF auf Pixel 10 Pro + schlankes Web-Notfall-Backup)
   const performBackup = async (forcePickTarget = false): Promise<boolean> => {
     const nowIso = new Date().toISOString();
     const backupData = {
@@ -3576,8 +3202,10 @@ export const AppProvider: React.FC<{
       taxSettings,
       deletedIds
     };
+    const lightBackupData = buildLightWebBackupObject(backupData);
     const jsonPayload = JSON.stringify(backupData);
-    safeSetLocalStorage('hausgarten_backup_file', jsonPayload);
+    const lightJsonPayload = JSON.stringify(lightBackupData);
+    safeSetLocalStorage('hausgarten_backup_file', isNativeAndroidApp() ? jsonPayload : lightJsonPayload);
 
     if (isNativeAndroidApp()) {
       try {
@@ -3597,6 +3225,78 @@ export const AppProvider: React.FC<{
     return true;
   };
 
+  const importBackupData = (data: Record<string, unknown>, label?: string): boolean => {
+    if (!data || typeof data !== 'object') return false;
+    const normalizedSource = isNativeAndroidApp() ? data : buildLightWebBackupObject(data);
+
+    const prevSnapshot = {
+      customers: [...customers],
+      properties: [...properties],
+      appointments: [...appointments],
+      workRecords: [...workRecords],
+      invoices: [...invoices],
+      equipments: [...equipments],
+      materials: [...materials],
+      inquiries: [...inquiries],
+      offers: [...offers],
+      orders: [...orders],
+      expenses: [...expenses],
+      taxSettings: { ...taxSettings },
+      deletedIds: { ...deletedIds }
+    };
+
+    if (Array.isArray(normalizedSource.customers)) setCustomers(normalizedSource.customers as Customer[]);
+    if (Array.isArray(normalizedSource.properties)) setProperties(normalizedSource.properties as CustomerProperty[]);
+    if (Array.isArray(normalizedSource.appointments)) setAppointments(normalizedSource.appointments as Appointment[]);
+    if (Array.isArray(normalizedSource.workRecords)) setWorkRecords(normalizedSource.workRecords as WorkRecord[]);
+    if (Array.isArray(normalizedSource.invoices)) setInvoices(normalizedSource.invoices as Invoice[]);
+    if (Array.isArray(normalizedSource.equipments)) setEquipments(normalizedSource.equipments as Equipment[]);
+    if (Array.isArray(normalizedSource.materials)) setMaterials(normalizedSource.materials as Material[]);
+    if (Array.isArray(normalizedSource.inquiries)) setInquiries(normalizedSource.inquiries as Inquiry[]);
+    if (Array.isArray(normalizedSource.offers)) setOffers(normalizedSource.offers as Offer[]);
+    if (Array.isArray(normalizedSource.orders)) setOrders(normalizedSource.orders as Order[]);
+    if (Array.isArray(normalizedSource.expenses)) setExpenses(normalizedSource.expenses as BusinessExpense[]);
+    if (normalizedSource.taxSettings && typeof normalizedSource.taxSettings === 'object') {
+      setTaxSettings({ ...defaultTaxSettings, ...(normalizedSource.taxSettings as Partial<TaxSettings>) });
+    }
+    if (normalizedSource.deletedIds && typeof normalizedSource.deletedIds === 'object') {
+      setDeletedIds(capClientTombstones(normalizedSource.deletedIds as DeletedTombstoneMap));
+    }
+
+    const backupDateStr =
+      typeof normalizedSource.date === 'string' && normalizedSource.date.length >= 10
+        ? normalizedSource.date
+        : new Date().toISOString();
+    setLastBackupDate(backupDateStr);
+    safeSetLocalStorage(`${STORAGE_KEY}_lastBackupDate`, backupDateStr);
+    safeSetLocalStorage('hausgarten_backup_file', JSON.stringify(normalizedSource));
+
+    setUndoToast({
+      visible: true,
+      message: label
+        ? `Notfall-Sicherung (${label}) übernommen`
+        : 'Sicherung erfolgreich wiederhergestellt',
+      actionLabel: 'Rückgängig',
+      onUndo: () => {
+        setCustomers(prevSnapshot.customers);
+        setProperties(prevSnapshot.properties);
+        setAppointments(prevSnapshot.appointments);
+        setWorkRecords(prevSnapshot.workRecords);
+        setInvoices(prevSnapshot.invoices);
+        setEquipments(prevSnapshot.equipments);
+        setMaterials(prevSnapshot.materials);
+        setInquiries(prevSnapshot.inquiries);
+        setOffers(prevSnapshot.offers);
+        setOrders(prevSnapshot.orders);
+        setExpenses(prevSnapshot.expenses);
+        setTaxSettings(prevSnapshot.taxSettings);
+        setDeletedIds(prevSnapshot.deletedIds);
+      }
+    });
+
+    return true;
+  };
+
   const restoreBackup = async (pickExternalFile = false): Promise<boolean> => {
     try {
       let rawBackup: string | null = null;
@@ -3607,65 +3307,8 @@ export const AppProvider: React.FC<{
       }
       if (!rawBackup) return false;
 
-      const data = JSON.parse(rawBackup);
-      if (!data || typeof data !== 'object') return false;
-
-      const prevSnapshot = {
-        customers: [...customers],
-        properties: [...properties],
-        appointments: [...appointments],
-        workRecords: [...workRecords],
-        invoices: [...invoices],
-        equipments: [...equipments],
-        materials: [...materials],
-        inquiries: [...inquiries],
-        offers: [...offers],
-        orders: [...orders],
-        expenses: [...expenses],
-        taxSettings: { ...taxSettings },
-        deletedIds: { ...deletedIds }
-      };
-
-      if (Array.isArray(data.customers)) setCustomers(data.customers);
-      if (Array.isArray(data.properties)) setProperties(data.properties);
-      if (Array.isArray(data.appointments)) setAppointments(data.appointments);
-      if (Array.isArray(data.workRecords)) setWorkRecords(data.workRecords);
-      if (Array.isArray(data.invoices)) setInvoices(data.invoices);
-      if (Array.isArray(data.equipments)) setEquipments(data.equipments);
-      if (Array.isArray(data.materials)) setMaterials(data.materials);
-      if (Array.isArray(data.inquiries)) setInquiries(data.inquiries);
-      if (Array.isArray(data.offers)) setOffers(data.offers);
-      if (Array.isArray(data.orders)) setOrders(data.orders);
-      if (Array.isArray(data.expenses)) setExpenses(data.expenses);
-      if (data.taxSettings && typeof data.taxSettings === 'object') {
-        setTaxSettings({ ...defaultTaxSettings, ...data.taxSettings });
-      }
-      if (data.deletedIds && typeof data.deletedIds === 'object') {
-        setDeletedIds(capClientTombstones(data.deletedIds));
-      }
-
-      setUndoToast({
-        visible: true,
-        message: 'Sicherung erfolgreich wiederhergestellt',
-        actionLabel: 'Rückgängig',
-        onUndo: () => {
-          setCustomers(prevSnapshot.customers);
-          setProperties(prevSnapshot.properties);
-          setAppointments(prevSnapshot.appointments);
-          setWorkRecords(prevSnapshot.workRecords);
-          setInvoices(prevSnapshot.invoices);
-          setEquipments(prevSnapshot.equipments);
-          setMaterials(prevSnapshot.materials);
-          setInquiries(prevSnapshot.inquiries);
-          setOffers(prevSnapshot.offers);
-          setOrders(prevSnapshot.orders);
-          setExpenses(prevSnapshot.expenses);
-          setTaxSettings(prevSnapshot.taxSettings);
-          setDeletedIds(prevSnapshot.deletedIds);
-        }
-      });
-
-      return true;
+      const data = JSON.parse(rawBackup) as Record<string, unknown>;
+      return importBackupData(data);
     } catch {
       return false;
     }
@@ -3749,6 +3392,7 @@ export const AppProvider: React.FC<{
         setLcrWorkRecordsBatch,
         createInvoiceFromRecords,
         updateInvoice,
+        resetInvoiceToOpen,
         deleteInvoice,
         payInvoice,
         updatePayment,
@@ -3777,6 +3421,7 @@ export const AppProvider: React.FC<{
         lastBackupDate,
         performBackup,
         restoreBackup,
+        importBackupData,
         pixelFrameEnabled,
         setPixelFrameEnabled,
         appSyncStatus,

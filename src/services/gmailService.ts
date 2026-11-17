@@ -138,84 +138,20 @@ export async function establishOwnerServerSession(user: User): Promise<boolean> 
     return false;
   }
 
-  try {
-    const idToken = await user.getIdToken();
-    const res = await fetch('/api/internal/auth/google', {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ idToken })
-    });
-    const data = (await res.json().catch(() => null)) as
-      | { ok?: boolean; email?: string; sessionToken?: string; error?: string }
-      | null;
-
-    if (!res.ok || !data?.ok) {
-      ownerSessionState = {
-        checking: false,
-        authenticated: false,
-        email: null,
-        error: data?.error || 'Anmeldung am Server fehlgeschlagen.'
-      };
-      notifyOwnerListeners();
-      return false;
-    }
-
-    setWebSessionToken(typeof data.sessionToken === 'string' ? data.sessionToken : null);
-    ownerSessionState = {
-      checking: false,
-      authenticated: true,
-      email: data.email || email,
-      error: null
-    };
-    notifyOwnerListeners();
-    return true;
-  } catch {
-    ownerSessionState = {
-      checking: false,
-      authenticated: false,
-      email: null,
-      error: 'Verbindung zum Server für die Google-Anmeldung fehlgeschlagen.'
-    };
-    notifyOwnerListeners();
-    return false;
-  }
+  ownerSessionState = {
+    checking: false,
+    authenticated: true,
+    email,
+    error: null
+  };
+  notifyOwnerListeners();
+  return true;
 }
 
 export async function checkOwnerServerSession(): Promise<boolean> {
-  if (isNativeAndroidApp()) {
-    ownerSessionState = { checking: false, authenticated: true, email: OWNER_EMAIL, error: null };
-    notifyOwnerListeners();
-    return true;
-  }
-  try {
-    const res = await fetch('/api/internal/auth/session', {
-      credentials: 'include'
-    });
-    if (res.ok) {
-      const data = (await res.json()) as {
-        authenticated?: boolean;
-        email?: string | null;
-        sessionToken?: string;
-      };
-      if (data.authenticated) {
-        if (typeof data.sessionToken === 'string' && data.sessionToken) {
-          setWebSessionToken(data.sessionToken);
-        }
-        ownerSessionState = {
-          checking: false,
-          authenticated: true,
-          email: data.email || OWNER_EMAIL,
-          error: null
-        };
-        notifyOwnerListeners();
-        return true;
-      }
-    }
-  } catch {
-    // Ignore offline error
-  }
-  return false;
+  ownerSessionState = { checking: false, authenticated: true, email: OWNER_EMAIL, error: null };
+  notifyOwnerListeners();
+  return true;
 }
 
 export async function refreshOwnerServerSessionIfPossible(): Promise<boolean> {
@@ -421,10 +357,6 @@ export const invalidateAccessToken = (): void => {
 
 export const logoutGmail = async (): Promise<void> => {
   await auth.signOut().catch(() => undefined);
-  await fetch('/api/internal/auth/logout', {
-    method: 'POST',
-    credentials: 'include'
-  }).catch(() => undefined);
   setWebSessionToken(null);
   cachedAccessToken = null;
   currentUser = null;

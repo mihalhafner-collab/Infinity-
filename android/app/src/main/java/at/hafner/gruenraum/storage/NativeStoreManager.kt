@@ -514,24 +514,54 @@ class NativeStoreManager(context: Context) {
         return obj.toString()
     }
 
+    private fun buildLightWebAppBackupBytes(fullJson: String): ByteArray {
+        return try {
+            val root = JSONObject(fullJson)
+            root.put("backupVariant", "webapp_light")
+            for (col in listOf("customers", "properties", "workRecords", "equipments")) {
+                val arr = root.optJSONArray(col) ?: continue
+                for (i in 0 until arr.length()) {
+                    val item = arr.optJSONObject(i) ?: continue
+                    if (item.has("photo")) {
+                        item.put("photo", JSONObject.NULL)
+                    }
+                    if (item.has("photos")) {
+                        item.put("photos", JSONArray())
+                    }
+                }
+            }
+            root.toString().toByteArray(Charsets.UTF_8)
+        } catch (_: Exception) {
+            fullJson.toByteArray(Charsets.UTF_8)
+        }
+    }
+
     fun writeVerifiedZipBackup(jsonPayload: String, targetUri: Uri?): BackupResult {
         return try {
             JSONObject(jsonPayload) // Validate JSON before writing
             val nowIso = Instant.now().toString()
             val payloadBytes = jsonPayload.toByteArray(Charsets.UTF_8)
+            val lightPayloadBytes = buildLightWebAppBackupBytes(jsonPayload)
             val sha256 = sha256Hex(payloadBytes)
+            val lightSha256 = sha256Hex(lightPayloadBytes)
 
             val manifestJson = JSONObject().apply {
                 put("app", "Infinity · Hafner Grünraum Handwerk")
                 put("createdAt", nowIso)
                 put("sha256", sha256)
                 put("payloadBytes", payloadBytes.size)
+                put("lightSha256", lightSha256)
+                put("lightPayloadBytes", lightPayloadBytes.size)
             }.toString()
 
             val zipBytes = ByteArrayOutputStream().use { baos ->
                 ZipOutputStream(baos).use { zos ->
                     zos.putNextEntry(ZipEntry("hausgarten_backup_v1.json"))
                     zos.write(payloadBytes)
+                    zos.closeEntry()
+
+                    zos.putNextEntry(ZipEntry("hausgarten_webapp_light.json"))
+                    zos.write(lightPayloadBytes)
                     zos.closeEntry()
 
                     zos.putNextEntry(ZipEntry("manifest.json"))

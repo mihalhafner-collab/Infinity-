@@ -20,15 +20,17 @@ import {
   getNativeBackupMeta,
   isNativeAndroidApp
 } from '../../services/nativeBridge.ts';
+import { extractAndroidBackupForWebApp } from '../../utils/backupZip.ts';
 
 export const SicherungView: React.FC = () => {
-  const { lastBackupDate, performBackup, restoreBackup } = useApp();
+  const { lastBackupDate, performBackup, restoreBackup, importBackupData } = useApp();
   const isNative = isNativeAndroidApp();
 
   const [isBackingUp, setIsBackingUp] = useState(false);
   const [backupSuccess, setBackupSuccess] = useState(false);
   const [restoreModalOpen, setRestoreModalOpen] = useState(false);
   const [restoreSuccess, setRestoreSuccess] = useState(false);
+  const [restoreInfo, setRestoreInfo] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [targetLabel, setTargetLabel] = useState<string>(() => {
     return getNativeBackupMeta()?.targetLabel || 'hausgarten-backup.zip';
@@ -65,6 +67,7 @@ export const SicherungView: React.FC = () => {
     const ok = await restoreBackup(pickExternalFile);
     setRestoreModalOpen(false);
     if (ok) {
+      setRestoreInfo(null);
       setRestoreSuccess(true);
       setTimeout(() => setRestoreSuccess(false), 3500);
     } else {
@@ -80,34 +83,42 @@ export const SicherungView: React.FC = () => {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `hausgarten-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    a.download = `hausgarten_webapp_light_${new Date().toISOString().slice(0, 10)}.json`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
   };
 
-  const handleBrowserUploadJson = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleBrowserUploadBackupFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = async () => {
-      try {
-        const text = String(reader.result || '');
-        const parsed = JSON.parse(text);
-        if (!parsed || typeof parsed !== 'object') {
-          showError('Ungültiges Dateiformat.');
-          return;
-        }
-        localStorage.setItem('hausgarten_backup_file', text);
-        await handleRestore(false);
-      } catch {
-        showError('Datei konnte nicht gelesen werden.');
-      } finally {
-        e.target.value = '';
+    setErrorMsg(null);
+    try {
+      const { data, entryName } = await extractAndroidBackupForWebApp(file);
+      const ok = importBackupData(data as Record<string, unknown>, file.name);
+      setRestoreModalOpen(false);
+      if (ok) {
+        setTargetLabel(file.name);
+        setRestoreInfo(
+          entryName === 'hausgarten_webapp_light.json'
+            ? `${file.name} (Kompakt-Backup ohne Fotos geladen)`
+            : `${file.name} (Relevante Geschäftsdaten ohne Fotos geladen)`
+        );
+        setRestoreSuccess(true);
+        setTimeout(() => setRestoreSuccess(false), 4500);
+      } else {
+        showError('Sicherungsdatei enthielt keine gültigen Geschäftsdaten.');
       }
-    };
-    reader.readAsText(file);
+    } catch (err: unknown) {
+      showError(
+        err instanceof Error
+          ? err.message
+          : 'Sicherungsdatei (.zip / .json) konnte nicht gelesen werden.'
+      );
+    } finally {
+      e.target.value = '';
+    }
   };
 
   return (
@@ -126,7 +137,9 @@ export const SicherungView: React.FC = () => {
                 {targetLabel}
               </h3>
               <p className="text-[11px] text-slate-500">
-                Zieldatei einmal gewählt · fortlaufend ergänzt (inkl. Lösch-Index)
+                {isNative
+                  ? 'Voll-Backup + schlankes Web-Notfall-Backup in einer ZIP'
+                  : 'Eigenständige Notfall-Web-App · liest Android-Backup (.zip / .json)'}
               </p>
             </div>
           </div>
@@ -161,11 +174,13 @@ export const SicherungView: React.FC = () => {
 
           {/* Flow visual (Page 44) */}
           <div className="p-2.5 bg-slate-50 rounded-xl flex items-center justify-between text-[11px] text-slate-600 font-medium">
-            <span>Neue Daten</span>
+            <span>{isNative ? 'Neue Daten' : 'Android-ZIP'}</span>
             <ArrowRight size={13} className="text-slate-400" />
-            <span className="font-bold text-[#3138A0]">gleiche Datei ergänzen</span>
+            <span className="font-bold text-[#3138A0]">
+              {isNative ? 'gleiche Datei ergänzen' : 'nur relevante Daten'}
+            </span>
             <ArrowRight size={13} className="text-slate-400" />
-            <span>erneut prüfen</span>
+            <span>{isNative ? 'erneut prüfen' : 'sofort bereit'}</span>
           </div>
 
           {errorMsg && (
@@ -185,19 +200,29 @@ export const SicherungView: React.FC = () => {
           {restoreSuccess && (
             <div className="p-2.5 bg-indigo-50 border border-indigo-200 rounded-xl text-[#3138A0] text-xs font-semibold flex items-center gap-2 animate-fade-in">
               <CheckCircle size={15} className="shrink-0" />
-              <span>Daten erfolgreich wiederhergestellt!</span>
+              <span>{restoreInfo || 'Daten erfolgreich wiederhergestellt!'}</span>
             </div>
           )}
 
-          {/* Main Action: Sicherung ergänzen */}
-          <button
-            onClick={() => void handleBackup(false)}
-            disabled={isBackingUp}
-            className="w-full h-12 bg-[#3138A0] hover:bg-[#272d82] active:scale-98 disabled:opacity-50 text-white font-semibold rounded-xl text-xs flex items-center justify-center gap-2 shadow-xs transition-all"
-          >
-            <RefreshCw size={15} className={isBackingUp ? 'animate-spin' : ''} />
-            <span>{isBackingUp ? 'Prüfe und sichere...' : 'Sicherung ergänzen'}</span>
-          </button>
+          {isNative ? (
+            <button
+              onClick={() => void handleBackup(false)}
+              disabled={isBackingUp}
+              className="w-full h-12 bg-[#3138A0] hover:bg-[#272d82] active:scale-98 disabled:opacity-50 text-white font-semibold rounded-xl text-xs flex items-center justify-center gap-2 shadow-xs transition-all"
+            >
+              <RefreshCw size={15} className={isBackingUp ? 'animate-spin' : ''} />
+              <span>{isBackingUp ? 'Prüfe und sichere...' : 'Sicherung ergänzen'}</span>
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="w-full h-12 bg-[#3138A0] hover:bg-[#272d82] active:scale-98 text-white font-semibold rounded-xl text-xs flex items-center justify-center gap-2 shadow-xs transition-all"
+            >
+              <Upload size={15} />
+              <span>Android-Backup (.zip / .json) einspielen</span>
+            </button>
+          )}
 
           <div className="flex items-center gap-2">
             <button
@@ -223,7 +248,7 @@ export const SicherungView: React.FC = () => {
                 className="h-10 px-3 bg-slate-100 hover:bg-slate-200 active:scale-98 text-slate-700 font-semibold rounded-xl text-xs flex items-center justify-center gap-1.5 transition-all shrink-0"
               >
                 <Download size={14} className="text-[#3138A0]" />
-                <span>Datei laden</span>
+                <span>Kompakt-Backup laden</span>
               </button>
             )}
           </div>
@@ -231,8 +256,8 @@ export const SicherungView: React.FC = () => {
           <input
             ref={fileInputRef}
             type="file"
-            accept=".json,application/json"
-            onChange={handleBrowserUploadJson}
+            accept=".zip,.json,application/zip,application/json"
+            onChange={(e) => void handleBrowserUploadBackupFile(e)}
             className="hidden"
           />
         </div>
@@ -241,10 +266,16 @@ export const SicherungView: React.FC = () => {
         <div className="p-3.5 bg-white border border-slate-200 rounded-2xl shadow-2xs space-y-2 text-xs">
           <div className="flex items-center gap-1.5 text-slate-800 font-bold">
             <ShieldCheck size={16} className="text-[#3138A0]" />
-            <span>Sicherungskonzept (REQ-020 bis REQ-022)</span>
+            <span>
+              {isNative
+                ? 'Sicherungskonzept (Pixel 10 Pro + Web-Notfall)'
+                : 'Notfall-Backup im Browser (ohne Smartphone-Verbindung)'}
+            </span>
           </div>
           <p className="text-[11px] text-slate-600 leading-relaxed">
-            Es entsteht nicht pro Lauf eine neue sichtbare Datei. Eine gewählte Datei wird sicher fortgeschrieben und durch Rücklesen validiert. Wiederherstellung erfolgt mit Rückgängig-Schutz.
+            {isNative
+              ? 'Die ZIP-Datei enthält sowohl die vollständige Gerätesicherung inkl. Fotos als auch das schlanke Kompakt-Backup (hausgarten_webapp_light.json) für die Notfall-Web-App.'
+              : 'Die Web-App ist komplett von der Android-App getrennt. Beim Einspielen von hausgarten-backup.zip werden ausschließlich relevante Geschäftsdaten (Kunden, Termine, Arbeiten, Rechnungen, Geräte, Material) ohne schwere Kamerafotos geladen.'}
           </p>
         </div>
       </div>
@@ -296,7 +327,7 @@ export const SicherungView: React.FC = () => {
                   className="w-full h-10 bg-slate-100 hover:bg-slate-200 text-slate-800 font-semibold rounded-xl text-xs flex items-center justify-center gap-1.5"
                 >
                   <Upload size={14} className="text-[#3138A0]" />
-                  <span>Sicherungsdatei (.json) vom Gerät wählen…</span>
+                  <span>Android-Backup (.zip / .json) vom Gerät wählen…</span>
                 </button>
               )}
             </div>
@@ -311,3 +342,4 @@ export const SicherungView: React.FC = () => {
     </div>
   );
 };
+

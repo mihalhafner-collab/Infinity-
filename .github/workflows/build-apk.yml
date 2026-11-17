@@ -26,6 +26,8 @@ jobs:
           cache: 'npm'
 
       - name: Abhängigkeiten installieren & Offline-Assets erzeugen
+        env:
+          VITE_GEMINI_API_KEY: ${{ secrets.VITE_GEMINI_API_KEY || secrets.GEMINI_API_KEY }}
         run: |
           npm install
           npm run lint
