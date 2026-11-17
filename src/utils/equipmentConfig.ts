@@ -121,7 +121,7 @@ export const EQUIPMENT_CATEGORIES: EquipmentCategoryDef[] = [
   },
   {
     id: 'felco_silky_schnitt',
-    label: 'Handsäge & Schere',
+    label: 'Handsäge',
     itemType: 'geraet',
     group: 'garten',
     presetNames: [
@@ -334,7 +334,7 @@ export const EQUIPMENT_CATEGORIES: EquipmentCategoryDef[] = [
   },
   {
     id: 'bewaesserung_spritze',
-    label: 'Bewässerung',
+    label: 'Gartenspritze',
     itemType: 'geraet',
     group: 'garten',
     presetNames: [
@@ -451,7 +451,7 @@ export const EQUIPMENT_CATEGORIES: EquipmentCategoryDef[] = [
   // ================= 4. MULTITOOL, ELEKTRO, REINIGUNG & BAU =================
   {
     id: 'milwaukee_geraete',
-    label: 'Multitool',
+    label: 'Akku-Gerät',
     itemType: 'geraet',
     group: 'allgemein',
     presetNames: [
@@ -711,7 +711,7 @@ export const EQUIPMENT_CATEGORIES: EquipmentCategoryDef[] = [
   // ================= 5. ZUBEHÖR & VERSCHLEISSTEILE =================
   {
     id: 'zub_kette_schiene',
-    label: 'Kette & Schwert',
+    label: 'Sägekette',
     itemType: 'zubehoer',
     group: 'zubehoer',
     presetNames: [
@@ -766,7 +766,7 @@ export const EQUIPMENT_CATEGORIES: EquipmentCategoryDef[] = [
   },
   {
     id: 'zub_feilen_schaerfen',
-    label: 'Feile & Schärfer',
+    label: 'Feile',
     itemType: 'zubehoer',
     group: 'zubehoer',
     presetNames: [
@@ -810,7 +810,7 @@ export const EQUIPMENT_CATEGORIES: EquipmentCategoryDef[] = [
   },
   {
     id: 'zub_faden_messer',
-    label: 'Faden & Messer',
+    label: 'Mähfaden',
     itemType: 'zubehoer',
     group: 'zubehoer',
     presetNames: [
@@ -891,7 +891,7 @@ export const EQUIPMENT_CATEGORIES: EquipmentCategoryDef[] = [
   },
   {
     id: 'zub_akku_ladung',
-    label: 'Akku & Ladegerät',
+    label: 'Akku',
     itemType: 'zubehoer',
     group: 'zubehoer',
     presetNames: [
@@ -933,7 +933,7 @@ export const EQUIPMENT_CATEGORIES: EquipmentCategoryDef[] = [
   },
   {
     id: 'zub_bohrer_trennscheiben',
-    label: 'Bohrer & Scheibe',
+    label: 'Bohrer',
     itemType: 'zubehoer',
     group: 'zubehoer',
     presetNames: [
@@ -963,7 +963,7 @@ export const EQUIPMENT_CATEGORIES: EquipmentCategoryDef[] = [
   },
   {
     id: 'zub_filter_psa_sonstiges',
-    label: 'Betriebsstoff & PSA',
+    label: 'Betriebsstoff',
     itemType: 'zubehoer',
     group: 'zubehoer',
     presetNames: [
@@ -992,6 +992,76 @@ export const EQUIPMENT_CATEGORIES: EquipmentCategoryDef[] = [
         placeholder: 'z. B. NGK CMR6H / 1141 120 1604'
       }
     ]
+  },
+  {
+    id: 'gartengeraete',
+    label: 'Gartengerät',
+    itemType: 'geraet',
+    group: 'garten',
+    presetNames: ['Gartenwalze', 'Streuwagen', 'Pflanzgerät'],
+    namePlaceholder: 'z. B. Gartenwalze / Streuwagen',
+    modelPlaceholder: 'Modell / Ausführung',
+    fields: []
+  },
+  {
+    id: 'gartenschere',
+    label: 'Gartenschere',
+    itemType: 'geraet',
+    group: 'garten',
+    presetNames: ['Gartenschere', 'Astschere', 'Teleskop-Baumschere'],
+    namePlaceholder: 'z. B. Felco 2',
+    modelPlaceholder: 'Modell / Klinge',
+    fields: []
+  },
+  {
+    id: 'zub_schwert',
+    label: 'Schwert',
+    itemType: 'zubehoer',
+    group: 'zubehoer',
+    presetNames: ['Führungsschiene'],
+    namePlaceholder: 'z. B. Führungsschiene 40 cm',
+    modelPlaceholder: 'Modell / Teilenummer',
+    fields: []
+  },
+  {
+    id: 'zub_messer',
+    label: 'Messer',
+    itemType: 'zubehoer',
+    group: 'zubehoer',
+    presetNames: ['Mähmesser', 'Dickichtmesser', 'Mulchmesser'],
+    namePlaceholder: 'z. B. Mähmesser',
+    modelPlaceholder: 'Modell / Teilenummer',
+    fields: []
+  },
+  {
+    id: 'zub_ladegeraet',
+    label: 'Ladegerät',
+    itemType: 'zubehoer',
+    group: 'zubehoer',
+    presetNames: ['Akku-Ladegerät', 'Schnellladegerät'],
+    namePlaceholder: 'z. B. STIHL AL 301',
+    modelPlaceholder: 'Modell / Akkusystem',
+    fields: []
+  },
+  {
+    id: 'zub_trennscheibe',
+    label: 'Trennscheibe',
+    itemType: 'zubehoer',
+    group: 'zubehoer',
+    presetNames: ['Diamant-Trennscheibe', 'Metall-Trennscheibe'],
+    namePlaceholder: 'z. B. Diamant-Trennscheibe 125 mm',
+    modelPlaceholder: 'Modell / Abmessung',
+    fields: []
+  },
+  {
+    id: 'zub_psa',
+    label: 'Schutzausrüstung',
+    itemType: 'zubehoer',
+    group: 'zubehoer',
+    presetNames: ['Forsthelm', 'Schnittschutzhose', 'Arbeitshandschuhe'],
+    namePlaceholder: 'z. B. Forsthelm',
+    modelPlaceholder: 'Modell / Größe',
+    fields: []
   }
 ];
 
@@ -1010,6 +1080,8 @@ export const FUNCTIONAL_GROUPS: FunctionalGroupInfo[] = [
 ];
 
 const FUNCTIONAL_GROUP_MAP: Record<string, FunctionalGroupInfo> = {
+  gartengeraete: { id: 'laub_wasser_hand', title: 'Laub, Bewässerung & Handgeräte', order: 9 },
+  gartenschere: { id: 'schnitt', title: 'Schnitt & Baumpflege', order: 3 },
   // 1. Schnitt & Baumpflege
   motorsaegen: { id: 'schnitt', title: 'Schnitt & Baumpflege', order: 1 },
   heckenschere: { id: 'schnitt', title: 'Schnitt & Baumpflege', order: 2 },

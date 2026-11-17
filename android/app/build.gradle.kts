@@ -13,8 +13,8 @@ android {
         applicationId = "at.hafner.gruenraum"
         minSdk = 31
         targetSdk = 35
-        versionCode = 4
-        versionName = "1.3.0"
+        versionCode = 34
+        versionName = "1.3.3"
 
         val envMcpUrl = System.getenv("MCP_SERVER_URL")?.trim()?.replace("\"", "").orEmpty()
         val defaultMcpUrl = envMcpUrl.ifBlank { "https://infinity-hafner.ai.studio" }
