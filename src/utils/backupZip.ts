@@ -52,29 +52,10 @@ async function inflateRawBytes(compressed: Uint8Array): Promise<Uint8Array> {
   if (typeof DecompressionStream === 'undefined') {
     throw new Error('Browser unterstützt keine ZIP-Dekomprimierung (DecompressionStream fehlt).');
   }
-  const ds = new DecompressionStream('deflate-raw');
-  const writer = ds.writable.getWriter();
-  await writer.write(new Uint8Array(compressed));
-  await writer.close();
-
-  const reader = ds.readable.getReader();
-  const chunks: Uint8Array[] = [];
-  let totalLen = 0;
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    if (value) {
-      chunks.push(value);
-      totalLen += value.byteLength;
-    }
-  }
-  const out = new Uint8Array(totalLen);
-  let offset = 0;
-  for (const chunk of chunks) {
-    out.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return out;
+  // Gleichzeitig lesen und schreiben, damit größere Backups nicht am Stream-Puffer hängen.
+  const stream = new Blob([new Uint8Array(compressed)]).stream()
+    .pipeThrough(new DecompressionStream('deflate-raw'));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
 }
 
 /**

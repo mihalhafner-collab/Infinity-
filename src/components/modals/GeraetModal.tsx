@@ -233,6 +233,7 @@ export const GeraetModal: React.FC = () => {
     if (initializedModalKeyRef.current === modalKey) {
       return;
     }
+    if (isEditing && !existingItem) return;
     initializedModalKeyRef.current = modalKey;
 
     setConfirmDelete(false);

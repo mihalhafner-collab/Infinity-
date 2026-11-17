@@ -1831,7 +1831,10 @@ function mutateUpsertOnSnapshotInner(
         k === 'created_at' ||
         k === 'updated_at' ||
         k === 'has_photo' ||
-        k === 'photo_count'
+        k === 'photo_count' ||
+        k === 'image_count' ||
+        k === 'document_count' ||
+        k === 'remove_photo'
       ) {
         continue;
       }

@@ -54,6 +54,21 @@ class SecureMcpCredentialStore(private val context: Context) {
     private val encryptedFile = File(context.noBackupFilesDir, "mcp_credentials_v1.enc")
 
     @Synchronized
+    fun clearCredentials() {
+        if (!encryptedFile.exists()) return
+        val current = loadCredentials()
+        // Nur die frühere Cloud-Kopplung zurücksetzen; Gmail bleibt nach einem Neustart eingerichtet.
+        saveCredentials(
+            baseUrl = defaultBaseUrl(),
+            token = DEFAULT_PIXEL10_DEVICE_TOKEN,
+            adminToken = "",
+            gmailSenderEmail = current.gmailSenderEmail,
+            gmailAppPassword = current.gmailAppPassword,
+            gmailOAuthToken = current.gmailOAuthToken
+        )
+    }
+
+    @Synchronized
     fun loadCredentials(): McpCredentials {
         if (encryptedFile.exists() && encryptedFile.length() > IV_LENGTH_BYTES) {
             try {

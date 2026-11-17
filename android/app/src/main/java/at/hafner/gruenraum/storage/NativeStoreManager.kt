@@ -453,6 +453,15 @@ class NativeStoreManager(context: Context) {
                         ) {
                             winner.put("photo", othPhoto)
                         }
+                        for (mediaKey in listOf("photos", "images", "documents")) {
+                            val winMedia = winner.optJSONArray(mediaKey)
+                            val otherMedia = other.optJSONArray(mediaKey)
+                            if ((winMedia == null || winMedia.length() == 0) &&
+                                otherMedia != null && otherMedia.length() > 0
+                            ) {
+                                winner.put(mediaKey, otherMedia)
+                            }
+                        }
                     }
                     byId[id] = winner
                 }
@@ -509,7 +518,7 @@ class NativeStoreManager(context: Context) {
         val extUri = getPersistedBackupUri()
         obj.put("hasExternalTarget", extUri != null)
         obj.put("targetLabel", extUri?.lastPathSegment ?: "hausgarten-backup.zip (Gerätespeicher)")
-        obj.put("lastBackupDate", prefs.getString(KEY_LAST_BACKUP_ISO, JSONObject.NULL))
+        obj.put("lastBackupDate", prefs.getString(KEY_LAST_BACKUP_ISO, null) ?: JSONObject.NULL)
         obj.put("hasInternalBackup", internalZipFile.exists())
         return obj.toString()
     }

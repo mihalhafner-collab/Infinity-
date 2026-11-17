@@ -1515,7 +1515,7 @@ export const AppProvider: React.FC<{
                 ? {
                     ...a,
                     notes: attachGoogleEventIdToNotes(a.notes, googleEventId),
-                    updated_at: new Date().toISOString()
+                    updated_at: nextMonotonicIso(a.updated_at)
                   }
                 : a
             )
@@ -1548,7 +1548,7 @@ export const AppProvider: React.FC<{
                 ? {
                     ...a,
                     notes: attachGoogleEventIdToNotes(a.notes, newGoogleEventId),
-                    updated_at: new Date().toISOString()
+                    updated_at: nextMonotonicIso(a.updated_at)
                   }
                 : a
             )
@@ -1634,7 +1634,7 @@ export const AppProvider: React.FC<{
       setWorkRecords(prev =>
         prev.map(w =>
           w.customer_id === id && !w.settlement_id
-            ? { ...w, billing_customer_id: nextBillingCustId }
+            ? { ...w, billing_customer_id: nextBillingCustId, updated_at: nextMonotonicIso(w.updated_at) }
             : w
         )
       );
@@ -2343,7 +2343,7 @@ export const AppProvider: React.FC<{
       setCustomers((prev) =>
         prev.map((c) =>
           c.id === effectiveCustomerId
-            ? { ...c, customer_number: resolvedCustomerNum, updated_at: new Date().toISOString() }
+            ? { ...c, customer_number: resolvedCustomerNum, updated_at: nextMonotonicIso(c.updated_at) }
             : c
         )
       );
@@ -2423,7 +2423,7 @@ export const AppProvider: React.FC<{
               is_lcr: false,
               billing_customer_id:
                 w.customer_id !== customerId ? customerId : w.billing_customer_id,
-              updated_at: new Date().toISOString()
+              updated_at: nextMonotonicIso(w.updated_at)
             }
           : w
       )
@@ -2526,14 +2526,14 @@ export const AppProvider: React.FC<{
                 ...w,
                 settlement_id: invoiceId,
                 is_lcr: false,
-                updated_at: new Date().toISOString()
+                updated_at: nextMonotonicIso(w.updated_at)
               };
             }
             if (!nextSet.has(w.id) && (w.settlement_id === invoiceId || prevSet.has(w.id))) {
               return {
                 ...w,
                 settlement_id: null,
-                updated_at: new Date().toISOString()
+                updated_at: nextMonotonicIso(w.updated_at)
               };
             }
             return w;
@@ -2761,7 +2761,7 @@ export const AppProvider: React.FC<{
         prev.map(w =>
           w.settlement_id === invoiceId ||
           (boundWorkIds.has(w.id) && (!w.settlement_id || w.settlement_id === invoiceId))
-            ? { ...w, settlement_id: null, is_lcr: false, updated_at: new Date().toISOString() }
+            ? { ...w, settlement_id: null, is_lcr: false, updated_at: nextMonotonicIso(w.updated_at) }
             : w
         )
       );

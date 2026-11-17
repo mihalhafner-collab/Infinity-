@@ -1375,7 +1375,7 @@ class InfinityMcpDispatcher(
                         val pk = prevSpecs.keys()
                         while (pk.hasNext()) {
                             val k = pk.next()
-                            if (k == "created_at" || k == "updated_at" || k == "has_photo" || k == "photo_count") continue
+                            if (k == "created_at" || k == "updated_at" || k == "has_photo" || k == "photo_count" || k == "image_count" || k == "document_count" || k == "remove_photo") continue
                             val v = prevSpecs.optString(k, "").trim()
                             if (v.isNotEmpty() && !prevSpecs.isNull(k)) {
                                 fieldList.add(
@@ -1528,7 +1528,7 @@ class InfinityMcpDispatcher(
                     val nk = payloadSpecs.keys()
                     while (nk.hasNext()) {
                         val k = nk.next()
-                        if (k == "created_at" || k == "updated_at" || k == "has_photo" || k == "photo_count") continue
+                        if (k == "created_at" || k == "updated_at" || k == "has_photo" || k == "photo_count" || k == "image_count" || k == "document_count" || k == "remove_photo") continue
                         upsertDynamicField(null, k, null, payloadSpecs.opt(k), null, "Technische Daten", defaultFieldSource)
                     }
                 }

@@ -421,6 +421,13 @@ function preserveServerMediaIfSameTime<T extends { id: string; updated_at?: stri
   ) {
     patched = { ...patched, photos: oRec.photos };
   }
+  for (const key of ['images', 'documents']) {
+    const value = wRec[key];
+    const otherValue = oRec[key];
+    if ((!Array.isArray(value) || value.length === 0) && Array.isArray(otherValue) && otherValue.length > 0) {
+      patched = { ...patched, [key]: otherValue };
+    }
+  }
   return patched;
 }
 
@@ -1251,7 +1258,8 @@ async function startServer() {
     if (
       !isAndroidPrimary &&
       !hasSnapshotAnyRecords(body.data) &&
-      hasSnapshotAnyRecords(current.data)
+      hasSnapshotAnyRecords(current.data) &&
+      current.revision > minRevisionFloor
     ) {
       res.json({
         revision: current.revision,
@@ -1264,8 +1272,7 @@ async function startServer() {
       return;
     }
 
-    const serverHasUnseenChanges =
-      hasSnapshotAnyRecords(current.data) && current.revision > minRevisionFloor;
+    const serverHasUnseenChanges = current.revision > minRevisionFloor;
 
     let shouldMerge = false;
     let nextSnapshot: AppDataSnapshot = {
