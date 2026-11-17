@@ -423,8 +423,22 @@ export const AppProvider: React.FC<{
   });
 
   const [invoices, setInvoices] = useState<Invoice[]>(() => {
-    const saved = localStorage.getItem(`${STORAGE_KEY}_invoices`);
-    return saved ? JSON.parse(saved) : initialInvoices;
+    try {
+      const saved = localStorage.getItem(`${STORAGE_KEY}_invoices`);
+      const parsed: Invoice[] = saved ? JSON.parse(saved) : initialInvoices;
+      if (!Array.isArray(parsed)) return initialInvoices;
+      const origIds = new Set(
+        parsed.filter((inv) => inv && inv.id && !inv.is_storno).map((inv) => inv.id)
+      );
+      return parsed.filter(
+        (inv) =>
+          inv &&
+          inv.id &&
+          (!inv.is_storno || (inv.storno_reference_id && origIds.has(inv.storno_reference_id)))
+      );
+    } catch {
+      return initialInvoices;
+    }
   });
 
   const [equipments, setEquipments] = useState<Equipment[]>(() => {
@@ -465,7 +479,11 @@ export const AppProvider: React.FC<{
   const [deletedIds, setDeletedIds] = useState<DeletedTombstoneMap>(() => {
     try {
       const saved = localStorage.getItem(`${STORAGE_KEY}_deletedIds`);
-      return saved ? (JSON.parse(saved) as DeletedTombstoneMap) : {};
+      if (!saved) return {};
+      const parsed = JSON.parse(saved) as DeletedTombstoneMap;
+      return Object.fromEntries(
+        Object.entries(parsed || {}).filter(([k]) => !k.startsWith('invoices:'))
+      );
     } catch {
       return {};
     }
@@ -620,7 +638,12 @@ export const AppProvider: React.FC<{
   const capClientTombstones = (raw: DeletedTombstoneMap | undefined | null): DeletedTombstoneMap => {
     if (!raw || typeof raw !== 'object') return {};
     const entries = Object.entries(raw).filter(
-      ([k, v]) => typeof k === 'string' && k.includes(':') && typeof v === 'string' && v.length >= 10
+      ([k, v]) =>
+        typeof k === 'string' &&
+        k.includes(':') &&
+        !k.startsWith('invoices:') &&
+        typeof v === 'string' &&
+        v.length >= 10
     );
     if (entries.length <= 500) return Object.fromEntries(entries);
     entries.sort((a, b) => b[1].localeCompare(a[1]));
@@ -628,12 +651,13 @@ export const AppProvider: React.FC<{
   };
 
   const recordDeletedTombstones = (entries: Array<[string, string]>) => {
-    if (entries.length === 0) return;
+    const filteredEntries = entries.filter(([collection, id]) => collection !== 'invoices' && Boolean(id));
+    if (filteredEntries.length === 0) return;
     const nowIso = new Date().toISOString();
     setDeletedIds((prev) => {
       const next = { ...prev };
-      for (const [collection, id] of entries) {
-        if (id) next[`${collection}:${id}`] = nowIso;
+      for (const [collection, id] of filteredEntries) {
+        next[`${collection}:${id}`] = nowIso;
       }
       return capClientTombstones(next);
     });
@@ -662,24 +686,38 @@ export const AppProvider: React.FC<{
 
   const normalizeRemoteSnapshot = (
     remote: Partial<ReturnType<typeof buildCurrentSnapshot>> | null | undefined
-  ): ReturnType<typeof buildCurrentSnapshot> => ({
-    customers: Array.isArray(remote?.customers) ? remote.customers : [],
-    properties: Array.isArray(remote?.properties) ? remote.properties : [],
-    appointments: Array.isArray(remote?.appointments) ? remote.appointments : [],
-    workRecords: Array.isArray(remote?.workRecords) ? remote.workRecords : [],
-    invoices: Array.isArray(remote?.invoices) ? remote.invoices : [],
-    inquiries: Array.isArray(remote?.inquiries) ? remote.inquiries : [],
-    offers: Array.isArray(remote?.offers) ? remote.offers : [],
-    orders: Array.isArray(remote?.orders) ? remote.orders : [],
-    equipments: Array.isArray(remote?.equipments) ? remote.equipments : [],
-    materials: Array.isArray(remote?.materials) ? remote.materials : [],
-    expenses: Array.isArray(remote?.expenses) ? remote.expenses : [],
-    taxSettings:
-      remote?.taxSettings && typeof remote.taxSettings === 'object'
-        ? { ...defaultTaxSettings, ...remote.taxSettings }
-        : { ...defaultTaxSettings },
-    deletedIds: capClientTombstones(remote?.deletedIds)
-  });
+  ): ReturnType<typeof buildCurrentSnapshot> => {
+    const mergedDel = capClientTombstones({
+      ...deletedIds,
+      ...(remote?.deletedIds || {})
+    });
+    const filterNotDeleted = <T extends { id: string }>(
+      arr: T[] | undefined,
+      collection: string
+    ): T[] =>
+      Array.isArray(arr)
+        ? arr.filter((item) => item && item.id && !mergedDel[`${collection}:${item.id}`])
+        : [];
+
+    return {
+      customers: filterNotDeleted(remote?.customers, 'customers'),
+      properties: filterNotDeleted(remote?.properties, 'properties'),
+      appointments: filterNotDeleted(remote?.appointments, 'appointments'),
+      workRecords: filterNotDeleted(remote?.workRecords, 'workRecords'),
+      invoices: filterNotDeleted(remote?.invoices, 'invoices'),
+      inquiries: filterNotDeleted(remote?.inquiries, 'inquiries'),
+      offers: filterNotDeleted(remote?.offers, 'offers'),
+      orders: filterNotDeleted(remote?.orders, 'orders'),
+      equipments: filterNotDeleted(remote?.equipments, 'equipments'),
+      materials: filterNotDeleted(remote?.materials, 'materials'),
+      expenses: filterNotDeleted(remote?.expenses, 'expenses'),
+      taxSettings:
+        remote?.taxSettings && typeof remote.taxSettings === 'object'
+          ? { ...defaultTaxSettings, ...remote.taxSettings }
+          : { ...defaultTaxSettings },
+      deletedIds: mergedDel
+    };
+  };
 
   const lastNativeSavedJsonRef = useRef<string>('');
   const nativeHydratedRef = useRef<boolean>(!isNativeAndroidApp());
@@ -1335,8 +1373,22 @@ export const AppProvider: React.FC<{
     };
   }, [syncCalendarNow]);
 
-  // Automatische Konsistenzprüfung zwischen Rechnungen und Arbeitsaufzeichnungen (Offene Stunden)
+  // Automatische Konsistenzprüfung zwischen Rechnungen, Stornobelegen und Arbeitsaufzeichnungen (Offene Stunden)
   useEffect(() => {
+    // 1. Falls eine Originalrechnung entfernt wurde, die eine Stornorechnung verursacht hat -> Stornorechnung ebenfalls endgültig entfernen
+    const origIds = new Set(invoices.filter((inv) => !inv.is_storno).map((inv) => inv.id));
+    const hasOrphanedStorno = invoices.some(
+      (inv) => inv.is_storno && (!inv.storno_reference_id || !origIds.has(inv.storno_reference_id))
+    );
+    if (hasOrphanedStorno) {
+      setInvoices((prev) =>
+        prev.filter(
+          (inv) => !inv.is_storno || (inv.storno_reference_id && origIds.has(inv.storno_reference_id))
+        )
+      );
+      return;
+    }
+
     const activeInvoices = invoices.filter((inv) => !inv.is_storno && inv.status !== 'cancelled');
     const activeInvoiceById = new Map(activeInvoices.map((inv) => [inv.id, inv]));
 
@@ -2324,9 +2376,7 @@ export const AppProvider: React.FC<{
       sent_via: null
     };
 
-    if (replaceIds.length > 0) {
-      recordDeletedTombstones(replaceIds.map((id) => ['invoices', id]));
-    }
+    // Zusammengefasste alte Rechnungen werden direkt ersetzt (nirgends als gelöscht vermerken)
 
     // Betreffende Arbeitsaufzeichnungen als abgerechnet markieren und dem Rechnungsempfänger-Konto zuordnen
     const boundSet = new Set(allBoundRecordIds);
@@ -2404,15 +2454,12 @@ export const AppProvider: React.FC<{
               : 'unpaid';
       }
 
-      // Wenn eine stornierte Rechnung wieder in den Offen-/Bezahlt-Status versetzt wird, verknüpfte Stornobelege entfernen
+      // Wenn eine stornierte Rechnung wieder in den Offen-/Bezahlt-Status versetzt wird, verknüpfte Stornobelege endgültig entfernen
       if (existing.status === 'cancelled' && nextStatus !== 'cancelled') {
         for (const inv of invoices) {
           if (inv.is_storno && inv.storno_reference_id === invoiceId) {
             linkedStornoIdsToDelete.push(inv.id);
           }
-        }
-        if (linkedStornoIdsToDelete.length > 0) {
-          recordDeletedTombstones(linkedStornoIdsToDelete.map(sid => ['invoices', sid]));
         }
       }
 
@@ -2518,14 +2565,10 @@ export const AppProvider: React.FC<{
 
     const snapshotInvoices = [...invoices];
     const snapshotWorkRecords = [...workRecords];
-    const prevDeletedIds = { ...deletedIds };
 
     const linkedStornos = invoices.filter(
       i => i.is_storno && i.storno_reference_id === invoiceId
     );
-    if (linkedStornos.length > 0) {
-      recordDeletedTombstones(linkedStornos.map(s => ['invoices', s.id]));
-    }
     const stornoIds = new Set(linkedStornos.map(s => s.id));
 
     // Gebundene Arbeiten der Rechnung wieder aktiv an die Rechnung binden (falls sie zuvor storniert war)
@@ -2583,7 +2626,6 @@ export const AppProvider: React.FC<{
       onUndo: () => {
         setInvoices(snapshotInvoices);
         setWorkRecords(snapshotWorkRecords);
-        setDeletedIds(prevDeletedIds);
       }
     });
   };
@@ -2592,22 +2634,23 @@ export const AppProvider: React.FC<{
     const target = invoices.find(i => i.id === invoiceId);
     if (!target) return;
 
-    const snapshotInvoices = [...invoices];
-    const snapshotWorkRecords = [...workRecords];
-    const prevDeletedIds = { ...deletedIds };
-
-    if (selectedInvoiceId === invoiceId) {
-      setSelectedInvoiceId(null);
-    }
-
     if (target.is_storno) {
-      recordDeletedTombstones([['invoices', invoiceId]]);
-      // Wenn ein Stornobeleg gelöscht wird: Ursprüngliche Rechnung reaktivieren, falls vorhanden
+      // Wenn ein Stornobeleg selbst gelöscht wird: Ursprüngliche Rechnung reaktivieren, falls vorhanden
       const origId = target.storno_reference_id;
       const otherStornoExists =
         origId !== null &&
         invoices.some(i => i.id !== invoiceId && i.is_storno && i.storno_reference_id === origId);
       const origInvoice = origId ? invoices.find(i => i.id === origId) : undefined;
+
+      if (selectedInvoiceId === invoiceId) {
+        setSelectedInvoiceId(null);
+      }
+      if (sendingInvoiceId === invoiceId) {
+        setSendingInvoiceId(null);
+      }
+      setReturnStack(prev =>
+        prev.map(entry => (entry.invoiceId === invoiceId ? { ...entry, invoiceId: null } : entry))
+      );
 
       setInvoices(prev =>
         prev
@@ -2624,6 +2667,7 @@ export const AppProvider: React.FC<{
               return {
                 ...i,
                 status: restoredStatus,
+                storno_reason: null,
                 open_refund_amount: 0
               };
             }
@@ -2641,19 +2685,42 @@ export const AppProvider: React.FC<{
         );
       }
     } else {
-      // Reguläre Rechnung löschen -> Auch etwaige zugehörige Stornobelege bereinigen und alle gebundenen Arbeiten in den Offenstatus versetzen
+      // Originalrechnung wird entfernt -> Zugehörige Stornorechnungen ebenfalls endgültig löschen,
+      // gebundene Arbeiten in den Offenstatus versetzen und gelöschte Rechnungen nirgends vermerken oder speichern.
       const linkedStornos = invoices.filter(
-        i => i.is_storno && i.storno_reference_id === invoiceId
+        i =>
+          i.is_storno &&
+          (i.storno_reference_id === invoiceId ||
+            (target.invoice_number && i.storno_reason?.includes(target.invoice_number)))
       );
       const deleteIds = new Set([invoiceId, ...linkedStornos.map(s => s.id)]);
-      recordDeletedTombstones(Array.from(deleteIds).map(id => ['invoices', id]));
+
+      if (selectedInvoiceId && deleteIds.has(selectedInvoiceId)) {
+        setSelectedInvoiceId(null);
+      }
+      if (sendingInvoiceId && deleteIds.has(sendingInvoiceId)) {
+        setSendingInvoiceId(null);
+      }
+      setReturnStack(prev =>
+        prev.map(entry =>
+          entry.invoiceId && deleteIds.has(entry.invoiceId)
+            ? { ...entry, invoiceId: null }
+            : entry
+        )
+      );
 
       const boundWorkIds = new Set(target.work_record_ids);
 
       setInvoices(prev =>
         prev
           .filter(i => !deleteIds.has(i.id))
-          .map(i => (i.storno_reference_id === invoiceId ? { ...i, storno_reference_id: null } : i))
+          .map(i => {
+            const nextMerged = i.merged_invoice_ids?.filter(mid => !deleteIds.has(mid));
+            return {
+              ...i,
+              merged_invoice_ids: nextMerged && nextMerged.length > 0 ? nextMerged : undefined
+            };
+          })
       );
 
       setWorkRecords(prev =>
@@ -2665,19 +2732,6 @@ export const AppProvider: React.FC<{
         )
       );
     }
-
-    setUndoToast({
-      visible: true,
-      message: target.is_storno
-        ? `${target.invoice_number} gelöscht`
-        : `${target.invoice_number} gelöscht · Arbeiten wieder offen`,
-      actionLabel: 'Rückgängig',
-      onUndo: () => {
-        setInvoices(snapshotInvoices);
-        setWorkRecords(snapshotWorkRecords);
-        setDeletedIds(prevDeletedIds);
-      }
-    });
   };
 
   // Pay invoice immediately with instant undo protection (REQ-018, ILL-007, CONS-10)

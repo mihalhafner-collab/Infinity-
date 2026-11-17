@@ -29,6 +29,8 @@ import {
   Download,
   FileText,
   RotateCcw,
+  Clock,
+  ChevronRight,
   X
 } from 'lucide-react';
 import { Invoice, PaymentItem } from '../../types/index.ts';
@@ -75,17 +77,21 @@ export const AbrechnungView: React.FC = () => {
   } = useApp();
 
   const [mainTab, setMainTab] = useState<'rechnungen' | 'guv'>('rechnungen');
+  const [allInvoicesViewOpen, setAllInvoicesViewOpen] = useState(false);
+  const [invoiceListFilter, setInvoiceListFilter] = useState<'all' | 'open' | 'paid' | 'storno'>('all');
+  const [expandedBottomList, setExpandedBottomList] = useState<'unpaid' | 'open_work' | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = 0;
     }
-  }, [mainTab, selectedInvoiceId]);
+  }, [mainTab, selectedInvoiceId, allInvoicesViewOpen, invoiceListFilter]);
 
   useEffect(() => {
     if (activeModal === 'OPEN_GUV_TAB') {
       setSelectedInvoiceId(null);
+      setAllInvoicesViewOpen(false);
       setMainTab('guv');
       setActiveModal(null);
     }
@@ -124,6 +130,10 @@ export const AbrechnungView: React.FC = () => {
   const [editPayAmountStr, setEditPayAmountStr] = useState('');
   const [editPayNote, setEditPayNote] = useState('');
 
+  usePixelBackLayer(
+    allInvoicesViewOpen && !selectedInvoiceId,
+    () => setAllInvoicesViewOpen(false)
+  );
   usePixelBackLayer(mainTab === 'guv' && !selectedInvoiceId, () => setMainTab('rechnungen'));
   usePixelBackLayer(refundModalOpen, () => setRefundModalOpen(false));
   usePixelBackLayer(partialPayModalOpen, () => setPartialPayModalOpen(false));
@@ -161,8 +171,14 @@ export const AbrechnungView: React.FC = () => {
     })
     .filter((g) => g.records.length > 0);
 
-  // Kennzahlen live aus aktiven Rechnungen berechnet
+  const totalOpenWorkHours =
+    Math.round(groupedOpenWork.reduce((s, g) => s + g.totalHours, 0) * 100) / 100;
+  const totalOpenWorkAmount =
+    Math.round(groupedOpenWork.reduce((s, g) => s + g.totalAmount, 0) * 100) / 100;
+
+  // Kennzahlen live aus aktiven (nicht gelöschten / nicht stornierten) Rechnungen berechnet
   const activeInvoices = invoices.filter((i) => !i.is_storno && i.status !== 'cancelled');
+  const stornoInvoicesList = invoices.filter((i) => i.is_storno || i.status === 'cancelled');
   const issuedTotal = activeInvoices.reduce((s, i) => s + i.total_amount, 0);
   const paidTotal = activeInvoices.reduce(
     (s, i) => s + i.payments.reduce((ps, p) => ps + p.amount, 0),
@@ -170,9 +186,19 @@ export const AbrechnungView: React.FC = () => {
   );
   const openTotal = Math.max(0, issuedTotal - paidTotal);
 
-  const openPaymentInvoices = invoices.filter(
-    (i) => !i.is_storno && (i.status === 'unpaid' || i.status === 'partially_paid')
+  const openPaymentInvoices = activeInvoices.filter(
+    (i) => i.status === 'unpaid' || i.status === 'partially_paid'
   );
+  const paidInvoicesList = activeInvoices.filter((i) => i.status === 'paid');
+
+  const displayedOverviewInvoices =
+    invoiceListFilter === 'open'
+      ? openPaymentInvoices
+      : invoiceListFilter === 'paid'
+        ? paidInvoicesList
+        : invoiceListFilter === 'storno'
+          ? stornoInvoicesList
+          : invoices;
 
   const selectedInvoice = invoices.find((i) => i.id === selectedInvoiceId);
 
@@ -271,15 +297,33 @@ export const AbrechnungView: React.FC = () => {
   return (
     <div className="flex-1 min-h-0 flex flex-col h-full bg-[#F8F9FA] overflow-hidden relative">
       <Header
-        title={selectedInvoice ? `Beleg ${selectedInvoice.invoice_number}` : 'Abrechnung'}
+        title={
+          selectedInvoice
+            ? `Beleg ${selectedInvoice.invoice_number}`
+            : allInvoicesViewOpen
+              ? 'Alle erstellten Rechnungen'
+              : 'Abrechnung'
+        }
         subtitle={
           selectedInvoice
             ? selectedInvoice.billing_customer_name
-            : mainTab === 'guv'
-              ? 'Gewinn & Verlust'
-              : 'Rechnungsübersicht'
+            : allInvoicesViewOpen
+              ? `${activeInvoices.length} Belege · ${issuedTotal.toLocaleString('de-DE', {
+                  minimumFractionDigits: 2,
+                  maximumFractionDigits: 2
+                })} € verrechnet`
+              : mainTab === 'guv'
+                ? 'Gewinn & Verlust'
+                : 'Rechnungsübersicht'
         }
-        showBack={!!selectedInvoice}
+        showBack={Boolean(selectedInvoice || allInvoicesViewOpen)}
+        onBack={
+          selectedInvoice
+            ? () => setSelectedInvoiceId(null)
+            : allInvoicesViewOpen
+              ? () => setAllInvoicesViewOpen(false)
+              : undefined
+        }
       />
 
       <UndoToast />
@@ -678,75 +722,403 @@ export const AbrechnungView: React.FC = () => {
             >
               <GuvPanel />
             </div>
+          ) : allInvoicesViewOpen ? (
+            /* EIGENE ÜBERSICHT: ALLE ERSTELLTEN RECHNUNGEN (Gelöschte Rechnungen werden nicht mehr angezeigt) */
+            <div
+              ref={scrollRef}
+              className="flex-1 min-h-0 overflow-y-auto p-3.5 flex flex-col gap-3 overscroll-contain"
+            >
+              {/* Kompakte Kennzahlen oben */}
+              <div className="grid grid-cols-3 gap-2 shrink-0">
+                <div className="py-2.5 px-2 bg-white border border-slate-200 rounded-2xl shadow-2xs text-center">
+                  <span className="text-[10px] font-bold text-slate-500 uppercase tracking-tight block">
+                    Verrechnet gesamt
+                  </span>
+                  <span className="text-sm font-bold text-[#3138A0] block mt-0.5 font-mono tabular-nums">
+                    {issuedTotal.toLocaleString('de-DE', {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2
+                    })}{' '}
+                    €
+                  </span>
+                </div>
+
+                <div className="py-2.5 px-2 bg-white border border-slate-200 rounded-2xl shadow-2xs text-center">
+                  <span className="text-[10px] font-bold text-slate-500 uppercase tracking-tight block">
+                    Bezahlt
+                  </span>
+                  <span className="text-sm font-bold text-[#2C7738] block mt-0.5 font-mono tabular-nums">
+                    {paidTotal.toLocaleString('de-DE', {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2
+                    })}{' '}
+                    €
+                  </span>
+                </div>
+
+                <div className="py-2.5 px-2 bg-white border border-slate-200 rounded-2xl shadow-2xs text-center">
+                  <span className="text-[10px] font-bold text-slate-500 uppercase tracking-tight block">
+                    Offen (Unbezahlt)
+                  </span>
+                  <span className="text-sm font-bold text-[#B4470B] block mt-0.5 font-mono tabular-nums">
+                    {openTotal.toLocaleString('de-DE', {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2
+                    })}{' '}
+                    €
+                  </span>
+                </div>
+              </div>
+
+              {displayedOverviewInvoices.length === 0 ? (
+                <div className="p-7 bg-white border border-slate-200 rounded-2xl text-center space-y-2 shadow-2xs">
+                  <div className="w-11 h-11 rounded-full bg-indigo-50 text-[#3138A0] flex items-center justify-center mx-auto">
+                    <Receipt size={20} />
+                  </div>
+                  <p className="text-xs font-bold text-slate-900">
+                    {invoices.length === 0
+                      ? 'Noch keine erstellten Rechnungen vorhanden'
+                      : 'Keine Rechnungen in diesem Filter'}
+                  </p>
+                  {invoices.length > 0 && invoiceListFilter !== 'all' && (
+                    <button
+                      type="button"
+                      onClick={() => setInvoiceListFilter('all')}
+                      className="text-xs font-bold text-[#3138A0] hover:underline"
+                    >
+                      Alle anzeigen ({invoices.length})
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <div className="space-y-2.5">
+                  {displayedOverviewInvoices.map((inv) => {
+                    const custNo =
+                      inv.customer_number ||
+                      customers.find((c) => c.id === inv.customer_id)?.customer_number;
+                    const paid = inv.payments.reduce((s, p) => s + p.amount, 0);
+                    const openRest = Math.max(0, inv.total_amount - paid);
+                    const isStornoOrCancelled = inv.is_storno || inv.status === 'cancelled';
+                    const referencedOrigInv = inv.storno_reference_id
+                      ? invoices.find((i) => i.id === inv.storno_reference_id)
+                      : undefined;
+
+                    return (
+                      <SwipeToDeleteRow
+                        key={inv.id}
+                        onDelete={() => deleteInvoice(inv.id)}
+                        deleteLabel="Rechnung löschen"
+                      >
+                        <div
+                          onClick={() => setSelectedInvoiceId(inv.id)}
+                          className={`p-3 bg-white hover:bg-slate-50 border rounded-2xl shadow-2xs cursor-pointer transition-colors space-y-2 ${
+                            inv.is_storno
+                              ? 'border-red-200/90 bg-red-50/15'
+                              : inv.status === 'cancelled'
+                                ? 'border-slate-200 bg-slate-50/50'
+                                : 'border-slate-200'
+                          }`}
+                        >
+                          {/* Zeile 1: Voller Kundenname links + Betrag & Status rechts */}
+                          <div className="flex items-start justify-between gap-2.5">
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="font-bold text-slate-950 text-sm leading-snug break-words">
+                                  {inv.billing_customer_name}
+                                </span>
+                                {inv.is_storno && (
+                                  <span className="px-1.5 py-0.5 bg-red-100 text-[#B42318] text-[10px] font-bold rounded shrink-0">
+                                    Stornobeleg
+                                  </span>
+                                )}
+                                {!inv.is_storno && inv.status === 'cancelled' && (
+                                  <span className="px-1.5 py-0.5 bg-slate-200 text-slate-700 text-[10px] font-bold rounded shrink-0">
+                                    Storniert
+                                  </span>
+                                )}
+                              </div>
+                              <div className="flex items-center gap-1.5 text-xs text-slate-500 mt-0.5 flex-wrap">
+                                {custNo && (
+                                  <span className="font-mono font-bold text-[#3138A0]">
+                                    #{custNo}
+                                  </span>
+                                )}
+                                {custNo && <span>·</span>}
+                                <span className="font-mono font-semibold text-slate-700">
+                                  {inv.invoice_number}
+                                </span>
+                                {referencedOrigInv && (
+                                  <span className="text-[11px] text-[#B42318] font-medium">
+                                    (zu {referencedOrigInv.invoice_number})
+                                  </span>
+                                )}
+                                <span>·</span>
+                                <span>{formatDateDE(inv.issue_date)}</span>
+                                {inv.is_pauschal && !inv.is_storno && (
+                                  <span className="text-[#B4470B] font-semibold">· Pauschal</span>
+                                )}
+                              </div>
+                            </div>
+
+                            <div className="text-right shrink-0">
+                              <span
+                                className={`font-bold text-sm block leading-tight tabular-nums whitespace-nowrap ${
+                                  inv.is_storno
+                                    ? 'text-[#B42318]'
+                                    : inv.status === 'cancelled'
+                                      ? 'text-slate-400 line-through'
+                                      : 'text-slate-950'
+                                }`}
+                              >
+                                {(inv.total_amount ?? 0).toLocaleString('de-DE', {
+                                  minimumFractionDigits: 2,
+                                  maximumFractionDigits: 2
+                                })}{' '}
+                                €
+                              </span>
+                              <span
+                                className={`text-[11px] font-bold ${
+                                  inv.is_storno
+                                    ? 'text-[#B42318]'
+                                    : inv.status === 'cancelled'
+                                      ? 'text-slate-500'
+                                      : inv.status === 'paid'
+                                        ? 'text-[#2C7738]'
+                                        : 'text-[#B4470B]'
+                                }`}
+                              >
+                                {inv.is_storno
+                                  ? 'Storno'
+                                  : inv.status === 'cancelled'
+                                    ? 'Storniert'
+                                    : inv.status === 'paid'
+                                      ? 'Bezahlt'
+                                      : inv.status === 'partially_paid'
+                                        ? `Teilbezahlt (${openRest.toFixed(2)} € offen)`
+                                        : 'Offen'}
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Zeile 2: Schnellaktionen (In Offenstatus versetzen, Versenden, Bearbeiten, Löschen) */}
+                          <div
+                            onClick={(e) => e.stopPropagation()}
+                            className="pt-1.5 border-t border-slate-100 flex items-center justify-between gap-1.5"
+                          >
+                            <div className="flex items-center gap-1.5">
+                              {inv.is_storno ? (
+                                <button
+                                  type="button"
+                                  onClick={() => resetInvoiceToOpen(inv.id)}
+                                  className="h-8 px-2.5 rounded-xl bg-amber-50 border border-amber-200 hover:bg-amber-100 flex items-center gap-1 text-[#B4470B] text-[11px] font-bold transition-colors"
+                                  title="Storno aufheben und Originalrechnung wieder öffnen"
+                                >
+                                  <RotateCcw size={13} />
+                                  <span>Storno aufheben</span>
+                                </button>
+                              ) : inv.status !== 'unpaid' ? (
+                                <button
+                                  type="button"
+                                  onClick={() => resetInvoiceToOpen(inv.id)}
+                                  className="h-8 px-2.5 rounded-xl bg-amber-50 border border-amber-200 hover:bg-amber-100 flex items-center gap-1 text-[#B4470B] text-[11px] font-bold transition-colors"
+                                  title="Rechnung in den Offenstatus versetzen (Unbezahlt)"
+                                >
+                                  <RotateCcw size={13} />
+                                  <span>In Offenstatus</span>
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => handlePayFull(inv)}
+                                  className="h-8 px-2.5 rounded-xl bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 flex items-center gap-1 text-[#2C7738] text-[11px] font-bold transition-colors"
+                                  title="Als bezahlt markieren"
+                                >
+                                  <CheckCircle size={13} />
+                                  <span>Als bezahlt</span>
+                                </button>
+                              )}
+                            </div>
+
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => setSendingInvoiceId(inv.id)}
+                                className="w-8 h-8 rounded-xl bg-slate-50 border border-slate-200 hover:bg-indigo-50 flex items-center justify-center text-[#3138A0] transition-colors"
+                                title="Rechnung versenden"
+                                aria-label="Rechnung versenden"
+                              >
+                                <Share2 size={14} />
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => openEditInvoiceModal(inv)}
+                                className="w-8 h-8 rounded-xl bg-slate-50 border border-slate-200 hover:bg-slate-100 flex items-center justify-center text-[#3138A0] transition-colors"
+                                title="Buchung bearbeiten"
+                                aria-label="Buchung bearbeiten"
+                              >
+                                <Pencil size={14} />
+                              </button>
+
+                              {!isStornoOrCancelled && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setSelectedInvoiceId(inv.id);
+                                    setStornoModalOpen(true);
+                                  }}
+                                  className="w-8 h-8 rounded-xl bg-amber-50 border border-amber-200 hover:bg-amber-100 flex items-center justify-center text-[#B4470B] transition-colors"
+                                  title="Rechnung stornieren (Stornobeleg erzeugen)"
+                                  aria-label="Rechnung stornieren"
+                                >
+                                  <Ban size={14} />
+                                </button>
+                              )}
+
+                              <button
+                                type="button"
+                                onClick={() => deleteInvoice(inv.id)}
+                                className="w-8 h-8 rounded-xl bg-red-50 border border-red-200/80 hover:bg-red-100 flex items-center justify-center text-[#B42318] transition-colors"
+                                title={
+                                  inv.is_storno
+                                    ? 'Stornobeleg löschen'
+                                    : 'Rechnung endgültig löschen (inkl. eventuellem Storno, Arbeiten wieder offen)'
+                                }
+                                aria-label="Rechnung löschen"
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      </SwipeToDeleteRow>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           ) : (
             <div
               ref={scrollRef}
               className="flex-1 min-h-0 overflow-y-auto p-3.5 flex flex-col gap-3 overscroll-contain"
             >
-              {/* OBEN: Reine Übersichten (Kennzahlen, Unbezahlte Rechnungen, Alle Rechnungen) */}
-              <div className="space-y-3">
-                <div className="grid grid-cols-3 gap-2">
-                  <div className="py-2.5 px-2 bg-white border border-slate-200 rounded-2xl shadow-2xs text-center">
-                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-tight block">
-                      Verrechnet gesamt
-                    </span>
-                    <span className="text-sm font-bold text-[#3138A0] block mt-0.5 font-mono tabular-nums">
+              {/* OBEN: Kennzahlen-Übersicht (Verrechnet gesamt, Bezahlt, Offen) */}
+              <div className="grid grid-cols-3 gap-2 shrink-0">
+                <div className="py-2.5 px-2 bg-white border border-slate-200 rounded-2xl shadow-2xs text-center">
+                  <span className="text-[10px] font-bold text-slate-500 uppercase tracking-tight block">
+                    Verrechnet gesamt
+                  </span>
+                  <span className="text-sm font-bold text-[#3138A0] block mt-0.5 font-mono tabular-nums">
+                    {issuedTotal.toLocaleString('de-DE', {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2
+                    })}{' '}
+                    €
+                  </span>
+                </div>
+
+                <div className="py-2.5 px-2 bg-white border border-slate-200 rounded-2xl shadow-2xs text-center">
+                  <span className="text-[10px] font-bold text-slate-500 uppercase tracking-tight block">
+                    Bezahlt
+                  </span>
+                  <span className="text-sm font-bold text-[#2C7738] block mt-0.5 font-mono tabular-nums">
+                    {paidTotal.toLocaleString('de-DE', {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2
+                    })}{' '}
+                    €
+                  </span>
+                </div>
+
+                <div className="py-2.5 px-2 bg-white border border-slate-200 rounded-2xl shadow-2xs text-center">
+                  <span className="text-[10px] font-bold text-slate-500 uppercase tracking-tight block">
+                    Offen (Unbezahlt)
+                  </span>
+                  <span className="text-sm font-bold text-[#B4470B] block mt-0.5 font-mono tabular-nums">
+                    {openTotal.toLocaleString('de-DE', {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2
+                    })}{' '}
+                    €
+                  </span>
+                </div>
+              </div>
+
+              {/* UNTEN PLATZIERT & NACH OBEN AUFKLAPPBAR: Alle Listen einklappbar & scrollbar in Daumenreichweite */}
+              <div className="mt-auto pt-2 space-y-2.5 shrink-0">
+                {/* 1. Eigene Übersicht öffnen: Alle erstellten Rechnungen */}
+                <button
+                  type="button"
+                  onClick={() => setAllInvoicesViewOpen(true)}
+                  className="w-full min-h-[56px] px-3.5 py-2.5 bg-white border border-slate-200/95 hover:border-[#3138A0] active:bg-slate-50 rounded-2xl shadow-2xs flex items-center justify-between gap-2.5 text-left transition-all"
+                >
+                  <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                    <div className="w-9 h-9 rounded-xl border bg-indigo-50 text-[#3138A0] border-indigo-100 flex items-center justify-center shrink-0">
+                      <Receipt size={17} />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <span className="text-xs font-bold text-slate-950 leading-snug block truncate">
+                        Alle erstellten Rechnungen
+                      </span>
+                      <span className="text-[11px] text-slate-500 leading-tight mt-0.5 block truncate">
+                        {invoices.length} {invoices.length === 1 ? 'Beleg' : 'Belege'}
+                        {stornoInvoicesList.length > 0 ? ` (${stornoInvoicesList.length} Storno)` : ''} · Tippen für eigene Übersicht
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className="text-sm font-bold text-[#3138A0] tabular-nums">
                       {issuedTotal.toLocaleString('de-DE', {
                         minimumFractionDigits: 2,
                         maximumFractionDigits: 2
                       })}{' '}
                       €
                     </span>
+                    <div className="w-7 h-7 rounded-lg bg-indigo-50 text-[#3138A0] flex items-center justify-center">
+                      <ChevronRight size={16} />
+                    </div>
                   </div>
+                </button>
 
-                  <div className="py-2.5 px-2 bg-white border border-slate-200 rounded-2xl shadow-2xs text-center">
-                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-tight block">
-                      Bezahlt
-                    </span>
-                    <span className="text-sm font-bold text-[#2C7738] block mt-0.5 font-mono tabular-nums">
-                      {paidTotal.toLocaleString('de-DE', {
-                        minimumFractionDigits: 2,
-                        maximumFractionDigits: 2
-                      })}{' '}
-                      €
-                    </span>
-                  </div>
-
-                  <div className="py-2.5 px-2 bg-white border border-slate-200 rounded-2xl shadow-2xs text-center">
-                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-tight block">
-                      Offen (Unbezahlt)
-                    </span>
-                    <span className="text-sm font-bold text-[#B4470B] block mt-0.5 font-mono tabular-nums">
-                      {openTotal.toLocaleString('de-DE', {
-                        minimumFractionDigits: 2,
-                        maximumFractionDigits: 2
-                      })}{' '}
-                      €
-                    </span>
-                  </div>
-                </div>
-
-                {/* Unbezahlte Rechnungen */}
-                <div className="bg-white border border-slate-200 rounded-2xl shadow-2xs px-3.5 py-3 space-y-2.5">
-                  <div className="flex items-center justify-between">
-                    <h3 className="text-sm font-bold text-slate-950">
-                      Unbezahlte Rechnungen
-                    </h3>
+                {/* 2. Unbezahlte Rechnungen (unten platziert, nach oben aufklappbar & scrollbar) */}
+                <CollapsibleCard
+                  title="Unbezahlte Rechnungen"
+                  subtitle={
+                    openPaymentInvoices.length === 0
+                      ? 'Alle Rechnungen bezahlt'
+                      : `${openPaymentInvoices.length} offen zur Zahlung`
+                  }
+                  icon={<CreditCard size={17} />}
+                  iconBgClassName="bg-fuchsia-50 text-[#9A1B8D] border-fuchsia-100"
+                  headerRight={
                     <span
-                      className={`text-xs font-bold px-2.5 py-0.5 rounded-lg ${
+                      className={`text-xs font-bold px-2 py-0.5 rounded-lg tabular-nums ${
                         openPaymentInvoices.length > 0
                           ? 'bg-fuchsia-50 text-[#9A1B8D]'
                           : 'bg-emerald-50 text-[#2C7738]'
                       }`}
                     >
                       {openPaymentInvoices.length === 0
-                        ? 'Alle bezahlt'
-                        : `${openPaymentInvoices.length} offen`}
+                        ? '0,00 €'
+                        : `${openTotal.toLocaleString('de-DE', {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2
+                          })} €`}
                     </span>
-                  </div>
-
-                  {openPaymentInvoices.length > 0 && (
-                    <div className="space-y-2">
+                  }
+                  open={expandedBottomList === 'unpaid'}
+                  onToggle={() =>
+                    setExpandedBottomList((prev) => (prev === 'unpaid' ? null : 'unpaid'))
+                  }
+                  expandDirection="up"
+                >
+                  {openPaymentInvoices.length === 0 ? (
+                    <p className="text-xs text-slate-500">
+                      Aktuell sind keine unbezahlten Rechnungen offen.
+                    </p>
+                  ) : (
+                    <div className="max-h-[260px] overflow-y-auto overscroll-contain space-y-2 pr-0.5">
                       {openPaymentInvoices.map((inv) => {
                         const paid = inv.payments.reduce((s, p) => s + p.amount, 0);
                         const openRest = Math.max(0, inv.total_amount - paid);
@@ -761,13 +1133,13 @@ export const AbrechnungView: React.FC = () => {
                           >
                             <div
                               onClick={() => setSelectedInvoiceId(inv.id)}
-                              className="p-3 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between gap-2 cursor-pointer hover:border-[#3138A0] transition-colors"
+                              className="p-2.5 bg-white border border-slate-200 rounded-xl flex items-center justify-between gap-2 cursor-pointer hover:border-[#3138A0] transition-colors"
                             >
                               <div className="min-w-0 flex-1">
-                                <span className="font-bold text-slate-950 block text-sm leading-snug truncate">
+                                <span className="font-bold text-slate-950 block text-xs leading-snug truncate">
                                   {inv.billing_customer_name}
                                 </span>
-                                <div className="flex items-center gap-1.5 text-xs text-slate-600 mt-0.5 truncate">
+                                <div className="flex items-center gap-1.5 text-[11px] text-slate-600 mt-0.5 truncate">
                                   {custNo && (
                                     <span className="font-mono font-bold text-[#3138A0]">
                                       #{custNo}
@@ -785,7 +1157,7 @@ export const AbrechnungView: React.FC = () => {
                               </div>
 
                               <div className="flex items-center gap-1.5 shrink-0">
-                                <span className="font-bold text-sm text-[#B4470B] tabular-nums whitespace-nowrap pr-0.5">
+                                <span className="font-bold text-xs text-[#B4470B] tabular-nums whitespace-nowrap pr-0.5">
                                   {openRest.toLocaleString('de-DE', {
                                     minimumFractionDigits: 2,
                                     maximumFractionDigits: 2
@@ -798,7 +1170,7 @@ export const AbrechnungView: React.FC = () => {
                                     e.stopPropagation();
                                     setSendingInvoiceId(inv.id);
                                   }}
-                                  className="w-8 h-8 rounded-xl bg-white border border-slate-200 hover:bg-indigo-50 flex items-center justify-center text-[#3138A0] transition-colors"
+                                  className="w-8 h-8 rounded-xl bg-slate-50 border border-slate-200 hover:bg-indigo-50 flex items-center justify-center text-[#3138A0] transition-colors"
                                   title="Rechnung versenden"
                                   aria-label="Rechnung versenden"
                                 >
@@ -823,176 +1195,25 @@ export const AbrechnungView: React.FC = () => {
                       })}
                     </div>
                   )}
-                </div>
+                </CollapsibleCard>
 
-                {/* Alle Rechnungen */}
-                <div className="bg-white border border-slate-200 rounded-2xl shadow-2xs px-3.5 py-3 space-y-2.5">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <span className="text-sm font-bold text-slate-950 block">
-                        Alle erstellten Rechnungen
-                      </span>
-                      <span className="text-[11px] text-slate-500">
-                        Verrechnete Gesamtsumme:{' '}
-                        <strong className="text-[#3138A0] tabular-nums">
-                          {issuedTotal.toLocaleString('de-DE', {
-                            minimumFractionDigits: 2,
-                            maximumFractionDigits: 2
-                          })}{' '}
-                          €
-                        </strong>
-                      </span>
-                    </div>
-                    <span className="text-xs font-semibold text-slate-500">{invoices.length} Belege</span>
-                  </div>
-
-                  {invoices.length === 0 ? (
-                    <p className="text-sm text-slate-500 italic">
-                      Noch keine Rechnungen erstellt.
-                    </p>
-                  ) : (
-                    <div className="space-y-2">
-                      {invoices.map((inv) => {
-                        const custNo =
-                          inv.customer_number ||
-                          customers.find((c) => c.id === inv.customer_id)?.customer_number;
-                        return (
-                          <SwipeToDeleteRow
-                            key={inv.id}
-                            onDelete={() => deleteInvoice(inv.id)}
-                            deleteLabel="Rechnung löschen"
-                          >
-                            <div
-                              onClick={() => setSelectedInvoiceId(inv.id)}
-                              className="p-3 bg-slate-50/80 hover:bg-slate-100 border border-slate-200/90 rounded-xl flex items-center justify-between gap-2 cursor-pointer transition-colors text-xs"
-                            >
-                              <div className="min-w-0 flex-1">
-                                <span className="font-bold text-slate-950 text-sm block truncate leading-snug">
-                                  {inv.billing_customer_name}
-                                </span>
-                                <div className="flex items-center gap-1.5 text-xs text-slate-500 mt-0.5 truncate">
-                                  {custNo && (
-                                    <span className="font-mono font-bold text-[#3138A0]">
-                                      #{custNo}
-                                    </span>
-                                  )}
-                                  {custNo && <span>·</span>}
-                                  <span className="font-mono">{inv.invoice_number}</span>
-                                  <span>·</span>
-                                  <span>{formatDateDE(inv.issue_date)}</span>
-                                  {inv.is_pauschal && (
-                                    <span className="text-[#B4470B] font-semibold">· Pauschal</span>
-                                  )}
-                                  {inv.is_storno && (
-                                    <span className="text-[#B42318] font-semibold">· Storno</span>
-                                  )}
-                                </div>
-                              </div>
-
-                              <div className="flex items-center gap-1 shrink-0">
-                                <div className="text-right pr-1">
-                                  <span
-                                    className={`font-bold text-sm block leading-tight tabular-nums whitespace-nowrap ${
-                                      inv.is_storno ? 'text-[#B42318]' : 'text-slate-950'
-                                    }`}
-                                  >
-                                    {(inv.total_amount ?? 0).toLocaleString('de-DE', {
-                                      minimumFractionDigits: 2,
-                                      maximumFractionDigits: 2
-                                    })}{' '}
-                                    €
-                                  </span>
-                                  <span
-                                    className={`text-[11px] font-bold ${
-                                      inv.status === 'paid'
-                                        ? 'text-[#2C7738]'
-                                        : inv.status === 'cancelled'
-                                          ? 'text-slate-400'
-                                          : 'text-[#B4470B]'
-                                    }`}
-                                  >
-                                    {inv.status === 'paid'
-                                      ? 'Bezahlt'
-                                      : inv.status === 'cancelled'
-                                        ? 'Storniert'
-                                        : inv.status === 'partially_paid'
-                                          ? 'Teilbezahlt'
-                                          : 'Offen'}
-                                  </span>
-                                </div>
-
-                                {!inv.is_storno && inv.status !== 'unpaid' && (
-                                  <button
-                                    type="button"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      resetInvoiceToOpen(inv.id);
-                                    }}
-                                    className="h-8 px-2 rounded-xl bg-amber-50 border border-amber-200 hover:bg-amber-100 flex items-center gap-1 text-[#B4470B] text-[10px] font-bold transition-colors shrink-0"
-                                    title="Rechnung in den Offenstatus versetzen (Unbezahlt)"
-                                  >
-                                    <RotateCcw size={12} />
-                                    <span>Offen</span>
-                                  </button>
-                                )}
-
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setSendingInvoiceId(inv.id);
-                                  }}
-                                  className="w-8 h-8 rounded-xl bg-white border border-slate-200 hover:bg-indigo-50 flex items-center justify-center text-[#3138A0] transition-colors shrink-0"
-                                  title="Rechnung versenden"
-                                  aria-label="Rechnung versenden"
-                                >
-                                  <Share2 size={14} />
-                                </button>
-
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    openEditInvoiceModal(inv);
-                                  }}
-                                  className="w-8 h-8 rounded-xl bg-white border border-slate-200 hover:bg-slate-100 flex items-center justify-center text-[#3138A0] transition-colors shrink-0"
-                                  title="Buchung bearbeiten"
-                                  aria-label="Buchung bearbeiten"
-                                >
-                                  <Pencil size={14} />
-                                </button>
-
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    deleteInvoice(inv.id);
-                                  }}
-                                  className="w-8 h-8 rounded-xl bg-red-50 border border-red-200/80 hover:bg-red-100 flex items-center justify-center text-[#B42318] transition-colors shrink-0"
-                                  title="Rechnung löschen (Arbeiten wieder in Offene Stunden versetzen)"
-                                  aria-label="Rechnung löschen"
-                                >
-                                  <Trash2 size={14} />
-                                </button>
-                              </div>
-                            </div>
-                          </SwipeToDeleteRow>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* UNTERER BEREICH: Aktions- & Abrechnungsbereich direkt in Daumenreichweite */}
-              <div className="mt-auto pt-1">
-                <div className="bg-white border border-slate-200 rounded-2xl shadow-2xs px-3.5 py-3 space-y-2.5">
-                  <div className="flex items-center justify-between gap-2">
-                    <h3 className="text-sm font-bold text-slate-950">
-                      Arbeiten ohne Rechnung
-                    </h3>
+                {/* 3. Arbeiten ohne Rechnung (unten platziert, nach oben aufklappbar & scrollbar) */}
+                <CollapsibleCard
+                  title="Arbeiten ohne Rechnung"
+                  subtitle={
+                    groupedOpenWork.length === 0
+                      ? 'Keine offenen Arbeitsstunden'
+                      : `${groupedOpenWork.length} ${
+                          groupedOpenWork.length === 1 ? 'Kunde' : 'Kunden'
+                        } · ${totalOpenWorkHours.toLocaleString('de-DE', {
+                          maximumFractionDigits: 2
+                        })} Std.`
+                  }
+                  icon={<Clock size={17} />}
+                  iconBgClassName="bg-orange-50 text-[#B4470B] border-orange-100"
+                  headerRight={
                     <span
-                      className={`text-xs font-bold px-2.5 py-0.5 rounded-lg ${
+                      className={`text-xs font-bold px-2 py-0.5 rounded-lg tabular-nums ${
                         groupedOpenWork.length > 0
                           ? 'bg-orange-50 text-[#B4470B]'
                           : 'bg-slate-100 text-slate-600'
@@ -1000,12 +1221,26 @@ export const AbrechnungView: React.FC = () => {
                     >
                       {groupedOpenWork.length === 0
                         ? 'Keine'
-                        : `${groupedOpenWork.length} ${groupedOpenWork.length === 1 ? 'Kunde' : 'Kunden'}`}
+                        : `${totalOpenWorkAmount.toLocaleString('de-DE', {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2
+                          })} €`}
                     </span>
-                  </div>
-
-                  {groupedOpenWork.length > 0 && (
-                    <div className="max-h-72 overflow-y-auto overscroll-contain space-y-2 pr-0.5">
+                  }
+                  open={expandedBottomList === 'open_work'}
+                  onToggle={() =>
+                    setExpandedBottomList((prev) =>
+                      prev === 'open_work' ? null : 'open_work'
+                    )
+                  }
+                  expandDirection="up"
+                >
+                  {groupedOpenWork.length === 0 ? (
+                    <p className="text-xs text-slate-500">
+                      Alle erfassten Arbeitsstunden wurden bereits abgerechnet.
+                    </p>
+                  ) : (
+                    <div className="max-h-[260px] overflow-y-auto overscroll-contain space-y-2 pr-0.5">
                       {groupedOpenWork.map((g) => (
                         <div
                           key={g.customer.id}
@@ -1013,13 +1248,13 @@ export const AbrechnungView: React.FC = () => {
                             setSelectedCustomerId(g.customer.id);
                             setActiveModal('RECHNUNG_VORBEREITEN');
                           }}
-                          className="p-3 bg-slate-50 hover:bg-slate-100/80 border border-slate-200 rounded-xl flex items-center justify-between gap-3 cursor-pointer transition-colors"
+                          className="p-2.5 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between gap-2.5 cursor-pointer transition-colors"
                         >
                           <div className="min-w-0 flex-1">
-                            <span className="font-bold text-slate-950 block text-sm leading-snug truncate">
+                            <span className="font-bold text-slate-950 block text-xs leading-snug truncate">
                               {g.customer.name}
                             </span>
-                            <div className="flex items-center gap-1.5 text-xs text-slate-600 mt-0.5 truncate">
+                            <div className="flex items-center gap-1.5 text-[11px] text-slate-600 mt-0.5 truncate">
                               {g.customer.customer_number && (
                                 <span className="font-bold font-mono text-[#3138A0]">
                                   #{g.customer.customer_number}
@@ -1035,16 +1270,16 @@ export const AbrechnungView: React.FC = () => {
                               </span>
                             </div>
                             {g.subCustomerNames.length > 0 && (
-                              <span className="text-[11px] text-[#3138A0] font-medium block truncate mt-0.5">
+                              <span className="text-[10px] text-[#3138A0] font-medium block truncate mt-0.5">
                                 Sub: {g.subCustomerNames.join(', ')}
                               </span>
                             )}
                           </div>
 
-                          <div className="flex items-center gap-2.5 shrink-0">
-                            <span className="font-bold text-sm text-[#B4470B] tabular-nums whitespace-nowrap">
+                          <div className="flex items-center gap-2 shrink-0">
+                            <span className="font-bold text-xs text-[#B4470B] tabular-nums whitespace-nowrap">
                               {g.totalAmount.toLocaleString('de-DE', {
-                                minimumFractionDigits: 0,
+                                minimumFractionDigits: 2,
                                 maximumFractionDigits: 2
                               })}{' '}
                               €
@@ -1056,7 +1291,7 @@ export const AbrechnungView: React.FC = () => {
                                 setSelectedCustomerId(g.customer.id);
                                 setActiveModal('RECHNUNG_VORBEREITEN');
                               }}
-                              className="px-3.5 h-9 bg-[#3138A0] hover:bg-[#272d82] active:scale-95 text-white text-xs font-bold rounded-xl shadow-2xs transition-all flex items-center justify-center"
+                              className="px-3 h-8 bg-[#3138A0] hover:bg-[#272d82] active:scale-95 text-white text-[11px] font-bold rounded-xl shadow-2xs transition-all flex items-center justify-center"
                             >
                               Abrechnen
                             </button>
@@ -1065,7 +1300,7 @@ export const AbrechnungView: React.FC = () => {
                       ))}
                     </div>
                   )}
-                </div>
+                </CollapsibleCard>
               </div>
             </div>
           )}
@@ -1810,6 +2045,36 @@ export const AbrechnungView: React.FC = () => {
               </button>
             </div>
           </div>
+        ) : allInvoicesViewOpen ? (
+          <>
+            {/* Schnellfilter in der unteren Daumenzone für die eigene Übersicht aller erstellten Rechnungen */}
+            <BottomActionBar>
+              <div className="w-full grid grid-cols-4 gap-1 p-1 bg-slate-100 rounded-2xl">
+                {(
+                  [
+                    { id: 'all', label: `Alle (${invoices.length})` },
+                    { id: 'open', label: `Offen (${openPaymentInvoices.length})` },
+                    { id: 'paid', label: `Bezahlt (${paidInvoicesList.length})` },
+                    { id: 'storno', label: `Storno (${stornoInvoicesList.length})` }
+                  ] as const
+                ).map((flt) => (
+                  <button
+                    key={flt.id}
+                    type="button"
+                    onClick={() => setInvoiceListFilter(flt.id)}
+                    className={`py-2 px-1 text-[11px] font-bold rounded-xl transition-all truncate ${
+                      invoiceListFilter === flt.id
+                        ? 'bg-white text-[#3138A0] shadow-xs'
+                        : 'text-slate-600 hover:text-slate-950'
+                    }`}
+                  >
+                    {flt.label}
+                  </button>
+                ))}
+              </div>
+            </BottomActionBar>
+            <BottomNav />
+          </>
         ) : (
           <>
             {/* Schlanke untere Bedienzeile */}

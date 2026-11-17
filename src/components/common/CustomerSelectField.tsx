@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Check, ChevronDown, ChevronUp, Search, User, UserX, X } from 'lucide-react';
 import { Customer } from '../../types/index.ts';
 import { usePixelBackLayer } from '../../context/AppContext.tsx';
@@ -39,6 +39,9 @@ export const CustomerSelectField: React.FC<CustomerSelectFieldProps> = ({
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
+  const listScrollRef = useRef<HTMLDivElement | null>(null);
 
   usePixelBackLayer(isOpen, () => {
     setIsOpen(false);
@@ -76,6 +79,25 @@ export const CustomerSelectField: React.FC<CustomerSelectFieldProps> = ({
     });
   }, [sortedCustomers, searchQuery, referenceCustomerList]);
 
+  useEffect(() => {
+    if (!isOpen) return;
+    const timer = window.setTimeout(() => {
+      if (listScrollRef.current) {
+        listScrollRef.current.scrollTop = listScrollRef.current.scrollHeight;
+      }
+      containerRef.current?.scrollIntoView({
+        block: 'center',
+        behavior: 'smooth'
+      });
+    }, 80);
+    return () => window.clearTimeout(timer);
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen || !listScrollRef.current) return;
+    listScrollRef.current.scrollTop = listScrollRef.current.scrollHeight;
+  }, [searchQuery, isOpen]);
+
   const formatCustomerMeta = (c: Customer): string => {
     const cNum = c.customer_number?.trim() || resolveCustomerNumber(c.id, referenceCustomerList);
     const locationParts = [c.city?.trim(), c.street?.trim()].filter(Boolean);
@@ -97,7 +119,136 @@ export const CustomerSelectField: React.FC<CustomerSelectFieldProps> = ({
   };
 
   return (
-    <div className="relative">
+    <div ref={containerRef} className="relative">
+      {/* Nach oben aufklappende Kundenliste: Treffer liegen ÜBER dem Suchfeld (nicht von Tastatur verdeckt) */}
+      {isOpen && (
+        <div className="mb-1.5 bg-white border border-[#3138A0]/30 rounded-2xl shadow-lg overflow-hidden z-30 animate-fade-in flex flex-col">
+          <div
+            ref={listScrollRef}
+            className="max-h-52 overflow-y-auto flex flex-col overscroll-contain"
+          >
+            <div className="mt-auto divide-y divide-slate-100">
+              {allowEmpty && !searchQuery.trim() && (
+                <button
+                  type="button"
+                  onClick={() => handleSelect('')}
+                  className={`w-full px-3 py-2.5 text-left flex items-center justify-between gap-2.5 transition-colors ${
+                    value === '' ? 'bg-indigo-50/80' : 'hover:bg-slate-50'
+                  }`}
+                >
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div className="w-8 h-8 rounded-xl bg-slate-100 text-slate-500 flex items-center justify-center shrink-0">
+                      <UserX size={15} />
+                    </div>
+                    <span
+                      className={`text-xs truncate ${
+                        value === '' ? 'font-bold text-[#3138A0]' : 'font-semibold text-slate-600'
+                      }`}
+                    >
+                      {emptyLabel}
+                    </span>
+                  </div>
+                  {value === '' && <Check size={16} className="text-[#3138A0] shrink-0" />}
+                </button>
+              )}
+
+              {filteredCustomers.length === 0 ? (
+                <div className="px-3 py-4 text-center text-xs text-slate-400">
+                  Kein passender Kunde für „{searchQuery}“ gefunden.
+                </div>
+              ) : (
+                filteredCustomers.map((c) => {
+                  const isSelected = c.id === value;
+                  return (
+                    <button
+                      key={c.id}
+                      type="button"
+                      onClick={() => handleSelect(c.id)}
+                      className={`w-full px-3 py-2.5 text-left flex items-center justify-between gap-2.5 transition-colors ${
+                        isSelected ? 'bg-indigo-50/90' : 'hover:bg-slate-50 active:bg-slate-100'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                        {c.photo ? (
+                          <img
+                            src={c.photo}
+                            alt={c.name}
+                            className="w-9 h-9 rounded-xl object-cover border border-slate-200 shrink-0"
+                          />
+                        ) : (
+                          <div
+                            className={`w-9 h-9 rounded-xl font-bold text-xs flex items-center justify-center shrink-0 ${
+                              isSelected
+                                ? 'bg-[#3138A0] text-white'
+                                : 'bg-indigo-100/80 text-[#3138A0]'
+                            }`}
+                          >
+                            {getInitials(c.name)}
+                          </div>
+                        )}
+
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-1.5">
+                            <span
+                              className={`text-[13px] truncate ${
+                                isSelected ? 'font-bold text-[#3138A0]' : 'font-bold text-slate-900'
+                              }`}
+                            >
+                              {c.name}
+                            </span>
+                          </div>
+                          <div className="text-[11px] text-slate-500 font-medium truncate mt-0.5">
+                            {formatCustomerMeta(c)}
+                          </div>
+                        </div>
+                      </div>
+
+                      {isSelected && <Check size={16} className="text-[#3138A0] shrink-0" />}
+                    </button>
+                  );
+                })
+              )}
+            </div>
+          </div>
+
+          {customers.length > 3 && (
+            <div className="p-2 border-t border-slate-100 bg-slate-50/90">
+              <div className="relative flex items-center">
+                <Search size={14} className="absolute left-3 text-slate-400 pointer-events-none" />
+                <input
+                  ref={searchInputRef}
+                  type="text"
+                  value={searchQuery}
+                  onFocus={() => {
+                    window.setTimeout(() => {
+                      searchInputRef.current?.scrollIntoView({
+                        block: 'center',
+                        behavior: 'smooth'
+                      });
+                    }, 150);
+                  }}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Name, Ort, Straße oder #Nr. suchen…"
+                  className="w-full h-9 pl-8 pr-8 bg-white border border-slate-200 rounded-xl text-xs text-slate-900 outline-hidden focus:border-[#3138A0]"
+                />
+                {searchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSearchQuery('');
+                      searchInputRef.current?.focus();
+                    }}
+                    className="absolute right-2 w-6 h-6 flex items-center justify-center text-slate-400 hover:text-slate-600"
+                  >
+                    <X size={13} />
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Auswahl-Trigger */}
       <button
         type="button"
@@ -171,121 +322,9 @@ export const CustomerSelectField: React.FC<CustomerSelectFieldProps> = ({
 
         <div className="flex items-center gap-1 text-xs font-semibold text-[#3138A0] shrink-0 pl-1">
           <span className="text-[11px]">{isOpen ? 'Schließen' : 'Wählen'}</span>
-          {isOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+          {isOpen ? <ChevronDown size={16} /> : <ChevronUp size={16} />}
         </div>
       </button>
-
-      {/* Aufklappbare Kundenliste */}
-      {isOpen && (
-        <div className="mt-1.5 bg-white border border-slate-200 rounded-2xl shadow-lg overflow-hidden z-30 animate-fade-in">
-          {customers.length > 3 && (
-            <div className="p-2 border-b border-slate-100 bg-slate-50/70">
-              <div className="relative flex items-center">
-                <Search size={14} className="absolute left-3 text-slate-400 pointer-events-none" />
-                <input
-                  type="text"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Name, Ort, Straße oder #Nr. suchen…"
-                  className="w-full h-9 pl-8 pr-8 bg-white border border-slate-200 rounded-xl text-xs text-slate-900 outline-hidden focus:border-[#3138A0]"
-                />
-                {searchQuery && (
-                  <button
-                    type="button"
-                    onClick={() => setSearchQuery('')}
-                    className="absolute right-2 w-6 h-6 flex items-center justify-center text-slate-400 hover:text-slate-600"
-                  >
-                    <X size={13} />
-                  </button>
-                )}
-              </div>
-            </div>
-          )}
-
-          <div className="max-h-60 overflow-y-auto divide-y divide-slate-100 overscroll-contain">
-            {allowEmpty && !searchQuery.trim() && (
-              <button
-                type="button"
-                onClick={() => handleSelect('')}
-                className={`w-full px-3 py-2.5 text-left flex items-center justify-between gap-2.5 transition-colors ${
-                  value === '' ? 'bg-indigo-50/80' : 'hover:bg-slate-50'
-                }`}
-              >
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <div className="w-8 h-8 rounded-xl bg-slate-100 text-slate-500 flex items-center justify-center shrink-0">
-                    <UserX size={15} />
-                  </div>
-                  <span
-                    className={`text-xs truncate ${
-                      value === '' ? 'font-bold text-[#3138A0]' : 'font-semibold text-slate-600'
-                    }`}
-                  >
-                    {emptyLabel}
-                  </span>
-                </div>
-                {value === '' && <Check size={16} className="text-[#3138A0] shrink-0" />}
-              </button>
-            )}
-
-            {filteredCustomers.length === 0 ? (
-              <div className="px-3 py-4 text-center text-xs text-slate-400">
-                Kein passender Kunde für „{searchQuery}“ gefunden.
-              </div>
-            ) : (
-              filteredCustomers.map((c) => {
-                const isSelected = c.id === value;
-                return (
-                  <button
-                    key={c.id}
-                    type="button"
-                    onClick={() => handleSelect(c.id)}
-                    className={`w-full px-3 py-2.5 text-left flex items-center justify-between gap-2.5 transition-colors ${
-                      isSelected ? 'bg-indigo-50/90' : 'hover:bg-slate-50 active:bg-slate-100'
-                    }`}
-                  >
-                    <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                      {c.photo ? (
-                        <img
-                          src={c.photo}
-                          alt={c.name}
-                          className="w-9 h-9 rounded-xl object-cover border border-slate-200 shrink-0"
-                        />
-                      ) : (
-                        <div
-                          className={`w-9 h-9 rounded-xl font-bold text-xs flex items-center justify-center shrink-0 ${
-                            isSelected
-                              ? 'bg-[#3138A0] text-white'
-                              : 'bg-indigo-100/80 text-[#3138A0]'
-                          }`}
-                        >
-                          {getInitials(c.name)}
-                        </div>
-                      )}
-
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-1.5">
-                          <span
-                            className={`text-[13px] truncate ${
-                              isSelected ? 'font-bold text-[#3138A0]' : 'font-bold text-slate-900'
-                            }`}
-                          >
-                            {c.name}
-                          </span>
-                        </div>
-                        <div className="text-[11px] text-slate-500 font-medium truncate mt-0.5">
-                          {formatCustomerMeta(c)}
-                        </div>
-                      </div>
-                    </div>
-
-                    {isSelected && <Check size={16} className="text-[#3138A0] shrink-0" />}
-                  </button>
-                );
-              })
-            )}
-          </div>
-        </div>
-      )}
     </div>
   );
 };
