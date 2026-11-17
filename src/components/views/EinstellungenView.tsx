@@ -50,8 +50,14 @@ import {
   ShieldCheck,
   Smartphone,
   Sliders,
-  HardDrive
+  HardDrive,
+  KeyRound
 } from 'lucide-react';
+import {
+  getStoredDeviceApiKey,
+  hasFixedApiKey,
+  setFixedApiKey
+} from '../../services/gemini.ts';
 
 export const EinstellungenView: React.FC = () => {
   const { appSyncStatus } = useApp();
@@ -113,6 +119,17 @@ export const EinstellungenView: React.FC = () => {
   const [paymentTarget, setPaymentTarget] = useState('14 Tage ohne Abzug');
   const [numberPrefix, setNumberPrefix] = useState('RE');
   const [storageCleaned, setStorageCleaned] = useState(false);
+
+  const [fixedKeyInput, setFixedKeyInput] = useState(() => getStoredDeviceApiKey());
+  const [fixedKeyActive, setFixedKeyActive] = useState(() => hasFixedApiKey());
+  const [fixedKeySavedBanner, setFixedKeySavedBanner] = useState(false);
+
+  const handleSaveFixedApiKey = () => {
+    setFixedApiKey(fixedKeyInput);
+    setFixedKeyActive(hasFixedApiKey());
+    setFixedKeySavedBanner(true);
+    setTimeout(() => setFixedKeySavedBanner(false), 3000);
+  };
 
   const handleTogglePixelTunnelEnabled = () => {
     if (!isNativeAndroid) return;
@@ -263,12 +280,63 @@ export const EinstellungenView: React.FC = () => {
         {/* GRUPPE 3: Verbindungen & Pixel-Tunnel */}
         <CollapsibleCard
           title="Verbindungen & Pixel-Tunnel"
-          subtitle="ChatGPT Pixel-Tunnel, Gmail, Kalender & Wetter"
+          subtitle="Fester API-Key, ChatGPT Pixel-Tunnel, Gmail, Kalender & Wetter"
           icon={<Smartphone size={16} />}
           iconBgClassName="bg-indigo-50 text-[#3138A0] border-indigo-100"
           open={verbindungenOpen}
           onToggle={() => setVerbindungenOpen(!verbindungenOpen)}
         >
+          {/* Fester API-Key (dauerhaft im lokalen Gerätespeicher auf dem Pixel 10 Pro) */}
+          <div className="p-3 bg-white border border-slate-200 rounded-xl space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 min-w-0">
+                <KeyRound size={16} className="text-[#3138A0] shrink-0" />
+                <div className="min-w-0">
+                  <span className="font-bold text-slate-900 block text-xs">
+                    Fester API-Key (Gerätespeicher)
+                  </span>
+                  <span className="text-[10px] text-slate-500 block">
+                    Einmalig eingeben · bleibt bei APK-Updates erhalten (Fallback: Build-Secret)
+                  </span>
+                </div>
+              </div>
+              <span
+                className={`text-[10px] font-bold px-2 py-0.5 rounded-md shrink-0 ${
+                  fixedKeyActive
+                    ? 'text-[#2C7738] bg-emerald-50'
+                    : 'text-slate-600 bg-slate-100'
+                }`}
+              >
+                {fixedKeyActive ? 'Hinterlegt' : 'Nicht gesetzt'}
+              </span>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <input
+                type="password"
+                value={fixedKeyInput}
+                onChange={(e) => setFixedKeyInput(e.target.value)}
+                placeholder="Fester API-Key (optional, falls nicht als Secret gesetzt)"
+                autoComplete="off"
+                className="flex-1 h-9 px-3 bg-slate-50 border border-slate-200 rounded-lg text-xs font-mono text-slate-900"
+              />
+              <button
+                type="button"
+                onClick={handleSaveFixedApiKey}
+                className="h-9 px-3 bg-[#3138A0] hover:bg-[#272d82] active:scale-98 text-white font-semibold rounded-lg text-[11px] shrink-0 transition-all"
+              >
+                Speichern
+              </button>
+            </div>
+
+            {fixedKeySavedBanner && (
+              <div className="text-[10px] font-semibold text-[#2C7738] flex items-center gap-1">
+                <CheckCircle size={12} />
+                <span>Fester API-Key lokal gespeichert.</span>
+              </div>
+            )}
+          </div>
+
           {/* Direkter privater OpenAI-Pixel-Tunnel */}
           {isNativeAndroid && (
             <div className="p-3 bg-white border border-indigo-200/90 rounded-xl space-y-2.5">

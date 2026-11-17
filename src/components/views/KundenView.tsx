@@ -35,6 +35,7 @@ import {
   Send,
   Clock,
   Trash2,
+  RotateCcw,
   Layers
 } from 'lucide-react';
 import { Customer } from '../../types/index.ts';
@@ -108,6 +109,7 @@ export const KundenView: React.FC = () => {
     deleteProperty,
     deleteAppointment,
     deleteWorkRecordsBatch,
+    resetInvoiceToOpen,
     deleteInvoice,
     setActiveModal,
     navigate,
@@ -692,6 +694,17 @@ export const KundenView: React.FC = () => {
   );
   const invoicedAmountSum =
     Math.round(activeCustomerInvoices.reduce((s, i) => s + i.total_amount, 0) * 100) / 100;
+  const paidCustomerAmountSum =
+    Math.round(
+      activeCustomerInvoices.reduce(
+        (s, i) => s + i.payments.reduce((ps, p) => ps + p.amount, 0),
+        0
+      ) * 100
+    ) / 100;
+  const unpaidCustomerInvoiceSum = Math.max(
+    0,
+    Math.round((invoicedAmountSum - paidCustomerAmountSum) * 100) / 100
+  );
   const sentCustomerInvoices = customerInvoices.filter((i) => Boolean(i.sent_at || i.sent_via));
 
   // Alle mit diesem Kundenkonto verknüpften Arbeitsaufzeichnungen (eigene Objekte, Sub-Kunden, Abrechnungszuordnung)
@@ -1384,17 +1397,17 @@ export const KundenView: React.FC = () => {
                   <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-tight block">
                     Offen
                   </span>
-                  <span className="text-sm font-bold text-[#B4470B] block mt-0.5 font-mono">
-                    {linkedOpenAmount.toFixed(0)} €
+                  <span className="text-sm font-bold text-[#B4470B] block mt-0.5 font-mono tabular-nums">
+                    {linkedOpenAmount.toFixed(2)} €
                   </span>
                 </div>
 
                 <div className="py-2 px-2.5 bg-white border border-slate-200 rounded-xl shadow-2xs text-center">
                   <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-tight block">
-                    Gesamtwert
+                    Verrechnet
                   </span>
-                  <span className="text-sm font-bold text-[#3138A0] block mt-0.5 font-mono">
-                    {linkedTotalAmount.toFixed(0)} €
+                  <span className="text-sm font-bold text-[#3138A0] block mt-0.5 font-mono tabular-nums">
+                    {invoicedAmountSum.toFixed(2)} €
                   </span>
                 </div>
               </div>
@@ -1901,6 +1914,23 @@ export const KundenView: React.FC = () => {
               )}
             </div>
 
+            {/* Verrechnete Gesamtsumme Karte */}
+            <div className="p-3.5 bg-white border border-slate-200 rounded-2xl shadow-2xs flex items-center justify-between gap-3">
+              <div>
+                <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
+                  Verrechnete Gesamtsumme ({activeCustomerInvoices.length})
+                </span>
+                <span className="text-xs text-slate-500 mt-0.5 block tabular-nums">
+                  Bezahlt: <strong className="text-[#2C7738]">{paidCustomerAmountSum.toFixed(2)} €</strong>
+                  {' · '}
+                  Rechnung offen: <strong className="text-[#B4470B]">{unpaidCustomerInvoiceSum.toFixed(2)} €</strong>
+                </span>
+              </div>
+              <span className="text-xl font-bold text-[#3138A0] tabular-nums shrink-0">
+                {invoicedAmountSum.toFixed(2)} €
+              </span>
+            </div>
+
             {/* Ausklappbar 1: Erstellte L.C.R. */}
             <CollapsibleCard
               title="Erstellte L.C.R."
@@ -2080,50 +2110,81 @@ export const KundenView: React.FC = () => {
               ) : (
                 <div className="space-y-2">
                   {sentCustomerInvoices.map((inv) => (
-                    <div
+                    <SwipeToDeleteRow
                       key={`sent-${inv.id}`}
-                      onClick={() => {
-                        setSelectedInvoiceId(inv.id);
-                        navigate('M04_ABRECHNUNG');
-                      }}
-                      className="p-2.5 bg-white border border-slate-200 rounded-xl flex items-center justify-between text-xs cursor-pointer hover:border-[#3138A0] transition-colors"
+                      onDelete={() => deleteInvoice(inv.id)}
+                      deleteLabel="Rechnung löschen"
                     >
-                      <div className="min-w-0 pr-2">
-                        <span className="font-bold text-slate-900 block truncate">
-                          {inv.invoice_number}
-                        </span>
-                        <span className="text-[10px] text-[#2C7738] font-medium block truncate">
-                          {inv.sent_at ? `Versendet am ${formatDateDE(inv.sent_at)}` : 'Versendet'}
-                          {inv.sent_via ? ` · ${inv.sent_via}` : ''}
-                        </span>
-                      </div>
-
-                      <div className="text-right flex items-center gap-2 shrink-0">
-                        <div>
-                          <span className="font-bold text-slate-900 block tabular-nums">
-                            {inv.total_amount.toFixed(2)} €
+                      <div
+                        onClick={() => {
+                          setSelectedInvoiceId(inv.id);
+                          navigate('M04_ABRECHNUNG');
+                        }}
+                        className="p-2.5 bg-white border border-slate-200 rounded-xl flex items-center justify-between text-xs cursor-pointer hover:border-[#3138A0] transition-colors"
+                      >
+                        <div className="min-w-0 pr-2">
+                          <span className="font-bold text-slate-900 block truncate">
+                            {inv.invoice_number}
                           </span>
-                          <span
-                            className={`text-[10px] font-semibold ${
-                              inv.status === 'paid'
-                                ? 'text-[#2C7738]'
-                                : inv.status === 'cancelled'
-                                  ? 'text-slate-400'
-                                  : 'text-[#B4470B]'
-                            }`}
-                          >
-                            {inv.status === 'paid'
-                              ? 'Bezahlt'
-                              : inv.status === 'cancelled'
-                                ? 'Storniert'
-                                : inv.status === 'partially_paid'
-                                  ? 'Teilbezahlt'
-                                  : 'Zahlung offen'}
+                          <span className="text-[10px] text-[#2C7738] font-medium block truncate">
+                            {inv.sent_at ? `Versendet am ${formatDateDE(inv.sent_at)}` : 'Versendet'}
+                            {inv.sent_via ? ` · ${inv.sent_via}` : ''}
                           </span>
                         </div>
-                        <ChevronRight size={14} className="text-slate-400" />
+
+                        <div className="text-right flex items-center gap-1.5 shrink-0">
+                          <div>
+                            <span className="font-bold text-slate-900 block tabular-nums">
+                              {inv.total_amount.toFixed(2)} €
+                            </span>
+                            <span
+                              className={`text-[10px] font-semibold ${
+                                inv.status === 'paid'
+                                  ? 'text-[#2C7738]'
+                                  : inv.status === 'cancelled'
+                                    ? 'text-slate-400'
+                                    : 'text-[#B4470B]'
+                              }`}
+                            >
+                              {inv.status === 'paid'
+                                ? 'Bezahlt'
+                                : inv.status === 'cancelled'
+                                  ? 'Storniert'
+                                  : inv.status === 'partially_paid'
+                                    ? 'Teilbezahlt'
+                                    : 'Offen'}
+                            </span>
+                          </div>
+                          {!inv.is_storno && inv.status !== 'unpaid' && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                resetInvoiceToOpen(inv.id);
+                              }}
+                              className="h-8 px-2 rounded-xl bg-amber-50 border border-amber-200 hover:bg-amber-100 flex items-center gap-1 text-[#B4470B] text-[10px] font-bold transition-colors shrink-0"
+                              title="Rechnung in den Offenstatus versetzen"
+                            >
+                              <RotateCcw size={12} />
+                              <span>Offen</span>
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              deleteInvoice(inv.id);
+                            }}
+                            className="w-8 h-8 rounded-xl bg-red-50 border border-red-200/80 hover:bg-red-100 flex items-center justify-center text-[#B42318] transition-colors shrink-0"
+                            title="Rechnung löschen (Arbeiten wieder offen)"
+                            aria-label="Rechnung löschen"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                          <ChevronRight size={14} className="text-slate-400" />
+                        </div>
                       </div>
-                    </div>
+                    </SwipeToDeleteRow>
                   ))}
                 </div>
               )}
@@ -2135,6 +2196,11 @@ export const KundenView: React.FC = () => {
               subtitle={`${customerInvoices.length} Belege · Tippen zum Öffnen`}
               icon={<Receipt size={16} />}
               iconBgClassName="bg-orange-50 text-[#B4470B] border-orange-100"
+              headerRight={
+                <span className="text-sm font-bold text-[#3138A0] tabular-nums">
+                  {invoicedAmountSum.toFixed(2)} €
+                </span>
+              }
               open={allInvoicesExpanded}
               onToggle={() => setAllInvoicesExpanded((p) => !p)}
             >
@@ -2146,7 +2212,7 @@ export const KundenView: React.FC = () => {
                     <SwipeToDeleteRow
                       key={inv.id}
                       onDelete={() => deleteInvoice(inv.id)}
-                      deleteLabel="Beleg löschen"
+                      deleteLabel="Rechnung löschen"
                     >
                       <div
                         onClick={() => {
@@ -2166,7 +2232,7 @@ export const KundenView: React.FC = () => {
                               : ''}
                           </span>
                         </div>
-                        <div className="text-right flex items-center gap-2">
+                        <div className="text-right flex items-center gap-1.5 shrink-0">
                           <div>
                             <span
                               className={`font-bold block tabular-nums ${
@@ -2190,9 +2256,23 @@ export const KundenView: React.FC = () => {
                                   ? 'Storniert'
                                   : inv.status === 'partially_paid'
                                     ? 'Teilbezahlt'
-                                    : 'Zahlung offen'}
+                                    : 'Offen'}
                             </span>
                           </div>
+                          {!inv.is_storno && inv.status !== 'unpaid' && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                resetInvoiceToOpen(inv.id);
+                              }}
+                              className="h-8 px-2 rounded-xl bg-amber-50 border border-amber-200 hover:bg-amber-100 flex items-center gap-1 text-[#B4470B] text-[10px] font-bold transition-colors shrink-0"
+                              title="Rechnung in den Offenstatus versetzen"
+                            >
+                              <RotateCcw size={12} />
+                              <span>Offen</span>
+                            </button>
+                          )}
                           <button
                             type="button"
                             onClick={(e) => {
@@ -2204,6 +2284,18 @@ export const KundenView: React.FC = () => {
                             aria-label="Rechnung versenden"
                           >
                             <Share2 size={14} />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              deleteInvoice(inv.id);
+                            }}
+                            className="w-8 h-8 rounded-xl bg-red-50 border border-red-200/80 hover:bg-red-100 flex items-center justify-center text-[#B42318] transition-colors shrink-0"
+                            title="Rechnung löschen (Arbeiten wieder in Offene Stunden versetzen)"
+                            aria-label="Rechnung löschen"
+                          >
+                            <Trash2 size={14} />
                           </button>
                           <ChevronRight size={14} className="text-slate-400" />
                         </div>

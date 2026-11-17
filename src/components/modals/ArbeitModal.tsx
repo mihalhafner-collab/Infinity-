@@ -344,7 +344,9 @@ export const ArbeitModal: React.FC = () => {
     addWorkRecord,
     updateWorkRecord,
     deleteWorkRecord,
+    deleteInvoice,
     workRecords,
+    invoices,
     customers,
     properties,
     orders,
@@ -851,10 +853,43 @@ export const ArbeitModal: React.FC = () => {
           </button>
         </div>
 
-        {isBilled && (
-          <div className="mt-2 p-2.5 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-800 flex items-center gap-2">
-            <Lock size={15} className="text-amber-700 shrink-0" />
-            <span>Dieser Datensatz gehört zu einer ausgestellten Rechnung. L.C.R.-Umschaltung ist gesperrt.</span>
+        {isBilled && existingRecord && (
+          <div className="mt-2 p-2.5 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 space-y-2">
+            <div className="flex items-center gap-2">
+              <Lock size={15} className="text-amber-700 shrink-0" />
+              <span>
+                Dieser Datensatz gehört zu Rechnung{' '}
+                <strong>
+                  {invoices.find((i) => i.id === existingRecord.settlement_id)?.invoice_number ||
+                    'Abgerechnet'}
+                </strong>
+                .
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  updateWorkRecord(existingRecord.id, { settlement_id: null, is_lcr: false });
+                }}
+                className="flex-1 py-1.5 px-2.5 bg-white hover:bg-amber-100 border border-amber-300 text-[#B4470B] font-bold rounded-lg text-[11px] transition-colors"
+              >
+                In Offenstatus versetzen
+              </button>
+              {existingRecord.settlement_id && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (existingRecord.settlement_id) {
+                      deleteInvoice(existingRecord.settlement_id);
+                    }
+                  }}
+                  className="flex-1 py-1.5 px-2.5 bg-red-50 hover:bg-red-100 border border-red-200 text-[#B42318] font-bold rounded-lg text-[11px] transition-colors"
+                >
+                  Rechnung löschen
+                </button>
+              )}
+            </div>
           </div>
         )}
 

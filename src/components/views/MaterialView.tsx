@@ -81,7 +81,7 @@ export const MaterialView: React.FC = () => {
                 <div className="flex items-center gap-2 shrink-0">
                   <div className="text-right">
                     <span className="text-[13px] font-bold text-[#B4470B] block tabular-nums">
-                      {m.price_per_unit !== null
+                      {m.price_per_unit != null
                         ? `${m.price_per_unit.toLocaleString('de-DE', {
                             minimumFractionDigits: 2,
                             maximumFractionDigits: 2

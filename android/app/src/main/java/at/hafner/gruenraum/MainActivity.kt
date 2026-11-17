@@ -95,9 +95,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private val staticLocalSaveListener: () -> Unit = {
-        if (::mcpSyncManager.isInitialized) {
-            mcpSyncManager.onLocalStateSaved()
-        }
+        // Lokale Speicherung bleibt ausschließlich auf dem Pixel 10 Pro (keine Web-App-Synchronisation)
     }
 
     private val pixelTunnelStatusListener: (JSONObject) -> Unit = { statusObj ->
@@ -466,43 +464,22 @@ class MainActivity : AppCompatActivity() {
         }
         onBackPressedDispatcher.addCallback(this, inAppBackCallback)
 
-        handleIncomingPairingIntent(intent)
         webView.loadUrl("https://appassets.androidplatform.net/")
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        handleIncomingPairingIntent(intent)
     }
 
     override fun onStart() {
         super.onStart()
-        if (::mcpSyncManager.isInitialized) {
-            mcpSyncManager.onAppForegrounded()
-        }
         resumePixelTunnelIfEnabled()
         dispatchPixelTunnelStatusToWeb(PixelTunnelService.status(this).toString())
     }
 
     override fun onStop() {
-        if (::mcpSyncManager.isInitialized) {
-            mcpSyncManager.onAppBackgrounded()
-        }
         super.onStop()
-    }
-
-    private fun handleIncomingPairingIntent(incoming: Intent?) {
-        val uri = incoming?.data ?: return
-        if (uri.scheme?.lowercase() == "hafnermcp" && uri.host?.lowercase() == "pair") {
-            val pairUrl = uri.getQueryParameter("url").orEmpty()
-            val pairCode = uri.getQueryParameter("code").orEmpty()
-            if (pairCode.isNotBlank()) {
-                mcpSyncManager.pairWithOneTimeCode(pairUrl, pairCode)
-            }
-            // Bereinige Einmal-Kopplungscode sofort aus dem Activity-Intent im Arbeitsspeicher
-            incoming.data = null
-        }
     }
 
     fun updateCanGoBackInApp(canGoBack: Boolean) {

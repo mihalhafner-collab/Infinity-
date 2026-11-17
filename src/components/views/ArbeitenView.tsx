@@ -347,7 +347,7 @@ export const ArbeitenView: React.FC = () => {
                       </span>
                     )}
 
-                    {rec.accounting_amount !== null ? (
+                    {rec.accounting_amount != null ? (
                       <span className="font-bold text-[13px] text-[#B4470B] tabular-nums">
                         {rec.accounting_amount.toLocaleString('de-DE', {
                           minimumFractionDigits: 2,
