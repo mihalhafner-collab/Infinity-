@@ -46,6 +46,15 @@ class SecureMcpCredentialStore(private val context: Context) {
     private val encryptedFile = File(context.noBackupFilesDir, "mcp_credentials_v1.enc")
 
     @Synchronized
+    fun clearCredentials() {
+        for (file in listOf(encryptedFile, File(context.noBackupFilesDir, "mcp_credentials_v1.enc.tmp"))) {
+            if (file.exists() && !file.delete()) {
+                throw IllegalStateException("Alte Cloud-Kopplungsdaten konnten nicht entfernt werden.")
+            }
+        }
+    }
+
+    @Synchronized
     fun loadCredentials(): McpCredentials {
         if (encryptedFile.exists() && encryptedFile.length() > IV_LENGTH_BYTES) {
             try {
