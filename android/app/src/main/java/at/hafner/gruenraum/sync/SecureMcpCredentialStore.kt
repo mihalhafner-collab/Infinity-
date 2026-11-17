@@ -16,7 +16,7 @@ data class McpCredentials(
     val baseUrl: String,
     val token: String,
     val adminToken: String = "",
-    val gmailSenderEmail: String = DEFAULT_GMAIL_SENDER,
+    val gmailSenderEmail: String = SecureMcpCredentialStore.DEFAULT_GMAIL_SENDER,
     val gmailAppPassword: String = "",
     val gmailOAuthToken: String = ""
 ) {
@@ -173,6 +173,19 @@ class SecureMcpCredentialStore(private val context: Context) {
     fun clearTokenKeepUrl(): McpCredentials {
         val current = loadCredentials()
         return saveCredentials(current.baseUrl, DEFAULT_PIXEL10_DEVICE_TOKEN, "")
+    }
+
+    @Synchronized
+    fun clearCredentials(): McpCredentials {
+        val current = loadCredentials()
+        return saveCredentials(
+            baseUrl = defaultBaseUrl(),
+            token = DEFAULT_PIXEL10_DEVICE_TOKEN,
+            adminToken = "",
+            gmailSenderEmail = current.gmailSenderEmail,
+            gmailAppPassword = current.gmailAppPassword,
+            gmailOAuthToken = current.gmailOAuthToken
+        )
     }
 
     private fun defaultBaseUrl(): String {
