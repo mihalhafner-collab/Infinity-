@@ -92,21 +92,21 @@ export const SucheModal: React.FC = () => {
   useEffect(() => {
     setSearchQuery('');
     setFilterType('all');
-    if (resultsScrollRef.current) {
-      resultsScrollRef.current.scrollTop = 0;
-    }
     if (isSearchOpen) {
       const t = setTimeout(() => {
+        if (resultsScrollRef.current) {
+          resultsScrollRef.current.scrollTop = resultsScrollRef.current.scrollHeight;
+        }
         inputRef.current?.focus();
       }, 40);
       return () => clearTimeout(t);
     }
   }, [isSearchOpen, currentScreen]);
 
-  // Bei Filter- oder Suchtextänderung Liste nach oben scrollen
+  // Bei Filter- oder Suchtextänderung Liste direkt über dem unteren Suchfeld positionieren
   useEffect(() => {
     if (resultsScrollRef.current) {
-      resultsScrollRef.current.scrollTop = 0;
+      resultsScrollRef.current.scrollTop = resultsScrollRef.current.scrollHeight;
     }
   }, [filterType, searchQuery]);
 
@@ -595,104 +595,23 @@ export const SucheModal: React.FC = () => {
 
   return (
     <div className="absolute inset-0 z-50 bg-[#F8F9FA] flex flex-col animate-fade-in">
-      {/* Search Header */}
-      <div className="p-3.5 bg-white border-b border-slate-200 flex items-center gap-2">
-        <div className="flex-1 h-12 bg-slate-100 rounded-2xl px-3.5 flex items-center gap-2.5 border border-slate-200 focus-within:bg-white focus-within:border-[#3138A0] focus-within:ring-2 focus-within:ring-indigo-100 transition-all">
-          <Search size={19} className="text-slate-500 shrink-0" />
-          <input
-            ref={inputRef}
-            type="search"
-            autoFocus
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Name, #Kd-Nr., Ort, Arbeit, Monat, Betrag…"
-            className="flex-1 bg-transparent border-none outline-hidden text-sm font-medium text-slate-950 placeholder:text-slate-400"
-          />
-          {searchQuery && (
-            <button
-              type="button"
-              onClick={() => {
-                setSearchQuery('');
-                inputRef.current?.focus();
-              }}
-              className="w-8 h-8 flex items-center justify-center text-slate-500 hover:text-slate-800 rounded-full"
-              aria-label="Suchtext löschen"
-            >
-              <X size={17} />
-            </button>
-          )}
-          <button
-            type="button"
-            onClick={handleStartSpeechRecognition}
-            className={`w-9 h-9 flex items-center justify-center rounded-xl transition-colors ${
-              isListening
-                ? 'text-[#B42318] bg-red-50 animate-pulse'
-                : 'text-slate-600 hover:text-[#3138A0]'
-            }`}
-            title="Spracheingabe (Pixel 10 Pro)"
-          >
-            <Mic size={19} />
-          </button>
-        </div>
-
-        <button
-          type="button"
-          onClick={resetAndCloseSearch}
-          className="px-3 h-12 flex items-center justify-center text-xs font-bold text-[#3138A0] hover:bg-indigo-50 rounded-xl active:scale-95 transition-all shrink-0"
-        >
-          Fertig
-        </button>
-      </div>
-
-      {/* Filter Chips */}
-      <div className="px-3.5 py-2.5 bg-white border-b border-slate-200 flex items-center gap-1.5 overflow-x-auto no-scrollbar shrink-0">
-        {(
-          [
-            { id: 'all', label: `Alle (${totalResults})` },
-            { id: 'customers', label: `Kunden (${matchingCustomers.length})` },
-            { id: 'appointments', label: `Termine (${matchingAppointments.length})` },
-            { id: 'work', label: `Arbeiten (${matchingWork.length})` },
-            {
-              id: 'invoices_orders',
-              label: `Belege & Aufträge (${totalInvoicesAndVorgaenge})`
-            },
-            {
-              id: 'equipment',
-              label: `Geräte & Material (${totalEquipmentAndMaterial})`
-            }
-          ] as const
-        ).map((tab) => (
-          <button
-            key={tab.id}
-            type="button"
-            onClick={() => setFilterType(tab.id)}
-            className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-colors ${
-              filterType === tab.id
-                ? 'bg-[#3138A0] text-white shadow-2xs'
-                : 'bg-slate-100 border border-slate-200/80 text-slate-700 hover:bg-slate-200/70'
-            }`}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
-
-      {/* Results Feed */}
+      {/* Results Feed oben: Treffer wachsen von unten nach oben über dem Suchfeld (wird nicht von Tastatur überdeckt) */}
       <div
         ref={resultsScrollRef}
-        className="flex-1 overflow-y-auto p-3.5 space-y-4 overscroll-contain"
+        className="flex-1 min-h-0 overflow-y-auto p-3.5 flex flex-col overscroll-contain"
       >
-        {totalResults === 0 && (
-          <div className="p-8 bg-white border border-slate-200 rounded-2xl text-center space-y-2 shadow-2xs">
-            <Search size={24} className="text-slate-400 mx-auto" />
-            <p className="text-sm font-bold text-slate-900">
-              Keine Treffer für „{searchQuery}“
-            </p>
-            <p className="text-xs text-slate-500">
-              Suche unterstützt Namen, Kundennummern (#), Orte, Monate, Beträge, Rechnungsnummern und Materialien.
-            </p>
-          </div>
-        )}
+        <div className="mt-auto space-y-4">
+          {totalResults === 0 && (
+            <div className="p-8 bg-white border border-slate-200 rounded-2xl text-center space-y-2 shadow-2xs">
+              <Search size={24} className="text-slate-400 mx-auto" />
+              <p className="text-sm font-bold text-slate-900">
+                Keine Treffer für „{searchQuery}“
+              </p>
+              <p className="text-xs text-slate-500">
+                Suche unterstützt Namen, Kundennummern (#), Orte, Monate, Beträge, Rechnungsnummern und Materialien.
+              </p>
+            </div>
+          )}
 
         {/* 1. Kunden Treffer */}
         {(filterType === 'all' || filterType === 'customers') &&
@@ -1121,6 +1040,92 @@ export const SucheModal: React.FC = () => {
               )}
             </div>
           )}
+        </div>
+      </div>
+
+      {/* Unterer Suchbereich (Filter-Chips + Suchfeld direkt über der Tastatur / Daumenzone) */}
+      <div className="shrink-0 bg-white border-t border-slate-200 shadow-lg">
+        {/* Filter Chips */}
+        <div className="px-3.5 py-2 border-b border-slate-100 flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+          {(
+            [
+              { id: 'all', label: `Alle (${totalResults})` },
+              { id: 'customers', label: `Kunden (${matchingCustomers.length})` },
+              { id: 'appointments', label: `Termine (${matchingAppointments.length})` },
+              { id: 'work', label: `Arbeiten (${matchingWork.length})` },
+              {
+                id: 'invoices_orders',
+                label: `Belege & Aufträge (${totalInvoicesAndVorgaenge})`
+              },
+              {
+                id: 'equipment',
+                label: `Geräte & Material (${totalEquipmentAndMaterial})`
+              }
+            ] as const
+          ).map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setFilterType(tab.id)}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-colors ${
+                filterType === tab.id
+                  ? 'bg-[#3138A0] text-white shadow-2xs'
+                  : 'bg-slate-100 border border-slate-200/80 text-slate-700 hover:bg-slate-200/70'
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Search Input Bar unten */}
+        <div className="p-3 flex items-center gap-2">
+          <div className="flex-1 h-12 bg-slate-100 rounded-2xl px-3.5 flex items-center gap-2.5 border border-slate-200 focus-within:bg-white focus-within:border-[#3138A0] focus-within:ring-2 focus-within:ring-indigo-100 transition-all">
+            <Search size={19} className="text-slate-500 shrink-0" />
+            <input
+              ref={inputRef}
+              type="search"
+              autoFocus
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Name, #Kd-Nr., Ort, Arbeit, Monat, Betrag…"
+              className="flex-1 bg-transparent border-none outline-hidden text-sm font-medium text-slate-950 placeholder:text-slate-400"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSearchQuery('');
+                  inputRef.current?.focus();
+                }}
+                className="w-8 h-8 flex items-center justify-center text-slate-500 hover:text-slate-800 rounded-full"
+                aria-label="Suchtext löschen"
+              >
+                <X size={17} />
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={handleStartSpeechRecognition}
+              className={`w-9 h-9 flex items-center justify-center rounded-xl transition-colors ${
+                isListening
+                  ? 'text-[#B42318] bg-red-50 animate-pulse'
+                  : 'text-slate-600 hover:text-[#3138A0]'
+              }`}
+              title="Spracheingabe (Pixel 10 Pro)"
+            >
+              <Mic size={19} />
+            </button>
+          </div>
+
+          <button
+            type="button"
+            onClick={resetAndCloseSearch}
+            className="px-3 h-12 flex items-center justify-center text-xs font-bold text-[#3138A0] hover:bg-indigo-50 rounded-xl active:scale-95 transition-all shrink-0"
+          >
+            Fertig
+          </button>
+        </div>
       </div>
     </div>
   );

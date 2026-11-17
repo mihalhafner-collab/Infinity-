@@ -162,7 +162,12 @@ export function capDeletedTombstones(
 ): Record<string, string> {
   if (!raw || typeof raw !== 'object') return {};
   const entries = Object.entries(raw).filter(
-    ([k, v]) => typeof k === 'string' && k.includes(':') && typeof v === 'string' && v.length >= 10
+    ([k, v]) =>
+      typeof k === 'string' &&
+      k.includes(':') &&
+      !k.startsWith('invoices:') &&
+      typeof v === 'string' &&
+      v.length >= 10
   );
   if (entries.length <= 500) {
     return Object.fromEntries(entries);
@@ -177,6 +182,7 @@ function addTombstone(
   id: string,
   iso = new Date().toISOString()
 ): void {
+  if (collection === 'invoices') return;
   if (!snap.deletedIds || typeof snap.deletedIds !== 'object') {
     snap.deletedIds = {};
   }
@@ -1777,15 +1783,32 @@ function mutateDeleteOnSnapshot(
         );
       }
     } else {
+      const linkedStornos = next.invoices.filter(
+        (i) =>
+          i.is_storno &&
+          (i.storno_reference_id === id ||
+            (targetInv.invoice_number && i.storno_reason?.includes(targetInv.invoice_number)))
+      );
+      const deleteIds = new Set([id, ...linkedStornos.map((s) => s.id)]);
+      const boundWorkIds = new Set(targetInv.work_record_ids || []);
+
       next.invoices = next.invoices
-        .filter((i) => i.id !== id)
-        .map((i) => (i.storno_reference_id === id ? { ...i, storno_reference_id: null } : i));
+        .filter((i) => !deleteIds.has(i.id))
+        .map((i) => {
+          const nextMerged = i.merged_invoice_ids?.filter((mid) => !deleteIds.has(mid));
+          return {
+            ...i,
+            merged_invoice_ids: nextMerged && nextMerged.length > 0 ? nextMerged : undefined
+          };
+        });
       next.workRecords = next.workRecords.map((w) =>
-        w.settlement_id === id ? { ...w, settlement_id: null } : w
+        w.settlement_id === id ||
+        (boundWorkIds.has(w.id) && (!w.settlement_id || w.settlement_id === id))
+          ? { ...w, settlement_id: null, is_lcr: false }
+          : w
       );
     }
 
-    addTombstone(next, 'invoices', id, nowIso);
     return {
       deleted: true,
       summary: `Rechnung ${targetInv.invoice_number} gelöscht`
