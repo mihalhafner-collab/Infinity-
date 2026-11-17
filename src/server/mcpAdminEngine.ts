@@ -759,7 +759,14 @@ function mutateUpsertOnSnapshotInner(
 } {
   const nowIso = new Date().toISOString();
   const today = getTodayLocalIso();
-  const requestedId = typeof payload.id === 'string' && payload.id.trim() ? payload.id.trim() : '';
+  const rawRequestedId =
+    (typeof payload.id === 'string' && payload.id.trim()) ||
+    (collection === 'equipments' &&
+      typeof payload.equipment_id === 'string' &&
+      payload.equipment_id.trim()) ||
+    (typeof payload.record_id === 'string' && payload.record_id.trim()) ||
+    '';
+  const requestedId = rawRequestedId ? String(rawRequestedId).trim() : '';
 
   if (collection === 'customers') {
     const existingIdx = requestedId ? next.customers.findIndex((c) => c.id === requestedId) : -1;
@@ -1454,39 +1461,67 @@ function mutateUpsertOnSnapshotInner(
 
   // Remaining collections: inquiries, offers, orders, equipments, materials, expenses
   const arr = next[collection] as unknown as Array<Record<string, unknown>>;
-  let existingIdx = requestedId ? arr.findIndex((item) => item.id === requestedId) : -1;
+  let existingIdx = requestedId
+    ? arr.findIndex(
+        (item) =>
+          String(item.id || '').trim() === requestedId ||
+          String(item.id || '').trim().toLowerCase() === requestedId.toLowerCase()
+      )
+    : -1;
 
-  // Bei Geräten: Keine Dubletten erzeugen, falls ChatGPT ohne ID aktualisiert (Abgleich über Seriennummer oder Hersteller+Modell / Name)
+  // Bei Geräten mit übergebener ID: AUSSCHLIESSLICH "update" ausführen, NIEMALS "create".
+  // Ist die ID unbekannt, sofort einen klaren Fehler zurückgeben!
+  if (collection === 'equipments' && requestedId && existingIdx < 0) {
+    throw new Error(
+      `Gerät mit der ID "${requestedId}" wurde nicht gefunden. Bei übergebener ID wird ausschließlich aktualisiert (update) und niemals ein neuer Datensatz angelegt.`
+    );
+  }
+
+  // Bei Geräten ohne ID: Keine Dubletten erzeugen (Abgleich über Seriennummer, Hersteller+Modell oder Name inkl. kombiniertem Titel)
   if (collection === 'equipments' && existingIdx < 0 && !requestedId && payload.allow_duplicate !== true) {
+    const normStr = (v: unknown) =>
+      String(v || '')
+        .trim()
+        .toLowerCase()
+        .replace(/\s+/g, ' ');
     const reqType = payload.item_type === 'zubehoer' ? 'zubehoer' : 'geraet';
-    const reqSerial = String(payload.serial_number || '').trim().toLowerCase();
-    const reqManuf = String(payload.manufacturer || '').trim().toLowerCase();
-    const reqModel = String(payload.model || '').trim().toLowerCase();
-    const reqName = String(payload.name || '').trim().toLowerCase();
+    const reqSerial = normStr(payload.serial_number);
+    const reqManuf = normStr(payload.manufacturer);
+    const reqModel = normStr(payload.model);
+    const reqName = normStr(payload.name);
+    const reqCombined = [reqManuf, reqModel].filter(Boolean).join(' ');
     const reqParent = payload.parent_equipment_id ? String(payload.parent_equipment_id).trim() : '';
 
     existingIdx = arr.findIndex((item) => {
       const itType = item.item_type === 'zubehoer' ? 'zubehoer' : 'geraet';
       if (itType !== reqType) return false;
-      const itSerial = String(item.serial_number || '').trim().toLowerCase();
+      if (reqType === 'zubehoer' && reqParent && String(item.parent_equipment_id || '').trim() !== reqParent) {
+        return false;
+      }
+      const itSerial = normStr(item.serial_number);
       if (reqSerial && itSerial && reqSerial === itSerial) return true;
-      const itManuf = String(item.manufacturer || '').trim().toLowerCase();
-      const itModel = String(item.model || '').trim().toLowerCase();
+      const itManuf = normStr(item.manufacturer);
+      const itModel = normStr(item.model);
+      const itName = normStr(item.name);
+      const itCombined = [itManuf, itModel].filter(Boolean).join(' ');
+
       if (reqManuf && reqModel && itManuf === reqManuf && itModel === reqModel) {
-        if (reqType === 'zubehoer' && reqParent && String(item.parent_equipment_id || '') !== reqParent) {
-          return false;
-        }
         return true;
       }
-      const itName = String(item.name || '').trim().toLowerCase();
-      if (reqName && itName === reqName) {
-        if (reqType === 'zubehoer' && reqParent && String(item.parent_equipment_id || '') !== reqParent) {
-          return false;
-        }
+      if (reqCombined && (itName === reqCombined || itCombined === reqCombined)) {
+        return true;
+      }
+      if (reqName && (itName === reqName || itCombined === reqName)) {
         return true;
       }
       return false;
     });
+  }
+
+  if (collection === 'equipments' && payload.__force_update === true && existingIdx < 0) {
+    throw new Error(
+      'Kein passendes bestehendes Gerät zum Aktualisieren (update) gefunden. Bitte gültige Geräte-ID ("id") übergeben.'
+    );
   }
 
   const prev = existingIdx >= 0 ? arr[existingIdx] : undefined;
@@ -1586,8 +1621,19 @@ function mutateUpsertOnSnapshotInner(
     merged.created_at = prev?.created_at || nowIso;
     merged.updated_at = nowIso;
   } else if (collection === 'equipments') {
-    const itemType = merged.item_type === 'zubehoer' ? 'zubehoer' : 'geraet';
-    const rawStatus = String(merged.status || 'einsatzbereit').toLowerCase().trim();
+    const itemType =
+      payload.item_type !== undefined
+        ? payload.item_type === 'zubehoer'
+          ? 'zubehoer'
+          : 'geraet'
+        : prev?.item_type === 'zubehoer'
+          ? 'zubehoer'
+          : 'geraet';
+
+    const rawStatus =
+      payload.status !== undefined && String(payload.status).trim() !== ''
+        ? String(payload.status).toLowerCase().trim()
+        : String(prev?.status || 'einsatzbereit').toLowerCase().trim();
     const status =
       rawStatus === 'fällig' || rawStatus === 'faellig' || rawStatus === 'due'
         ? 'faellig'
@@ -1595,29 +1641,48 @@ function mutateUpsertOnSnapshotInner(
           ? 'wartung'
           : 'einsatzbereit';
 
-    const manufacturer = String(merged.manufacturer ?? prev?.manufacturer ?? '').trim();
-    const model = String(merged.model ?? prev?.model ?? '').trim();
-    const category = String(
-      merged.category ?? prev?.category ?? (itemType === 'zubehoer' ? 'Zubehör' : 'Allgemein')
-    ).trim();
+    const manufacturer =
+      payload.manufacturer !== undefined
+        ? String(payload.manufacturer ?? '').trim()
+        : String(prev?.manufacturer ?? '').trim();
+    const model =
+      payload.model !== undefined
+        ? String(payload.model ?? '').trim()
+        : String(prev?.model ?? '').trim();
+    const category =
+      payload.category !== undefined && String(payload.category).trim() !== ''
+        ? String(payload.category).trim()
+        : String(prev?.category || (itemType === 'zubehoer' ? 'Zubehör' : 'Allgemein')).trim();
     const autoTitle = [manufacturer, model].filter(Boolean).join(' ');
     const name =
-      String(payload.name ?? '').trim() ||
+      (payload.name !== undefined && String(payload.name).trim() !== ''
+        ? String(payload.name).trim()
+        : '') ||
       (prev?.name ? String(prev.name).trim() : '') ||
       autoTitle ||
       category ||
       (itemType === 'zubehoer' ? 'Zubehör' : 'Gerät');
 
-    const serialNumber = String(merged.serial_number ?? prev?.serial_number ?? '').trim();
-    const purchaseDate = String(merged.purchase_date ?? prev?.purchase_date ?? '').trim();
-    const rawPrice = merged.purchase_price ?? prev?.purchase_price;
+    const serialNumber =
+      payload.serial_number !== undefined
+        ? String(payload.serial_number ?? '').trim()
+        : String(prev?.serial_number ?? '').trim();
+    const purchaseDate =
+      payload.purchase_date !== undefined
+        ? String(payload.purchase_date ?? '').trim()
+        : String(prev?.purchase_date ?? '').trim();
+    const rawPrice =
+      payload.purchase_price !== undefined ? payload.purchase_price : prev?.purchase_price;
     const purchasePrice =
       rawPrice === null || rawPrice === undefined || String(rawPrice).trim() === ''
         ? null
         : Number.isFinite(Number(rawPrice))
           ? round2(Number(rawPrice))
           : null;
-    const dealer = String(merged.dealer ?? prev?.dealer ?? '').trim();
+    const dealer =
+      payload.dealer !== undefined
+        ? String(payload.dealer ?? '').trim()
+        : String(prev?.dealer ?? '').trim();
 
     // 1. Bestehende dynamische Felder laden (kein Überschreiben!)
     const fieldList: EquipmentDynamicField[] = prev
@@ -1639,12 +1704,15 @@ function mutateUpsertOnSnapshotInner(
     }) => {
       const cleanLabel = String(incoming.label || '').trim();
       if (!cleanLabel) return;
+      const hasExplicitSection =
+        incoming.section !== undefined && String(incoming.section).trim() !== '';
       const cleanSection = String(incoming.section || 'Technische Daten').trim() || 'Technische Daten';
       const idx = fieldList.findIndex(
         (f) =>
           (incoming.id && f.id === incoming.id) ||
           (f.label.toLowerCase() === cleanLabel.toLowerCase() &&
-            (f.section || 'Technische Daten').toLowerCase() === cleanSection.toLowerCase())
+            ((f.section || 'Technische Daten').toLowerCase() === cleanSection.toLowerCase() ||
+              !hasExplicitSection))
       );
 
       if (incoming.value === null || incoming.value === undefined || String(incoming.value).trim() === '') {
@@ -1652,10 +1720,15 @@ function mutateUpsertOnSnapshotInner(
         return;
       }
 
+      const effectiveSection =
+        idx >= 0 && !hasExplicitSection
+          ? fieldList[idx].section || cleanSection
+          : cleanSection;
+
       const inferred = inferFieldFromRawSpec(
         cleanLabel,
         incoming.value as string | number | boolean,
-        cleanSection,
+        effectiveSection,
         incoming.source === 'manufacturer'
           ? 'manufacturer'
           : incoming.source === 'individual'
@@ -1689,7 +1762,7 @@ function mutateUpsertOnSnapshotInner(
           incoming.unit !== undefined
             ? String(incoming.unit).trim() || undefined
             : inferred.unit,
-        section: cleanSection,
+        section: effectiveSection,
         source:
           incoming.source === 'manufacturer'
             ? 'manufacturer'
@@ -1760,15 +1833,16 @@ function mutateUpsertOnSnapshotInner(
       for (const cf of payload.custom_fields) {
         if (!cf || typeof cf !== 'object') continue;
         const cfRec = cf as Record<string, unknown>;
+        const hasSec = cfRec.section !== undefined && String(cfRec.section).trim() !== '';
         const secName = String(cfRec.section || 'Technische Daten').trim();
-        if (secName) sectionNamesSet.add(secName);
+        if (hasSec && secName) sectionNamesSet.add(secName);
         upsertDynamicField({
           id: typeof cfRec.id === 'string' ? cfRec.id : undefined,
           label: String(cfRec.label || cfRec.name || cfRec.key || ''),
           type: typeof cfRec.type === 'string' ? cfRec.type : undefined,
           value: cfRec.value,
           unit: typeof cfRec.unit === 'string' ? cfRec.unit : undefined,
-          section: secName,
+          section: hasSec ? secName : undefined,
           source: typeof cfRec.source === 'string' ? cfRec.source : defaultFieldSource
         });
       }
@@ -1777,6 +1851,9 @@ function mutateUpsertOnSnapshotInner(
     // 4. Unterstützung für payload.specs und freie Top-Level-Parameter
     const reservedEquipmentKeys = new Set([
       'id',
+      'equipment_id',
+      'record_id',
+      '__force_update',
       'item_type',
       'category',
       'parent_equipment_id',
@@ -1838,7 +1915,6 @@ function mutateUpsertOnSnapshotInner(
       upsertDynamicField({
         label: k,
         value: v,
-        section: 'Technische Daten',
         source: defaultFieldSource
       });
     }
@@ -1849,7 +1925,6 @@ function mutateUpsertOnSnapshotInner(
           upsertDynamicField({
             label: k,
             value: v,
-            section: 'Technische Daten',
             source: defaultFieldSource
           });
         }
@@ -1923,24 +1998,27 @@ function mutateUpsertOnSnapshotInner(
             ? 'manufacturer'
             : 'own';
         const existingIdxByIdOrUrl = imageList.findIndex(
-          (img) => img.id === imgId || img.url === cleanUrl
+          (img) => (imgRec.id && img.id === imgId) || img.url === cleanUrl
         );
         if (isPrim) {
           imageList = imageList.map((img) => ({ ...img, is_primary: false }));
         }
+        const prevEntry = existingIdxByIdOrUrl >= 0 ? imageList[existingIdxByIdOrUrl] : undefined;
         const entry: EquipmentImage = {
-          id: existingIdxByIdOrUrl >= 0 ? imageList[existingIdxByIdOrUrl].id : imgId,
+          id: prevEntry ? prevEntry.id : imgId,
           url: cleanUrl,
           caption:
             typeof imgRec.caption === 'string'
               ? imgRec.caption.trim()
               : typeof imgRec.title === 'string'
                 ? imgRec.title.trim()
-                : undefined,
+                : prevEntry?.caption,
           source: imgSource,
-          is_primary: isPrim || imageList.length === 0,
+          is_primary: isPrim || (prevEntry ? prevEntry.is_primary : imageList.length === 0),
           added_at:
-            typeof imgRec.added_at === 'string' ? imgRec.added_at : nowIso
+            typeof imgRec.added_at === 'string'
+              ? imgRec.added_at
+              : prevEntry?.added_at || nowIso
         };
         if (existingIdxByIdOrUrl >= 0) {
           imageList[existingIdxByIdOrUrl] = entry;
@@ -2003,14 +2081,21 @@ function mutateUpsertOnSnapshotInner(
           : dType === 'anleitung'
             ? 'Bedienungsanleitung'
             : 'Dokument');
-      const existingDocIdx = docList.findIndex((d) => d.id === docId || d.url === url);
+      const existingDocIdx = docList.findIndex(
+        (d) => (dRec.id && d.id === docId) || d.url === url
+      );
+      const prevDoc = existingDocIdx >= 0 ? docList[existingDocIdx] : undefined;
       const entry: EquipmentDocument = {
-        id: existingDocIdx >= 0 ? docList[existingDocIdx].id : docId,
+        id: prevDoc ? prevDoc.id : docId,
         title,
         type: dType,
         url,
-        mime_type: typeof dRec.mime_type === 'string' ? dRec.mime_type : undefined,
-        added_at: typeof dRec.added_at === 'string' ? dRec.added_at : nowIso
+        mime_type:
+          typeof dRec.mime_type === 'string' ? dRec.mime_type : prevDoc?.mime_type,
+        added_at:
+          typeof dRec.added_at === 'string'
+            ? dRec.added_at
+            : prevDoc?.added_at || nowIso
       };
       if (existingDocIdx >= 0) {
         docList[existingDocIdx] = entry;
@@ -2029,24 +2114,40 @@ function mutateUpsertOnSnapshotInner(
       docList = docList.filter((d) => !remDocs.has(d.id));
     }
 
-    const parsedInterval = Math.max(1, Math.round(Number(merged.interval_months) || 6));
-    const lastMaintIso = assertIsoDate(String(merged.last_maintenance || today), 'last_maintenance');
+    const parsedInterval =
+      payload.interval_months !== undefined &&
+      payload.interval_months !== null &&
+      String(payload.interval_months).trim() !== ''
+        ? Math.max(1, Math.round(Number(payload.interval_months) || 6))
+        : typeof prev?.interval_months === 'number' && prev.interval_months > 0
+          ? prev.interval_months
+          : 6;
+
+    let lastMaintIso: string;
+    if (payload.last_maintenance !== undefined && String(payload.last_maintenance).trim() !== '') {
+      lastMaintIso = assertIsoDate(String(payload.last_maintenance), 'last_maintenance');
+    } else if (prev && typeof prev.last_maintenance === 'string') {
+      lastMaintIso = prev.last_maintenance;
+    } else {
+      lastMaintIso = today;
+    }
+
     let nextMaintIso: string;
     if (payload.next_maintenance !== undefined && String(payload.next_maintenance).trim() !== '') {
       nextMaintIso = assertIsoDate(String(payload.next_maintenance), 'next_maintenance');
     } else if (
       (payload.last_maintenance !== undefined || payload.interval_months !== undefined) &&
-      payload.next_maintenance === undefined
+      payload.next_maintenance === undefined &&
+      lastMaintIso
     ) {
       nextMaintIso = addDaysIso(lastMaintIso, parsedInterval * 30);
+    } else if (prev && typeof prev.next_maintenance === 'string') {
+      nextMaintIso = prev.next_maintenance;
     } else {
-      nextMaintIso = assertIsoDate(
-        String(merged.next_maintenance || addDaysIso(lastMaintIso, parsedInterval * 30)),
-        'next_maintenance'
-      );
+      nextMaintIso = addDaysIso(lastMaintIso || today, parsedInterval * 30);
     }
 
-    const rawQty = merged.quantity;
+    const rawQty = payload.quantity !== undefined ? payload.quantity : prev?.quantity;
     const normalizedQty =
       rawQty !== undefined && rawQty !== null && String(rawQty).trim() !== ''
         ? Math.max(0, Math.round(Number(rawQty) || 0))
@@ -2054,7 +2155,37 @@ function mutateUpsertOnSnapshotInner(
           ? 1
           : null;
 
+    // Wartungshistorie verlustfrei zusammenführen (bestehende Einträge niemals verlieren)
+    const prevHistory = Array.isArray(prev?.history)
+      ? [...(prev.history as Array<Record<string, unknown>>)]
+      : [];
+    let mergedHistory = prevHistory;
+    if (Array.isArray(payload.history)) {
+      for (const hRaw of payload.history) {
+        if (!hRaw || typeof hRaw !== 'object') continue;
+        const hObj = hRaw as Record<string, unknown>;
+        const hId = String(hObj.id || '').trim();
+        const hDate = String(hObj.date || '').trim();
+        const hNote = String(hObj.note || '').trim();
+        const exists = mergedHistory.some(
+          (existing) =>
+            (hId && String(existing.id || '') === hId) ||
+            (hDate && String(existing.date || '') === hDate && String(existing.note || '') === hNote)
+        );
+        if (!exists && (hDate || hNote)) {
+          mergedHistory.push({
+            id: hId || `mh-${Date.now()}-${mergedHistory.length}`,
+            date: hDate || today,
+            note: hNote
+          });
+        }
+      }
+    }
+
     // Temporäre Steuerfelder aus merged bereinigen
+    delete merged.equipment_id;
+    delete merged.record_id;
+    delete merged.__force_update;
     delete merged.has_photo;
     delete merged.photo_count;
     delete merged.image_count;
@@ -2075,7 +2206,14 @@ function mutateUpsertOnSnapshotInner(
 
     merged.item_type = itemType;
     merged.category = category;
-    merged.parent_equipment_id = merged.parent_equipment_id ? String(merged.parent_equipment_id) : null;
+    merged.parent_equipment_id =
+      payload.parent_equipment_id !== undefined
+        ? payload.parent_equipment_id
+          ? String(payload.parent_equipment_id).trim()
+          : null
+        : prev?.parent_equipment_id
+          ? String(prev.parent_equipment_id).trim()
+          : null;
     merged.manufacturer = manufacturer;
     merged.model = model;
     merged.name = name;
@@ -2090,33 +2228,51 @@ function mutateUpsertOnSnapshotInner(
     merged.custom_sections = Array.from(sectionNamesSet);
     merged.specs = syncedSpecs;
     merged.quantity = normalizedQty;
-    merged.notes = String(merged.notes || '');
+    merged.notes =
+      payload.notes !== undefined ? String(payload.notes ?? '') : String(prev?.notes ?? '');
     merged.status = status;
     merged.last_maintenance = lastMaintIso;
     merged.next_maintenance = nextMaintIso;
     merged.maintenance_plan =
-      merged.maintenance_plan !== undefined
-        ? String(merged.maintenance_plan)
-        : itemType === 'zubehoer'
-          ? ''
-          : '';
+      payload.maintenance_plan !== undefined
+        ? String(payload.maintenance_plan ?? '')
+        : String(prev?.maintenance_plan ?? '');
     merged.interval_months = parsedInterval;
-    merged.history = Array.isArray(merged.history) ? merged.history : [];
+    merged.history = mergedHistory;
     merged.created_at = prev?.created_at || nowIso;
     merged.updated_at = nowIso;
 
-    // 8. Optional übergebene Zubehör-/Ersatzteile direkt mit diesem Hauptgerät verknüpfen
+    if (existingIdx >= 0) arr[existingIdx] = merged;
+    else arr.unshift(merged);
+
+    // 8. Optional übergebene Zubehör-/Ersatzteile direkt mit diesem Hauptgerät verknüpfen (idempotent ohne Dubletten)
     if (itemType === 'geraet' && Array.isArray(payload.accessories)) {
       for (const accRaw of payload.accessories) {
-        if (!accRaw || typeof accRaw !== 'object') continue;
-        const accObj = accRaw as Record<string, unknown>;
-        mutateUpsertOnSnapshot(next, 'equipments', {
-          ...accObj,
-          item_type: 'zubehoer',
-          parent_equipment_id: id
-        });
+        if (!accRaw) continue;
+        if (typeof accRaw === 'string') {
+          const accName = accRaw.trim();
+          if (!accName) continue;
+          mutateUpsertOnSnapshot(next, 'equipments', {
+            name: accName,
+            item_type: 'zubehoer',
+            parent_equipment_id: id
+          });
+        } else if (typeof accRaw === 'object') {
+          const accObj = accRaw as Record<string, unknown>;
+          mutateUpsertOnSnapshot(next, 'equipments', {
+            ...accObj,
+            item_type: 'zubehoer',
+            parent_equipment_id: id
+          });
+        }
       }
     }
+
+    return {
+      action: existingIdx >= 0 ? 'updated' : 'created',
+      summary: `equipments: ${existingIdx >= 0 ? 'aktualisiert' : 'erstellt'} (${id})`,
+      record: stripHeavyPhotos(merged, false)
+    };
   } else if (collection === 'materials') {
     const name = String(merged.name || '').trim();
     if (!name) {
@@ -2952,10 +3108,70 @@ export function calculateGuvAdminAction(yearOverride?: number) {
 }
 
 export interface BatchOperation {
-  op: 'upsert' | 'delete';
+  op: 'upsert' | 'update' | 'delete';
   collection: CollectionName;
   id?: string;
+  equipment_id?: string;
   record?: Record<string, unknown>;
+  data?: Record<string, unknown>;
+}
+
+function buildNormalizedUpsertRecord(
+  argsOrOp: Record<string, unknown>,
+  collection: CollectionName
+): Record<string, unknown> {
+  const nestedRec =
+    argsOrOp.record && typeof argsOrOp.record === 'object' && !Array.isArray(argsOrOp.record)
+      ? (argsOrOp.record as Record<string, unknown>)
+      : argsOrOp.data && typeof argsOrOp.data === 'object' && !Array.isArray(argsOrOp.data)
+        ? (argsOrOp.data as Record<string, unknown>)
+        : {};
+
+  const envelopeKeys = new Set([
+    'op',
+    'collection',
+    'collections',
+    'operations',
+    'record',
+    'data',
+    'request_id',
+    'expected_revision',
+    'tax_settings'
+  ]);
+
+  const topLevelFields: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(argsOrOp)) {
+    if (!envelopeKeys.has(k) && v !== undefined) {
+      topLevelFields[k] = v;
+    }
+  }
+
+  const mergedRec: Record<string, unknown> = {
+    ...topLevelFields,
+    ...nestedRec
+  };
+
+  const explicitId =
+    (typeof nestedRec.id === 'string' && nestedRec.id.trim()) ||
+    (collection === 'equipments' &&
+      typeof nestedRec.equipment_id === 'string' &&
+      nestedRec.equipment_id.trim()) ||
+    (typeof nestedRec.record_id === 'string' && nestedRec.record_id.trim()) ||
+    (typeof argsOrOp.id === 'string' && argsOrOp.id.trim()) ||
+    (collection === 'equipments' &&
+      typeof argsOrOp.equipment_id === 'string' &&
+      argsOrOp.equipment_id.trim()) ||
+    (typeof argsOrOp.record_id === 'string' && argsOrOp.record_id.trim()) ||
+    '';
+
+  if (explicitId) {
+    mergedRec.id = String(explicitId).trim();
+  }
+  if (String(argsOrOp.op || '').trim().toLowerCase() === 'update') {
+    mergedRec.__force_update = true;
+  }
+
+  return mergedRec;
 }
 
 export function executeBatchAdmin(
@@ -2975,17 +3191,23 @@ export function executeBatchAdmin(
       throw new Error(`Ungültige Collection: "${String(item.collection)}".`);
     }
     if (item.op === 'delete') {
-      const targetId = item.id || String(item.record?.id || '');
+      const targetId =
+        item.id ||
+        item.equipment_id ||
+        String(item.record?.id || item.record?.equipment_id || '');
       if (!targetId) {
         throw new Error(`Fehlende "id" bei Löschoperation in "${item.collection}".`);
       }
-      const delRes = mutateDeleteOnSnapshot(next, item.collection, targetId);
-      results.push({ op: 'delete', collection: item.collection, id: targetId, ...delRes });
+      const delRes = mutateDeleteOnSnapshot(next, item.collection, String(targetId).trim());
+      results.push({ op: 'delete', collection: item.collection, id: String(targetId).trim(), ...delRes });
     } else {
-      const payload = { ...(item.record || {}), ...(item.id ? { id: item.id } : {}) };
+      const payload = buildNormalizedUpsertRecord(
+        item as unknown as Record<string, unknown>,
+        item.collection
+      );
       const upRes = mutateUpsertOnSnapshot(next, item.collection, payload);
       results.push({
-        op: 'upsert',
+        op: item.op === 'update' ? 'update' : 'upsert',
         collection: item.collection,
         action: upRes.action,
         record: upRes.record,
@@ -3087,7 +3309,7 @@ export const MCP_TOOLS = [
       title: 'Daten anlegen, ändern & löschen (Einzel oder Stapel in 1 Aufruf)',
       readOnlyHint: false,
       destructiveHint: true,
-      idempotentHint: false,
+      idempotentHint: true,
       openWorldHint: false
     },
     inputSchema: {
@@ -3096,20 +3318,24 @@ export const MCP_TOOLS = [
       properties: {
         op: {
           type: 'string',
-          enum: ['upsert', 'delete', 'toggle_lcr', 'maintenance', 'equipment_media', 'tax_settings'],
+          enum: ['upsert', 'update', 'delete', 'toggle_lcr', 'maintenance', 'equipment_media', 'tax_settings'],
           description: 'Art der Einzelaktion (falls nicht "operations" als Liste übergeben wird).'
         },
         collection: {
           type: 'string',
           enum: [...COLLECTION_NAMES],
-          description: 'Zieltabelle bei op="upsert" oder op="delete".'
+          description: 'Zieltabelle bei op="upsert", op="update" oder op="delete".'
         },
-        id: { type: 'string', description: 'Datensatz-ID bei op="delete".' },
+        id: {
+          type: 'string',
+          description:
+            'Eindeutige Datensatz-ID bei op="upsert", op="update" oder op="delete" (bei vorhandener ID in equipments wird ausschließlich aktualisiert und niemals neu angelegt).'
+        },
         record: {
           type: 'object',
           additionalProperties: true,
           description:
-            'Datensatz-Felder bei op="upsert" (mit id = ändern, ohne id = neu anlegen; bei equipments verhindert automatischer Abgleich über serial_number oder manufacturer+model Dubletten). Universelle Gerätefelder bei collection="equipments": id, item_type ("geraet"|"zubehoer"), manufacturer, model, name, category, serial_number, purchase_date, purchase_price, dealer, status ("einsatzbereit"|"faellig"|"wartung"), quantity, parent_equipment_id, custom_fields (Array aus {label, type: "text"|"number"|"unit"|"date"|"boolean", value, unit, section, source: "manufacturer"|"individual"}), sections (Array aus {name, source, fields}), custom_sections (Array von Bereichsnamen), specs (Objekt mit technischen Parametern, wird verlustfrei zusammengeführt), remove_fields (Array zu löschender Feldnamen), photo, images / add_images (Array aus URLs/Data-URLs oder {url, caption, source: "own"|"manufacturer", is_primary}), set_primary_image_id, documents / add_documents (Array aus {title, type: "rechnung"|"anleitung"|"sonstiges", url}), accessories (Array verknüpfter Zubehörteile), maintenance_plan, interval_months, last_maintenance, next_maintenance, notes, history.'
+            'Datensatz-Felder bei op="upsert" oder op="update" (mit id = bestehendes Gerät aktualisieren, unbekannte id = Fehler; ohne id = neu anlegen, wobei automatischer Abgleich über serial_number oder manufacturer+model Dubletten verhindert). Universelle Gerätefelder bei collection="equipments": id, item_type ("geraet"|"zubehoer"), manufacturer, model, name, category, serial_number, purchase_date, purchase_price, dealer, status ("einsatzbereit"|"faellig"|"wartung"), quantity, parent_equipment_id, custom_fields (Array aus {label, type: "text"|"number"|"unit"|"date"|"boolean", value, unit, section, source: "manufacturer"|"individual"}), sections (Array aus {name, source, fields}), custom_sections (Array von Bereichsnamen), specs (Objekt mit technischen Parametern, wird verlustfrei zusammengeführt), remove_fields (Array zu löschender Feldnamen), photo, images / add_images (Array aus URLs/Data-URLs oder {url, caption, source: "own"|"manufacturer", is_primary}), set_primary_image_id, documents / add_documents (Array aus {title, type: "rechnung"|"anleitung"|"sonstiges", url}), accessories (Array verknüpfter Zubehörteile), maintenance_plan, interval_months, last_maintenance, next_maintenance, notes, history.'
         },
         work_record_ids: {
           type: 'array',
@@ -3120,7 +3346,10 @@ export const MCP_TOOLS = [
           type: 'boolean',
           description: 'Zielwert für L.C.R. bei op="toggle_lcr".'
         },
-        equipment_id: { type: 'string', description: 'Geräte-ID bei op="maintenance" oder op="equipment_media".' },
+        equipment_id: {
+          type: 'string',
+          description: 'Geräte-ID bei op="upsert", op="update", op="maintenance" oder op="equipment_media".'
+        },
         maintenance: {
           type: 'object',
           additionalProperties: false,
@@ -3151,9 +3380,10 @@ export const MCP_TOOLS = [
             additionalProperties: false,
             required: ['op', 'collection'],
             properties: {
-              op: { type: 'string', enum: ['upsert', 'delete'] },
+              op: { type: 'string', enum: ['upsert', 'update', 'delete'] },
               collection: { type: 'string', enum: [...COLLECTION_NAMES] },
               id: { type: 'string' },
+              equipment_id: { type: 'string' },
               record: { type: 'object', additionalProperties: true }
             }
           }
@@ -3341,25 +3571,28 @@ function executeUnifiedPixelAction(args: Record<string, unknown>) {
     return executeBatchAdmin(args.operations as BatchOperation[], 'mcp');
   }
 
-  const op = String(args.op || 'upsert');
+  const op = String(args.op || 'upsert').trim();
   switch (op) {
-    case 'upsert': {
-      const col = String(args.collection || '');
+    case 'upsert':
+    case 'update': {
+      const col = String(args.collection || '').trim();
       if (!isCollectionName(col)) {
         throw new Error(`Unbekannte Collection "${col}".`);
       }
-      const rec =
-        args.record && typeof args.record === 'object'
-          ? (args.record as Record<string, unknown>)
-          : {};
+      const rec = buildNormalizedUpsertRecord(args, col);
       return upsertCollectionRecord(col, rec, 'mcp');
     }
     case 'delete': {
-      const col = String(args.collection || '');
+      const col = String(args.collection || '').trim();
       if (!isCollectionName(col)) {
         throw new Error(`Unbekannte Collection "${col}".`);
       }
-      const id = String(args.id || '').trim();
+      const id = String(
+        args.id ||
+          args.equipment_id ||
+          (args.record as Record<string, unknown> | undefined)?.id ||
+          ''
+      ).trim();
       if (!id) throw new Error('Parameter "id" ist erforderlich.');
       return deleteCollectionRecord(col, id, 'mcp');
     }
@@ -3380,7 +3613,7 @@ function executeUnifiedPixelAction(args: Record<string, unknown>) {
           : args;
       return recordMaintenanceAdminAction(
         {
-          equipment_id: String(args.equipment_id || maint.equipment_id || ''),
+          equipment_id: String(args.equipment_id || args.id || maint.equipment_id || ''),
           plan: typeof maint.plan === 'string' ? maint.plan : undefined,
           note: typeof maint.note === 'string' ? maint.note : undefined,
           date: typeof maint.date === 'string' ? maint.date : undefined,
@@ -3398,7 +3631,8 @@ function executeUnifiedPixelAction(args: Record<string, unknown>) {
       const mediaPayload: Record<string, unknown> = {
         ...(args.record && typeof args.record === 'object' ? (args.record as Record<string, unknown>) : {}),
         ...args,
-        id: eqId
+        id: eqId,
+        __force_update: true
       };
       delete mediaPayload.op;
       delete mediaPayload.collection;
@@ -3514,22 +3748,19 @@ export function callMcpTool(name: string, args: Record<string, unknown> = {}): u
         typeof args.year === 'number' ? args.year : undefined
       );
     case 'admin_upsert_record': {
-      const col = String(args.collection || '');
+      const col = String(args.collection || '').trim();
       if (!isCollectionName(col)) {
         throw new Error(`Unbekannte Collection "${col}".`);
       }
-      const rec =
-        args.record && typeof args.record === 'object'
-          ? (args.record as Record<string, unknown>)
-          : {};
+      const rec = buildNormalizedUpsertRecord(args, col);
       return upsertCollectionRecord(col, rec, 'mcp');
     }
     case 'admin_delete_record': {
-      const col = String(args.collection || '');
+      const col = String(args.collection || '').trim();
       if (!isCollectionName(col)) {
         throw new Error(`Unbekannte Collection "${col}".`);
       }
-      const id = String(args.id || '').trim();
+      const id = String(args.id || args.equipment_id || '').trim();
       if (!id) throw new Error('Parameter "id" ist erforderlich.');
       return deleteCollectionRecord(col, id, 'mcp');
     }

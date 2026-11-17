@@ -790,16 +790,51 @@ class InfinityMcpDispatcher(
         return applySingleActionMutation(state, args)
     }
 
+    private fun buildNormalizedUpsertPayload(args: JSONObject, collection: String): JSONObject {
+        val nested = args.optJSONObject("record") ?: args.optJSONObject("data")
+        val envelopeKeys = setOf(
+            "op", "collection", "collections", "operations", "record", "data",
+            "request_id", "expected_revision", "tax_settings"
+        )
+        val merged = JSONObject()
+        val topKeys = args.keys()
+        while (topKeys.hasNext()) {
+            val k = topKeys.next()
+            if (!envelopeKeys.contains(k) && !args.isNull(k)) {
+                merged.put(k, args.get(k))
+            }
+        }
+        if (nested != null) {
+            copyAllFields(nested, merged)
+        }
+        val explicitId = firstNonBlank(
+            nested?.optString("id", "").orEmpty(),
+            if (collection == "equipments") nested?.optString("equipment_id", "").orEmpty() else "",
+            nested?.optString("record_id", "").orEmpty(),
+            args.optString("id", ""),
+            if (collection == "equipments") args.optString("equipment_id", "") else "",
+            args.optString("record_id", "")
+        )
+        if (explicitId.isNotEmpty()) {
+            merged.put("id", explicitId)
+        }
+        if (args.optString("op", "").trim().equals("update", ignoreCase = true)) {
+            merged.put("__force_update", true)
+        }
+        return merged
+    }
+
     private fun applySingleActionMutation(state: JSONObject, args: JSONObject): JSONObject {
         return when (val op = args.optString("op", "upsert").trim()) {
-            "upsert" -> {
+            "upsert", "update" -> {
                 val col = args.optString("collection", "").trim()
                 if (!NativeStoreManager.COLLECTION_KEYS.contains(col)) {
                     throw IllegalArgumentException("Unbekannte Collection '$col'.")
                 }
-                val record = args.optJSONObject("record")
-                    ?: args.optJSONObject("data")
-                    ?: throw IllegalArgumentException("Parameter 'record' fehlt für op='upsert'.")
+                val record = buildNormalizedUpsertPayload(args, col)
+                if (record.length() == 0) {
+                    throw IllegalArgumentException("Parameter 'record' fehlt für op='$op'.")
+                }
                 upsertRecordInState(state, col, record)
             }
 
@@ -808,7 +843,11 @@ class InfinityMcpDispatcher(
                 if (!NativeStoreManager.COLLECTION_KEYS.contains(col)) {
                     throw IllegalArgumentException("Unbekannte Collection '$col'.")
                 }
-                val id = args.optString("id", "").trim()
+                val id = firstNonBlank(
+                    args.optString("id", ""),
+                    args.optString("equipment_id", ""),
+                    args.optJSONObject("record")?.optString("id", "").orEmpty()
+                )
                 if (id.isEmpty()) {
                     throw IllegalArgumentException("Parameter 'id' ist für op='delete' erforderlich.")
                 }
@@ -823,7 +862,10 @@ class InfinityMcpDispatcher(
             }
 
             "maintenance" -> {
-                val eqId = args.optString("equipment_id", "").trim()
+                val eqId = firstNonBlank(
+                    args.optString("equipment_id", ""),
+                    args.optString("id", "")
+                )
                 val maintObj = args.optJSONObject("maintenance") ?: args
                 recordMaintenanceInState(state, eqId, maintObj)
             }
@@ -845,6 +887,7 @@ class InfinityMcpDispatcher(
                 mediaPayload.remove("collection")
                 mediaPayload.remove("equipment_id")
                 mediaPayload.put("id", eqId)
+                mediaPayload.put("__force_update", true)
                 upsertRecordInState(state, "equipments", mediaPayload)
             }
 
@@ -865,57 +908,79 @@ class InfinityMcpDispatcher(
         val arr = state.optJSONArray(collection) ?: JSONArray().also { state.put(collection, it) }
         val nowIso = Instant.now().toString()
         val today = todayIso()
-        val requestedId = payload.optString("id", "").trim()
+        val requestedId = firstNonBlank(
+            payload.optString("id", ""),
+            if (collection == "equipments") payload.optString("equipment_id", "") else "",
+            payload.optString("record_id", "")
+        )
 
         var existingIdx = -1
         var prev: JSONObject? = null
         if (requestedId.isNotEmpty()) {
             for (i in 0 until arr.length()) {
                 val item = arr.optJSONObject(i) ?: continue
-                if (item.optString("id") == requestedId) {
+                val itId = item.optString("id", "").trim()
+                if (itId == requestedId || itId.equals(requestedId, ignoreCase = true)) {
                     existingIdx = i
                     prev = item
                     break
                 }
             }
+            if (collection == "equipments" && existingIdx < 0) {
+                throw IllegalArgumentException(
+                    "Gerät mit der ID '$requestedId' wurde nicht gefunden. Bei übergebener ID wird ausschließlich aktualisiert (update) und niemals ein neuer Datensatz angelegt."
+                )
+            }
         } else if (collection == "equipments" && !payload.optBoolean("allow_duplicate", false)) {
+            fun normStr(s: String): String = s.trim().lowercase(Locale.ROOT).replace(Regex("\\s+"), " ")
             val reqType = if (payload.optString("item_type") == "zubehoer") "zubehoer" else "geraet"
-            val reqSerial = payload.optString("serial_number", "").trim().lowercase(Locale.ROOT)
-            val reqManuf = payload.optString("manufacturer", "").trim().lowercase(Locale.ROOT)
-            val reqModel = payload.optString("model", "").trim().lowercase(Locale.ROOT)
-            val reqName = payload.optString("name", "").trim().lowercase(Locale.ROOT)
+            val reqSerial = normStr(payload.optString("serial_number", ""))
+            val reqManuf = normStr(payload.optString("manufacturer", ""))
+            val reqModel = normStr(payload.optString("model", ""))
+            val reqName = normStr(payload.optString("name", ""))
+            val reqCombined = listOf(reqManuf, reqModel).filter { it.isNotEmpty() }.joinToString(" ")
             val reqParent = payload.optString("parent_equipment_id", "").trim()
 
             for (i in 0 until arr.length()) {
                 val item = arr.optJSONObject(i) ?: continue
                 val itType = if (item.optString("item_type") == "zubehoer") "zubehoer" else "geraet"
                 if (itType != reqType) continue
-                val itSerial = item.optString("serial_number", "").trim().lowercase(Locale.ROOT)
+                if (reqType == "zubehoer" && reqParent.isNotEmpty() && item.optString("parent_equipment_id", "").trim() != reqParent) {
+                    continue
+                }
+                val itSerial = normStr(item.optString("serial_number", ""))
                 if (reqSerial.isNotEmpty() && itSerial.isNotEmpty() && reqSerial == itSerial) {
                     existingIdx = i
                     prev = item
                     break
                 }
-                val itManuf = item.optString("manufacturer", "").trim().lowercase(Locale.ROOT)
-                val itModel = item.optString("model", "").trim().lowercase(Locale.ROOT)
+                val itManuf = normStr(item.optString("manufacturer", ""))
+                val itModel = normStr(item.optString("model", ""))
+                val itName = normStr(item.optString("name", ""))
+                val itCombined = listOf(itManuf, itModel).filter { it.isNotEmpty() }.joinToString(" ")
+
                 if (reqManuf.isNotEmpty() && reqModel.isNotEmpty() && itManuf == reqManuf && itModel == reqModel) {
-                    if (reqType == "zubehoer" && reqParent.isNotEmpty() && item.optString("parent_equipment_id", "").trim() != reqParent) {
-                        continue
-                    }
                     existingIdx = i
                     prev = item
                     break
                 }
-                val itName = item.optString("name", "").trim().lowercase(Locale.ROOT)
-                if (reqName.isNotEmpty() && itName == reqName) {
-                    if (reqType == "zubehoer" && reqParent.isNotEmpty() && item.optString("parent_equipment_id", "").trim() != reqParent) {
-                        continue
-                    }
+                if (reqCombined.isNotEmpty() && (itName == reqCombined || itCombined == reqCombined)) {
+                    existingIdx = i
+                    prev = item
+                    break
+                }
+                if (reqName.isNotEmpty() && (itName == reqName || itCombined == reqName)) {
                     existingIdx = i
                     prev = item
                     break
                 }
             }
+        }
+
+        if (collection == "equipments" && payload.optBoolean("__force_update", false) && existingIdx < 0) {
+            throw IllegalArgumentException(
+                "Kein passendes bestehendes Gerät zum Aktualisieren (update) gefunden. Bitte gültige Geräte-ID ('id') übergeben."
+            )
         }
 
         val id = prev?.optString("id")?.takeIf { it.isNotEmpty() }
@@ -1326,34 +1391,76 @@ class InfinityMcpDispatcher(
             }
 
             "equipments" -> {
-                val itemType = if (record.optString("item_type") == "zubehoer") "zubehoer" else "geraet"
-                val rawStatus = record.optString("status", "einsatzbereit").lowercase(Locale.ROOT).trim()
+                val itemType = when {
+                    payload.has("item_type") -> if (payload.optString("item_type") == "zubehoer") "zubehoer" else "geraet"
+                    prev != null -> if (prev.optString("item_type") == "zubehoer") "zubehoer" else "geraet"
+                    else -> "geraet"
+                }
+                val rawStatus = when {
+                    payload.has("status") && payload.optString("status", "").trim().isNotEmpty() ->
+                        payload.optString("status", "").lowercase(Locale.ROOT).trim()
+                    prev != null && prev.optString("status", "").trim().isNotEmpty() ->
+                        prev.optString("status", "").lowercase(Locale.ROOT).trim()
+                    else -> "einsatzbereit"
+                }
                 val statusVal = when (rawStatus) {
                     "fällig", "faellig", "due" -> "faellig"
                     "wartung", "in_wartung", "werkstatt" -> "wartung"
                     else -> "einsatzbereit"
                 }
 
-                val manufacturerVal = record.optString("manufacturer", "").trim()
-                val modelVal = record.optString("model", "").trim()
-                val categoryVal = record.optString("category", "").trim().ifEmpty {
-                    if (itemType == "zubehoer") "Zubehör" else "Allgemein"
+                val manufacturerVal = if (payload.has("manufacturer") && !payload.isNull("manufacturer")) {
+                    payload.optString("manufacturer", "").trim()
+                } else {
+                    prev?.optString("manufacturer", "")?.trim().orEmpty()
                 }
+                val modelVal = if (payload.has("model") && !payload.isNull("model")) {
+                    payload.optString("model", "").trim()
+                } else {
+                    prev?.optString("model", "")?.trim().orEmpty()
+                }
+                val categoryVal = firstNonBlank(
+                    if (payload.has("category") && !payload.isNull("category")) payload.optString("category", "") else "",
+                    prev?.optString("category", "").orEmpty(),
+                    if (itemType == "zubehoer") "Zubehör" else "Allgemein"
+                )
                 val autoTitle = listOf(manufacturerVal, modelVal).filter { it.isNotEmpty() }.joinToString(" ")
                 val nameVal = firstNonBlank(
-                    if (payload.has("name")) payload.optString("name", "") else "",
+                    if (payload.has("name") && !payload.isNull("name")) payload.optString("name", "") else "",
                     prev?.optString("name", "").orEmpty(),
                     autoTitle,
                     categoryVal,
                     if (itemType == "zubehoer") "Zubehör" else "Gerät"
                 )
 
-                val serialNumberVal = record.optString("serial_number", "").trim()
-                val purchaseDateVal = record.optString("purchase_date", "").trim()
-                val dealerVal = record.optString("dealer", "").trim()
-                val hasPurchasePrice = record.has("purchase_price") && !record.isNull("purchase_price") &&
-                    record.optString("purchase_price", "").trim().isNotEmpty()
-                val purchasePriceVal = if (hasPurchasePrice) round2(record.optDouble("purchase_price", 0.0)) else null
+                val serialNumberVal = if (payload.has("serial_number") && !payload.isNull("serial_number")) {
+                    payload.optString("serial_number", "").trim()
+                } else {
+                    prev?.optString("serial_number", "")?.trim().orEmpty()
+                }
+                val purchaseDateVal = if (payload.has("purchase_date") && !payload.isNull("purchase_date")) {
+                    payload.optString("purchase_date", "").trim()
+                } else {
+                    prev?.optString("purchase_date", "")?.trim().orEmpty()
+                }
+                val dealerVal = if (payload.has("dealer") && !payload.isNull("dealer")) {
+                    payload.optString("dealer", "").trim()
+                } else {
+                    prev?.optString("dealer", "")?.trim().orEmpty()
+                }
+                val purchasePriceVal: Double? = if (payload.has("purchase_price")) {
+                    if (payload.isNull("purchase_price") || payload.optString("purchase_price", "").trim().isEmpty()) {
+                        null
+                    } else {
+                        val v = payload.optDouble("purchase_price", Double.NaN)
+                        if (!v.isNaN()) round2(v) else null
+                    }
+                } else if (prev != null && prev.has("purchase_price") && !prev.isNull("purchase_price") && prev.optString("purchase_price", "").trim().isNotEmpty()) {
+                    val v = prev.optDouble("purchase_price", Double.NaN)
+                    if (!v.isNaN()) round2(v) else null
+                } else {
+                    null
+                }
 
                 val defaultFieldSource = if (
                     payload.optString("data_source") == "manufacturer" ||
@@ -1403,19 +1510,26 @@ class InfinityMcpDispatcher(
                 ) {
                     val cleanLabel = label.trim()
                     if (cleanLabel.isEmpty()) return
+                    val hasExplicitSection = !sectionStr.isNullOrBlank()
                     val cleanSection = sectionStr?.trim()?.ifEmpty { "Technische Daten" } ?: "Technische Daten"
                     val idx = fieldList.indexOfFirst { f ->
                         (!fId.isNullOrEmpty() && f.optString("id") == fId) ||
                             (f.optString("label").equals(cleanLabel, ignoreCase = true) &&
-                                f.optString("section", "Technische Daten").equals(cleanSection, ignoreCase = true))
+                                (f.optString("section", "Technische Daten").equals(cleanSection, ignoreCase = true) ||
+                                    !hasExplicitSection))
                     }
                     if (valueAny == null || valueAny == JSONObject.NULL || valueAny.toString().trim().isEmpty()) {
                         if (idx >= 0) fieldList.removeAt(idx)
                         return
                     }
+                    val effectiveSection = if (idx >= 0 && !hasExplicitSection) {
+                        fieldList[idx].optString("section", cleanSection).ifEmpty { cleanSection }
+                    } else {
+                        cleanSection
+                    }
                     val chosenType = when (typeStr?.lowercase(Locale.ROOT)?.trim()) {
                         "number", "unit", "date", "boolean", "text" -> typeStr.lowercase(Locale.ROOT).trim()
-                        else -> if (!unitStr.isNullOrBlank()) "unit" else "text"
+                        else -> if (!unitStr.isNullOrBlank()) "unit" else if (idx >= 0) fieldList[idx].optString("type", "text") else "text"
                     }
                     val chosenSource = when (sourceStr?.lowercase(Locale.ROOT)?.trim()) {
                         "manufacturer" -> "manufacturer"
@@ -1424,16 +1538,18 @@ class InfinityMcpDispatcher(
                     }
                     val resolvedId = (if (idx >= 0) fieldList[idx].optString("id") else "")
                         .ifEmpty { fId ?: "cf-${cleanLabel.lowercase(Locale.ROOT).replace(Regex("[^a-z0-9äöüß_-]"), "_")}" }
+                    val resolvedUnit = unitStr?.trim()?.ifEmpty { null }
+                        ?: (if (idx >= 0) optNullableString(fieldList[idx], "unit") else null)
 
                     val obj = JSONObject()
                         .put("id", resolvedId)
                         .put("label", cleanLabel)
                         .put("type", chosenType)
                         .put("value", valueAny)
-                        .put("section", cleanSection)
+                        .put("section", effectiveSection)
                         .put("source", chosenSource)
-                    if (!unitStr.isNullOrBlank()) {
-                        obj.put("unit", unitStr.trim())
+                    if (!resolvedUnit.isNullOrBlank()) {
+                        obj.put("unit", resolvedUnit)
                     }
                     if (idx >= 0) fieldList[idx] = obj else fieldList.add(obj)
                 }
@@ -1497,22 +1613,23 @@ class InfinityMcpDispatcher(
                 if (incomingCustomFields != null) {
                     for (i in 0 until incomingCustomFields.length()) {
                         val cf = incomingCustomFields.optJSONObject(i) ?: continue
-                        val secName = cf.optString("section", "Technische Daten").trim().ifEmpty { "Technische Daten" }
-                        sectionNamesSet.add(secName)
+                        val explicitSec = optNullableString(cf, "section")
+                        if (explicitSec != null) sectionNamesSet.add(explicitSec)
                         upsertDynamicField(
                             fId = optNullableString(cf, "id"),
                             label = firstNonBlank(cf.optString("label", ""), cf.optString("name", ""), cf.optString("key", "")),
                             typeStr = optNullableString(cf, "type"),
                             valueAny = cf.opt("value"),
                             unitStr = optNullableString(cf, "unit"),
-                            sectionStr = secName,
+                            sectionStr = explicitSec,
                             sourceStr = optNullableString(cf, "source") ?: defaultFieldSource
                         )
                     }
                 }
 
                 val reservedKeys = setOf(
-                    "id", "item_type", "category", "parent_equipment_id", "manufacturer", "model", "name",
+                    "id", "equipment_id", "record_id", "__force_update",
+                    "item_type", "category", "parent_equipment_id", "manufacturer", "model", "name",
                     "serial_number", "purchase_date", "purchase_price", "dealer",
                     "photo", "images", "add_images", "replace_images", "remove_image_ids", "set_primary_image_id",
                     "documents", "add_documents", "remove_document_ids",
@@ -1529,7 +1646,7 @@ class InfinityMcpDispatcher(
                     while (nk.hasNext()) {
                         val k = nk.next()
                         if (k == "created_at" || k == "updated_at" || k == "has_photo" || k == "photo_count") continue
-                        upsertDynamicField(null, k, null, payloadSpecs.opt(k), null, "Technische Daten", defaultFieldSource)
+                        upsertDynamicField(null, k, null, payloadSpecs.opt(k), null, null, defaultFieldSource)
                     }
                 }
 
@@ -1538,7 +1655,7 @@ class InfinityMcpDispatcher(
                     val k = payloadKeys.next()
                     if (!reservedKeys.contains(k)) {
                         if (payload.optJSONObject(k) == null && payload.optJSONArray(k) == null) {
-                            upsertDynamicField(null, k, null, payload.opt(k), null, "Technische Daten", defaultFieldSource)
+                            upsertDynamicField(null, k, null, payload.opt(k), null, null, defaultFieldSource)
                         }
                         record.remove(k)
                     }
@@ -1619,20 +1736,31 @@ class InfinityMcpDispatcher(
                     } else if (rawImg is JSONObject) {
                         val url = firstNonBlank(rawImg.optString("url", ""), rawImg.optString("src", ""), rawImg.optString("data", ""))
                         if (url.isEmpty()) return
-                        val imgId = rawImg.optString("id", "").trim().ifEmpty { "img-${System.currentTimeMillis()}-${imageList.size}" }
+                        val explicitImgId = optNullableString(rawImg, "id")
+                        val imgId = explicitImgId ?: "img-${System.currentTimeMillis()}-${imageList.size}"
                         val isPrim = rawImg.optBoolean("is_primary", false) || forcePrimary
                         val imgSrc = if (rawImg.optString("source") == "manufacturer" || defaultFieldSource == "manufacturer") "manufacturer" else "own"
-                        val existIdx = imageList.indexOfFirst { it.optString("id") == imgId || it.optString("url") == url }
+                        val existIdx = imageList.indexOfFirst {
+                            (explicitImgId != null && it.optString("id") == explicitImgId) || it.optString("url") == url
+                        }
                         if (isPrim) {
                             for (img in imageList) img.put("is_primary", false)
                         }
+                        val prevImg = if (existIdx >= 0) imageList[existIdx] else null
                         val obj = JSONObject()
-                            .put("id", if (existIdx >= 0) imageList[existIdx].optString("id") else imgId)
+                            .put("id", prevImg?.optString("id")?.ifEmpty { imgId } ?: imgId)
                             .put("url", url)
-                            .put("caption", firstNonBlank(rawImg.optString("caption", ""), rawImg.optString("title", "")))
+                            .put(
+                                "caption",
+                                firstNonBlank(
+                                    rawImg.optString("caption", ""),
+                                    rawImg.optString("title", ""),
+                                    prevImg?.optString("caption", "").orEmpty()
+                                )
+                            )
                             .put("source", imgSrc)
-                            .put("is_primary", isPrim || imageList.isEmpty())
-                            .put("added_at", rawImg.optString("added_at", nowIso))
+                            .put("is_primary", isPrim || (prevImg?.optBoolean("is_primary", false) ?: imageList.isEmpty()))
+                            .put("added_at", rawImg.optString("added_at", prevImg?.optString("added_at", nowIso) ?: nowIso))
                         if (existIdx >= 0) imageList[existIdx] = obj else imageList.add(obj)
                     }
                 }
@@ -1678,7 +1806,8 @@ class InfinityMcpDispatcher(
                     if (rawDoc == null) return
                     val url = firstNonBlank(rawDoc.optString("url", ""), rawDoc.optString("data", ""))
                     if (url.isEmpty()) return
-                    val docId = rawDoc.optString("id", "").trim().ifEmpty { "doc-${System.currentTimeMillis()}-${docList.size}" }
+                    val explicitDocId = optNullableString(rawDoc, "id")
+                    val docId = explicitDocId ?: "doc-${System.currentTimeMillis()}-${docList.size}"
                     val dType = when (rawDoc.optString("type", "sonstiges")) {
                         "rechnung", "anleitung" -> rawDoc.optString("type")
                         else -> "sonstiges"
@@ -1688,14 +1817,17 @@ class InfinityMcpDispatcher(
                         rawDoc.optString("name", ""),
                         if (dType == "rechnung") "Rechnung" else if (dType == "anleitung") "Bedienungsanleitung" else "Dokument"
                     )
-                    val existIdx = docList.indexOfFirst { it.optString("id") == docId || it.optString("url") == url }
+                    val existIdx = docList.indexOfFirst {
+                        (explicitDocId != null && it.optString("id") == explicitDocId) || it.optString("url") == url
+                    }
+                    val prevDoc = if (existIdx >= 0) docList[existIdx] else null
                     val obj = JSONObject()
-                        .put("id", if (existIdx >= 0) docList[existIdx].optString("id") else docId)
+                        .put("id", prevDoc?.optString("id")?.ifEmpty { docId } ?: docId)
                         .put("title", title)
                         .put("type", dType)
                         .put("url", url)
-                        .put("added_at", rawDoc.optString("added_at", nowIso))
-                    val mime = optNullableString(rawDoc, "mime_type")
+                        .put("added_at", rawDoc.optString("added_at", prevDoc?.optString("added_at", nowIso) ?: nowIso))
+                    val mime = optNullableString(rawDoc, "mime_type") ?: (if (prevDoc != null) optNullableString(prevDoc, "mime_type") else null)
                     if (mime != null) obj.put("mime_type", mime)
                     if (existIdx >= 0) docList[existIdx] = obj else docList.add(obj)
                 }
@@ -1714,25 +1846,78 @@ class InfinityMcpDispatcher(
                 val docsJson = JSONArray()
                 for (d in docList) docsJson.put(d)
 
-                val parsedInterval = record.optInt("interval_months", 6).coerceAtLeast(1)
-                val lastMaintIso = assertIsoDate(record.optString("last_maintenance", today), "last_maintenance")
-                val nextMaintIso = if (payload.has("next_maintenance") && payload.optString("next_maintenance", "").trim().isNotEmpty()) {
-                    assertIsoDate(payload.optString("next_maintenance", ""), "next_maintenance")
-                } else if ((payload.has("last_maintenance") || payload.has("interval_months")) && !payload.has("next_maintenance")) {
-                    addDaysIso(lastMaintIso, parsedInterval * 30)
-                } else {
-                    assertIsoDate(record.optString("next_maintenance", addDaysIso(lastMaintIso, parsedInterval * 30)), "next_maintenance")
+                val parsedInterval = when {
+                    payload.has("interval_months") && !payload.isNull("interval_months") && payload.optString("interval_months", "").trim().isNotEmpty() ->
+                        payload.optInt("interval_months", 6).coerceAtLeast(1)
+                    prev != null && prev.optInt("interval_months", 0) > 0 ->
+                        prev.optInt("interval_months", 6).coerceAtLeast(1)
+                    else -> 6
+                }
+                val lastMaintIso = when {
+                    payload.has("last_maintenance") && payload.optString("last_maintenance", "").trim().isNotEmpty() ->
+                        assertIsoDate(payload.optString("last_maintenance", ""), "last_maintenance")
+                    prev != null && prev.has("last_maintenance") && !prev.isNull("last_maintenance") ->
+                        prev.optString("last_maintenance", "")
+                    else -> today
+                }
+                val nextMaintIso = when {
+                    payload.has("next_maintenance") && payload.optString("next_maintenance", "").trim().isNotEmpty() ->
+                        assertIsoDate(payload.optString("next_maintenance", ""), "next_maintenance")
+                    (payload.has("last_maintenance") || payload.has("interval_months")) && !payload.has("next_maintenance") && lastMaintIso.isNotEmpty() ->
+                        addDaysIso(lastMaintIso, parsedInterval * 30)
+                    prev != null && prev.has("next_maintenance") && !prev.isNull("next_maintenance") ->
+                        prev.optString("next_maintenance", "")
+                    else -> addDaysIso(lastMaintIso.ifEmpty { today }, parsedInterval * 30)
                 }
 
-                if (record.has("quantity") && !record.isNull("quantity") && record.optString("quantity", "").trim().isNotEmpty()) {
-                    record.put("quantity", record.optInt("quantity", 1).coerceAtLeast(0))
+                val qtySourceObj = if (payload.has("quantity")) payload else prev
+                if (qtySourceObj != null && qtySourceObj.has("quantity") && !qtySourceObj.isNull("quantity") && qtySourceObj.optString("quantity", "").trim().isNotEmpty()) {
+                    record.put("quantity", qtySourceObj.optInt("quantity", 1).coerceAtLeast(0))
                 } else if (itemType == "zubehoer") {
                     record.put("quantity", 1)
                 } else {
                     record.put("quantity", JSONObject.NULL)
                 }
 
+                // Wartungshistorie verlustfrei zusammenführen
+                val mergedHistory = JSONArray()
+                val prevHist = prev?.optJSONArray("history")
+                if (prevHist != null) {
+                    for (i in 0 until prevHist.length()) {
+                        val h = prevHist.optJSONObject(i) ?: continue
+                        mergedHistory.put(JSONObject(h.toString()))
+                    }
+                }
+                val payHist = payload.optJSONArray("history")
+                if (payHist != null) {
+                    for (i in 0 until payHist.length()) {
+                        val hObj = payHist.optJSONObject(i) ?: continue
+                        val hId = hObj.optString("id", "").trim()
+                        val hDate = hObj.optString("date", "").trim()
+                        val hNote = hObj.optString("note", "").trim()
+                        var exists = false
+                        for (j in 0 until mergedHistory.length()) {
+                            val ex = mergedHistory.optJSONObject(j) ?: continue
+                            if ((hId.isNotEmpty() && ex.optString("id", "") == hId) ||
+                                (hDate.isNotEmpty() && ex.optString("date", "") == hDate && ex.optString("note", "") == hNote)
+                            ) {
+                                exists = true
+                                break
+                            }
+                        }
+                        if (!exists && (hDate.isNotEmpty() || hNote.isNotEmpty())) {
+                            mergedHistory.put(
+                                JSONObject()
+                                    .put("id", hId.ifEmpty { "mh-${System.currentTimeMillis()}-${mergedHistory.length()}" })
+                                    .put("date", hDate.ifEmpty { today })
+                                    .put("note", hNote)
+                            )
+                        }
+                    }
+                }
+
                 for (tmpKey in listOf(
+                    "equipment_id", "record_id", "__force_update",
                     "has_photo", "photo_count", "image_count", "document_count", "remove_photo",
                     "add_images", "replace_images", "remove_image_ids", "set_primary_image_id",
                     "add_documents", "remove_document_ids", "sections", "remove_fields",
@@ -1744,11 +1929,15 @@ class InfinityMcpDispatcher(
                 val customSectionsJson = JSONArray()
                 for (s in sectionNamesSet) customSectionsJson.put(s)
 
+                val parentIdVal = when {
+                    payload.has("parent_equipment_id") -> optNullableString(payload, "parent_equipment_id")
+                    prev != null -> optNullableString(prev, "parent_equipment_id")
+                    else -> null
+                }
+
                 record.put("item_type", itemType)
                 record.put("category", categoryVal)
-                if (!record.has("parent_equipment_id") || record.optString("parent_equipment_id", "").trim().isEmpty()) {
-                    record.put("parent_equipment_id", JSONObject.NULL)
-                }
+                record.put("parent_equipment_id", parentIdVal ?: JSONObject.NULL)
                 record.put("manufacturer", manufacturerVal)
                 record.put("model", modelVal)
                 record.put("name", nameVal)
@@ -1762,13 +1951,21 @@ class InfinityMcpDispatcher(
                 record.put("custom_fields", customFieldsJson)
                 record.put("custom_sections", customSectionsJson)
                 record.put("specs", mergedSpecs)
-                record.put("notes", record.optString("notes", ""))
+                record.put(
+                    "notes",
+                    if (payload.has("notes") && !payload.isNull("notes")) payload.optString("notes", "")
+                    else prev?.optString("notes", "").orEmpty()
+                )
                 record.put("status", statusVal)
                 record.put("last_maintenance", lastMaintIso)
                 record.put("next_maintenance", nextMaintIso)
-                record.put("maintenance_plan", record.optString("maintenance_plan", ""))
+                record.put(
+                    "maintenance_plan",
+                    if (payload.has("maintenance_plan") && !payload.isNull("maintenance_plan")) payload.optString("maintenance_plan", "")
+                    else prev?.optString("maintenance_plan", "").orEmpty()
+                )
                 record.put("interval_months", parsedInterval)
-                if (record.optJSONArray("history") == null) record.put("history", JSONArray())
+                record.put("history", mergedHistory)
                 record.put("created_at", prev?.optString("created_at")?.takeIf { it.isNotEmpty() } ?: nowIso)
                 record.put("updated_at", nowIso)
 
@@ -1777,11 +1974,22 @@ class InfinityMcpDispatcher(
                 val accessoriesArr = payload.optJSONArray("accessories")
                 if (itemType == "geraet" && accessoriesArr != null) {
                     for (i in 0 until accessoriesArr.length()) {
-                        val accObj = accessoriesArr.optJSONObject(i) ?: continue
-                        val accCopy = JSONObject(accObj.toString())
-                        accCopy.put("item_type", "zubehoer")
-                        accCopy.put("parent_equipment_id", id)
-                        upsertRecordInState(state, "equipments", accCopy)
+                        val accEntry = accessoriesArr.opt(i) ?: continue
+                        if (accEntry is String) {
+                            val accName = accEntry.trim()
+                            if (accName.isNotEmpty()) {
+                                val accCopy = JSONObject()
+                                    .put("name", accName)
+                                    .put("item_type", "zubehoer")
+                                    .put("parent_equipment_id", id)
+                                upsertRecordInState(state, "equipments", accCopy)
+                            }
+                        } else if (accEntry is JSONObject) {
+                            val accCopy = JSONObject(accEntry.toString())
+                            accCopy.put("item_type", "zubehoer")
+                            accCopy.put("parent_equipment_id", id)
+                            upsertRecordInState(state, "equipments", accCopy)
+                        }
                     }
                 }
             }
@@ -3047,6 +3255,7 @@ class InfinityMcpDispatcher(
                                             "enum",
                                             JSONArray()
                                                 .put("upsert")
+                                                .put("update")
                                                 .put("delete")
                                                 .put("toggle_lcr")
                                                 .put("maintenance")
