@@ -509,7 +509,7 @@ class NativeStoreManager(context: Context) {
         val extUri = getPersistedBackupUri()
         obj.put("hasExternalTarget", extUri != null)
         obj.put("targetLabel", extUri?.lastPathSegment ?: "hausgarten-backup.zip (Gerätespeicher)")
-        obj.put("lastBackupDate", prefs.getString(KEY_LAST_BACKUP_ISO, JSONObject.NULL))
+        obj.put("lastBackupDate", prefs.getString(KEY_LAST_BACKUP_ISO, null) ?: JSONObject.NULL)
         obj.put("hasInternalBackup", internalZipFile.exists())
         return obj.toString()
     }
