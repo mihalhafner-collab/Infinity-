@@ -16,7 +16,7 @@ data class McpCredentials(
     val baseUrl: String,
     val token: String,
     val adminToken: String = "",
-    val gmailSenderEmail: String = DEFAULT_GMAIL_SENDER,
+    val gmailSenderEmail: String = SecureMcpCredentialStore.DEFAULT_GMAIL_SENDER,
     val gmailAppPassword: String = "",
     val gmailOAuthToken: String = ""
 ) {
