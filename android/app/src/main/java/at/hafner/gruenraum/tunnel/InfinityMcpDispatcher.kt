@@ -1250,7 +1250,7 @@ class InfinityMcpDispatcher(
                     val pk = prevSpecs.keys()
                     while (pk.hasNext()) {
                         val k = pk.next()
-                        if (k == "created_at" || k == "updated_at" || k == "has_photo" || k == "photo_count") continue
+                        if (k == "created_at" || k == "updated_at" || k == "has_photo" || k == "photo_count" || k == "remove_photo") continue
                         val v = prevSpecs.optString(k, "").trim()
                         if (v.isNotEmpty() && !prevSpecs.isNull(k)) {
                             mergedSpecs.put(k, v)
@@ -1262,7 +1262,7 @@ class InfinityMcpDispatcher(
                     val nk = payloadSpecs.keys()
                     while (nk.hasNext()) {
                         val k = nk.next()
-                        if (k == "created_at" || k == "updated_at" || k == "has_photo" || k == "photo_count" || payloadSpecs.isNull(k) || payloadSpecs.optString(k, "").trim().isEmpty()) {
+                        if (k == "created_at" || k == "updated_at" || k == "has_photo" || k == "photo_count" || k == "remove_photo" || payloadSpecs.isNull(k) || payloadSpecs.optString(k, "").trim().isEmpty()) {
                             mergedSpecs.remove(k)
                         } else {
                             mergedSpecs.put(k.trim(), payloadSpecs.optString(k, "").trim())

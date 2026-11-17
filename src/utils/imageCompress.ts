@@ -2,24 +2,25 @@ export function normalizePhotoSrc(raw?: string | null): string | null {
   if (!raw || typeof raw !== 'string') return null;
   const trimmed = raw.trim();
   if (!trimmed || trimmed === 'null' || trimmed === 'undefined') return null;
-  if (
-    trimmed.startsWith('data:image/') ||
-    trimmed.startsWith('blob:') ||
-    trimmed.startsWith('http://') ||
-    trimmed.startsWith('https://') ||
-    trimmed.startsWith('/')
-  ) {
-    return trimmed;
+  // JPEG-Base64 beginnt ebenfalls mit "/": vor relativen Pfaden prüfen.
+  const mime = trimmed.startsWith('/9j/') ? 'jpeg'
+    : trimmed.startsWith('iVBOR') ? 'png'
+    : trimmed.startsWith('UklGR') ? 'webp' : null;
+  if (mime) {
+    const base64 = trimmed.replace(/\s/g, '');
+    return /^[A-Za-z0-9+/]+={0,2}$/.test(base64)
+      ? `data:image/${mime};base64,${base64}` : null;
   }
-  if (trimmed.startsWith('/9j/')) {
-    return `data:image/jpeg;base64,${trimmed}`;
+  if (/^data:image\/[a-z0-9.+-]+(?:;[a-z0-9=.+-]+)*,[\s\S]+$/i.test(trimmed)) return trimmed;
+  if (/^blob:[^\s]+$/.test(trimmed)) return trimmed;
+  if (/^https?:\/\//i.test(trimmed)) {
+    try {
+      return new URL(trimmed).hostname ? trimmed : null;
+    } catch {
+      return null;
+    }
   }
-  if (trimmed.startsWith('iVBOR')) {
-    return `data:image/png;base64,${trimmed}`;
-  }
-  if (trimmed.startsWith('UklGR')) {
-    return `data:image/webp;base64,${trimmed}`;
-  }
+  if (trimmed.startsWith('/')) return trimmed;
   return null;
 }
 
@@ -62,20 +63,22 @@ export function compressImageFile(
       reader.onload = () => {
         const resultStr = String(reader.result || '');
         const img = new Image();
-        img.onerror = () => {
-          if (resultStr.startsWith('data:image/')) {
-            resolve(resultStr);
-          } else {
-            reject(new Error('Bild konnte nicht geladen werden'));
-          }
-        };
+        img.onerror = () => reject(new Error('Bild konnte nicht geladen werden'));
         img.onload = () => {
-          const compressed = renderImageToDataUrl(img, maxDim, quality);
-          resolve(compressed || resultStr);
+          try {
+            const compressed = renderImageToDataUrl(img, maxDim, quality);
+            resolve(compressed || resultStr);
+          } catch (error) {
+            reject(error);
+          }
         };
         img.src = resultStr;
       };
-      reader.readAsDataURL(file);
+      try {
+        reader.readAsDataURL(file);
+      } catch (error) {
+        reject(error);
+      }
     };
 
     if (typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function') {

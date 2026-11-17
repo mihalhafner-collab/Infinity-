@@ -2,5 +2,4 @@
 <full-backup-content>
     <include domain="file" path="hafner_app_store.json" />
     <include domain="file" path="backups" />
-    <exclude domain="sharedpref" path="hafner_mcp_sync_meta.xml" />
 </full-backup-content>
