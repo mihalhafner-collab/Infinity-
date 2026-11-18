@@ -314,4 +314,9 @@ class PixelNativeBridge(
             activity.updateCanGoBackInApp(canGoBack)
         }
     }
+
+    @JavascriptInterface
+    fun onMcpInvoicePdfReady(callbackId: String, payloadJson: String) {
+        MainActivity.completeMcpPdfCallback(callbackId, payloadJson)
+    }
 }

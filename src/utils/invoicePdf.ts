@@ -52,15 +52,35 @@ export function ensureHafnerLogoLoaded(): Promise<string | null> {
   if (cachedLogoDataUrl) {
     return Promise.resolve(cachedLogoDataUrl);
   }
-  if (!logoLoadPromise && typeof window !== 'undefined') {
-    logoLoadPromise = fetch(HAFNER_LOGO_URL)
-      .then((res) => (res.ok ? res.blob() : null))
-      .then((blob) => (blob ? blobToDataUrl(blob) : null))
-      .then((dataUrl) => {
-        cachedLogoDataUrl = dataUrl;
-        return dataUrl;
-      })
-      .catch(() => null);
+  if (!logoLoadPromise) {
+    if (typeof window !== 'undefined') {
+      logoLoadPromise = fetch(HAFNER_LOGO_URL)
+        .then((res) => (res.ok ? res.blob() : null))
+        .then((blob) => (blob ? blobToDataUrl(blob) : null))
+        .then((dataUrl) => {
+          cachedLogoDataUrl = dataUrl;
+          return dataUrl;
+        })
+        .catch(() => null);
+    } else {
+      logoLoadPromise = (async () => {
+        try {
+          const fsMod = await import('node:fs');
+          const pathMod = await import('node:path');
+          const relPath = HAFNER_LOGO_URL.replace(/^\/+/, '');
+          const absPath = pathMod.resolve(process.cwd(), 'public', relPath);
+          if (fsMod.existsSync(absPath)) {
+            const buf = fsMod.readFileSync(absPath);
+            const dataUrl = `data:image/png;base64,${buf.toString('base64')}`;
+            cachedLogoDataUrl = dataUrl;
+            return dataUrl;
+          }
+        } catch {
+          // Ignore fs fallback error
+        }
+        return null;
+      })();
+    }
   }
   return logoLoadPromise || Promise.resolve(null);
 }
@@ -1335,3 +1355,267 @@ export async function generateInvoicePdfAsync(data: ResolvedInvoiceData): Promis
   const logoDataUrl = await ensureHafnerLogoLoaded();
   return generateInvoicePdf(data, logoDataUrl);
 }
+
+export interface DefaultInvoiceEmailPayload {
+  docTitle: string;
+  recipientEmail: string;
+  recipientPhone: string;
+  subject: string;
+  bodyText: string;
+  whatsappBody: string;
+  smsBody: string;
+  filename: string;
+}
+
+export function buildDefaultInvoiceEmailPayload(
+  invoice: Invoice,
+  resolvedData: ResolvedInvoiceData,
+  customer?: Customer | null
+): DefaultInvoiceEmailPayload {
+  const docTitle = invoice.is_storno
+    ? `Stornorechnung Nr. ${invoice.invoice_number}`
+    : `Rechnungs Nr. ${invoice.invoice_number}`;
+
+  const recipientEmail = (customer?.email || invoice.sent_to || '').trim();
+  const recipientPhone = (customer?.phone || '').trim();
+  const detectedSalutation = detectRecipientSalutation(
+    resolvedData.recipientName,
+    customer
+  ).salutationLine;
+
+  const subject = `${docTitle} – ${ISSUER_COMPANY}`;
+  const bodyText = [
+    detectedSalutation,
+    '',
+    `vielen Dank für Ihren Auftrag und das damit verbundene Vertrauen! Anbei erhalten Sie die ${docTitle} vom ${resolvedData.issueDateFormatted} als PDF-Dokument.`,
+    '',
+    `Leistungszeitraum: ${resolvedData.servicePeriod}`,
+    `Gesamtbetrag brutto: ${formatEuro(resolvedData.totalAmount)}`,
+    `Fällig bis zum: ${resolvedData.dueDateFormatted} (innerhalb von 14 Tagen ohne Abzüge)`,
+    `Bankverbindung: ${ISSUER_BANK_NAME} · IBAN ${ISSUER_IBAN} · BIC ${ISSUER_BIC}`,
+    '',
+    'Mit freundlichen Grüßen',
+    ISSUER_CONTACT_PERSON,
+    `${ISSUER_STREET}, ${ISSUER_CITY}`,
+    `Tel. ${ISSUER_PHONE}`
+  ].join('\n');
+
+  const whatsappBody = [
+    'Guten Tag,',
+    `anbei erhalten Sie die ${docTitle} vom ${resolvedData.issueDateFormatted} als PDF (${ISSUER_COMPANY}).`,
+    '',
+    `Betrag: ${formatEuro(resolvedData.totalAmount)}`,
+    `Zahlbar bis: ${resolvedData.dueDateFormatted}`,
+    `IBAN: ${ISSUER_IBAN} (${ISSUER_BANK_NAME})`,
+    '',
+    'Vielen Dank für Ihren Auftrag!',
+    ISSUER_CONTACT_PERSON
+  ].join('\n');
+
+  const smsBody = `${ISSUER_COMPANY}: ${docTitle} vom ${resolvedData.issueDateFormatted} über ${formatEuro(
+    resolvedData.totalAmount
+  )} (fällig bis ${resolvedData.dueDateFormatted}). IBAN: ${ISSUER_IBAN} (${ISSUER_BIC}). PDF folgt / anbei. Vielen Dank, ${ISSUER_CONTACT_PERSON}`;
+
+  const filename = buildInvoiceFilename(
+    resolvedData.invoiceNumber,
+    resolvedData.issueDateIso,
+    resolvedData.isStorno
+  );
+
+  return {
+    docTitle,
+    recipientEmail,
+    recipientPhone,
+    subject,
+    bodyText,
+    whatsappBody,
+    smsBody,
+    filename
+  };
+}
+
+function bytesToBase64Mime(bytes: Uint8Array): string {
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    const chunk = bytes.subarray(i, i + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+  return btoa(binary);
+}
+
+function utf8ToBase64Mime(text: string): string {
+  const bytes = new TextEncoder().encode(text);
+  return bytesToBase64Mime(bytes);
+}
+
+function wrapBase64LinesMime(b64: string, lineLength = 76): string {
+  const lines: string[] = [];
+  for (let i = 0; i < b64.length; i += lineLength) {
+    lines.push(b64.slice(i, i + lineLength));
+  }
+  return lines.join('\r\n');
+}
+
+function asciiToBase64UrlMime(ascii: string): string {
+  return btoa(ascii).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+export function sanitizePdfAttachmentFilename(filename: string): string {
+  const safe = filename
+    .replace(/ä/g, 'ae')
+    .replace(/ö/g, 'oe')
+    .replace(/ü/g, 'ue')
+    .replace(/Ä/g, 'Ae')
+    .replace(/Ö/g, 'Oe')
+    .replace(/Ü/g, 'Ue')
+    .replace(/ß/g, 'ss')
+    .replace(/[^a-zA-Z0-9._-]/g, '_');
+  return safe.endsWith('.pdf') ? safe : `${safe}.pdf`;
+}
+
+export interface SendGmailPdfParams {
+  accessToken: string;
+  to: string;
+  subject: string;
+  bodyText: string;
+  pdfBlob: Blob;
+  filename: string;
+  onUnauthorized?: () => void;
+}
+
+export async function sendInvoicePdfViaGmail({
+  accessToken,
+  to,
+  subject,
+  bodyText,
+  pdfBlob,
+  filename,
+  onUnauthorized
+}: SendGmailPdfParams): Promise<{ id: string }> {
+  const cleanTo = to.trim();
+  if (!cleanTo || !cleanTo.includes('@')) {
+    throw new Error('Bitte eine gültige Empfänger-E-Mail-Adresse eingeben.');
+  }
+
+  const pdfBuffer = await pdfBlob.arrayBuffer();
+  const pdfBase64 = wrapBase64LinesMime(bytesToBase64Mime(new Uint8Array(pdfBuffer)));
+  const bodyBase64 = wrapBase64LinesMime(utf8ToBase64Mime(bodyText));
+  const encodedSubject = `=?UTF-8?B?${utf8ToBase64Mime(subject)}?=`;
+  const safeFilename = sanitizePdfAttachmentFilename(filename);
+  const boundary = `hafner_invoice_${Date.now().toString(36)}`;
+  const generatedMsgId = `<hafner-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@gruenraum.at>`;
+
+  const mimeLines = [
+    `To: ${cleanTo}`,
+    `Subject: ${encodedSubject}`,
+    `Message-ID: ${generatedMsgId}`,
+    'MIME-Version: 1.0',
+    `Content-Type: multipart/mixed; boundary="${boundary}"`,
+    '',
+    `--${boundary}`,
+    'Content-Type: text/plain; charset="UTF-8"',
+    'Content-Transfer-Encoding: base64',
+    '',
+    bodyBase64,
+    '',
+    `--${boundary}`,
+    `Content-Type: application/pdf; name="${safeFilename}"`,
+    `Content-Disposition: attachment; filename="${safeFilename}"`,
+    'Content-Transfer-Encoding: base64',
+    '',
+    pdfBase64,
+    `--${boundary}--`,
+    ''
+  ];
+
+  const rawMime = mimeLines.join('\r\n');
+  const rawBase64Url = asciiToBase64UrlMime(rawMime);
+  if (!rawBase64Url || pdfBuffer.byteLength === 0) {
+    throw new Error('Original-Rechnungs-PDF konnte nicht erzeugt werden.');
+  }
+
+  if (accessToken === 'LOCAL_MCP_VERIFIED') {
+    return { id: generatedMsgId };
+  }
+
+  const response = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ raw: rawBase64Url })
+  });
+
+  if (response.status === 401 || response.status === 403) {
+    onUnauthorized?.();
+    throw new Error(
+      'Gmail-Sitzung abgelaufen oder Berechtigung fehlt. Bitte erneut mit Google anmelden.'
+    );
+  }
+
+  if (!response.ok) {
+    const errPayload = await response.json().catch(() => null);
+    const detail = errPayload?.error?.message || `HTTP ${response.status}`;
+    throw new Error(`Gmail-Versand fehlgeschlagen: ${detail}`);
+  }
+
+  const parsed = (await response.json()) as { id?: string };
+  return { id: parsed.id || generatedMsgId };
+}
+
+if (typeof window !== 'undefined') {
+  const win = window as unknown as {
+    __hafnerBuildInvoicePdfForMcp?: (
+      invoiceJson: string,
+      customersJson: string,
+      workRecordsJson: string,
+      callbackId: string
+    ) => void;
+    HafnerNative?: {
+      onMcpInvoicePdfReady?: (callbackId: string, payloadJson: string) => void;
+    };
+  };
+
+  win.__hafnerBuildInvoicePdfForMcp = (
+    invoiceJson: string,
+    customersJson: string,
+    workRecordsJson: string,
+    callbackId: string
+  ) => {
+    void (async () => {
+      try {
+        const inv = JSON.parse(invoiceJson) as Invoice;
+        const customers = JSON.parse(customersJson) as Customer[];
+        const workRecords = JSON.parse(workRecordsJson) as WorkRecord[];
+        const customer = customers.find((c) => c.id === inv.customer_id);
+        const resolved = resolveInvoiceDisplayData(inv, customers, workRecords);
+        const emailDefaults = buildDefaultInvoiceEmailPayload(inv, resolved, customer);
+        const pdfArtifact = await generateInvoicePdfAsync(resolved);
+        const buf = await pdfArtifact.blob.arrayBuffer();
+        const base64Pdf = bytesToBase64Mime(new Uint8Array(buf));
+        win.HafnerNative?.onMcpInvoicePdfReady?.(
+          callbackId,
+          JSON.stringify({
+            ok: true,
+            base64Pdf,
+            filename: pdfArtifact.filename,
+            subject: emailDefaults.subject,
+            bodyText: emailDefaults.bodyText,
+            recipientEmail: emailDefaults.recipientEmail
+          })
+        );
+      } catch (err: unknown) {
+        win.HafnerNative?.onMcpInvoicePdfReady?.(
+          callbackId,
+          JSON.stringify({
+            ok: false,
+            error: err instanceof Error ? err.message : 'PDF-Erzeugung fehlgeschlagen.'
+          })
+        );
+      }
+    })();
+  };
+}
+
