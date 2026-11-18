@@ -1275,20 +1275,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun resumePixelTunnelIfEnabled() {
+        // Standardmäßig wird die direkte Infinity-MCP-Verbindung (/mcp) verwendet.
+        // Die ältere Pixel-Tunnel-Pollschnittstelle wird beim App-Start nicht mehr
+        // automatisch im Hintergrund gestartet, um unnötige HTTP-429-Anfragen zu vermeiden.
         try {
             val tunnelCfg = PixelTunnelConfig(this)
-            if (tunnelCfg.enabled() && tunnelCfg.configured() && !PixelTunnelService.isServiceRunning()) {
-                val hasNotifPerm = if (Build.VERSION.SDK_INT >= 33) {
-                    ContextCompat.checkSelfPermission(
-                        this,
-                        Manifest.permission.POST_NOTIFICATIONS
-                    ) == PackageManager.PERMISSION_GRANTED
-                } else {
-                    true
-                }
-                if (hasNotifPerm) {
-                    startForegroundService(Intent(this, PixelTunnelService::class.java))
-                }
+            if (tunnelCfg.enabled() && !tunnelCfg.configured()) {
+                tunnelCfg.enabled(false)
             }
         } catch (_: Exception) {
         }

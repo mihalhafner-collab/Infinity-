@@ -573,6 +573,69 @@ export function getAdminOverview(includeFullSnapshot = false) {
   };
 }
 
+function normalizeSearchText(raw: unknown): string {
+  return String(raw ?? '')
+    .toLowerCase()
+    .replace(/[,.;:/\\()[\]{}"'`]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function normalizeSearchTokens(query: string): string[] {
+  const norm = normalizeSearchText(query);
+  if (!norm) return [];
+  return norm.split(' ').filter(Boolean);
+}
+
+function customerNameMatchScore(item: Record<string, unknown>, tokens: string[]): number {
+  if (tokens.length === 0) return 0;
+  const nameNorm = normalizeSearchText(item.name);
+  const companyNorm = normalizeSearchText(item.company);
+  const combinedName = `${nameNorm} ${companyNorm}`.trim();
+  const nameWords = combinedName.split(' ').filter(Boolean);
+
+  if (tokens.every((t) => nameWords.includes(t))) {
+    return 100;
+  }
+  if (tokens.every((t) => combinedName.includes(t))) {
+    return 80;
+  }
+  const primaryFields = normalizeSearchText(
+    `${item.id ?? ''} ${item.name ?? ''} ${item.company ?? ''} ${item.email ?? ''} ${item.phone ?? ''} ${item.street ?? ''} ${item.city ?? ''}`
+  );
+  if (tokens.every((t) => primaryFields.includes(t))) {
+    return 50;
+  }
+  return 10;
+}
+
+function resolveCustomerByIdOrName(
+  rawRef: string | undefined,
+  customers: Customer[]
+): Customer | undefined {
+  const ref = String(rawRef || '').trim();
+  if (!ref) return undefined;
+  const exact = customers.find(
+    (c) => c.id === ref || c.id.toLowerCase() === ref.toLowerCase()
+  );
+  if (exact) return exact;
+
+  const tokens = normalizeSearchTokens(ref);
+  if (tokens.length === 0) return undefined;
+
+  let bestCustomer: Customer | undefined;
+  let bestScore = 0;
+  for (const c of customers) {
+    const rec = c as unknown as Record<string, unknown>;
+    const score = customerNameMatchScore(rec, tokens);
+    if (score >= 80 && score > bestScore) {
+      bestScore = score;
+      bestCustomer = c;
+    }
+  }
+  return bestCustomer;
+}
+
 export function queryCollection(params: {
   collection: CollectionName | 'taxSettings' | 'all';
   id?: string;
@@ -643,18 +706,37 @@ export function queryCollection(params: {
   let items = [...(data[params.collection] as unknown as Array<Record<string, unknown>>)];
 
   if (params.id) {
-    items = items.filter((item) => String(item.id) === params.id);
-  }
-  if (params.customer_id) {
+    const rawId = params.id.trim();
+    const rawIdLower = rawId.toLowerCase();
     items = items.filter(
       (item) =>
-        String(item.customer_id || '') === params.customer_id ||
-        String(item.billing_customer_id || '') === params.customer_id ||
-        String(item.default_billing_customer_id || '') === params.customer_id ||
-        (params.collection === 'workRecords' &&
-          getEffectiveBillingCustomerId(item as unknown as WorkRecord, data.customers) ===
-            params.customer_id)
+        String(item.id || '') === rawId ||
+        String(item.id || '').toLowerCase() === rawIdLower ||
+        (params.collection === 'invoices' &&
+          (String(item.invoice_number || '') === rawId ||
+            String(item.invoice_number || '').toLowerCase() === rawIdLower))
     );
+  }
+  if (params.customer_id) {
+    const resolvedCust = resolveCustomerByIdOrName(params.customer_id, data.customers);
+    const targetCustomerId = resolvedCust ? resolvedCust.id : params.customer_id.trim();
+    if (params.collection === 'customers') {
+      items = items.filter(
+        (item) =>
+          String(item.id || '') === targetCustomerId ||
+          String(item.default_billing_customer_id || '') === targetCustomerId
+      );
+    } else {
+      items = items.filter(
+        (item) =>
+          String(item.customer_id || '') === targetCustomerId ||
+          String(item.billing_customer_id || '') === targetCustomerId ||
+          String(item.default_billing_customer_id || '') === targetCustomerId ||
+          (params.collection === 'workRecords' &&
+            getEffectiveBillingCustomerId(item as unknown as WorkRecord, data.customers) ===
+              targetCustomerId)
+      );
+    }
   }
   if (params.status) {
     items = items.filter((item) => String(item.status || '') === params.status);
@@ -688,8 +770,59 @@ export function queryCollection(params: {
     });
   }
   if (params.search && params.search.trim()) {
-    const q = params.search.trim().toLowerCase();
-    items = items.filter((item) => JSON.stringify(stripHeavyPhotos(item, false)).toLowerCase().includes(q));
+    const tokens = normalizeSearchTokens(params.search);
+    if (tokens.length > 0) {
+      items = items.filter((item) => {
+        const searchable = normalizeSearchText(JSON.stringify(stripHeavyPhotos(item, false)));
+        return tokens.every((token) => searchable.includes(token));
+      });
+      if (params.collection === 'customers') {
+        items.sort((a, b) => customerNameMatchScore(b, tokens) - customerNameMatchScore(a, tokens));
+      }
+    }
+  }
+
+  let workSummary: Record<string, unknown> | undefined;
+  if (params.collection === 'workRecords') {
+    let openBillableCount = 0;
+    let openBillableHours = 0;
+    let openBillableAmountEur = 0;
+    let lcrCount = 0;
+    let lcrHours = 0;
+    let lcrAmountEur = 0;
+    let billedCount = 0;
+    let billedHours = 0;
+    let billedAmountEur = 0;
+
+    for (const raw of items) {
+      const w = raw as unknown as WorkRecord;
+      const hrs = Number(w.hours || 0);
+      const amt = Number(w.accounting_amount || 0);
+      if (w.settlement_id) {
+        billedCount++;
+        billedHours += hrs;
+        billedAmountEur += amt;
+      } else if (w.is_lcr) {
+        lcrCount++;
+        lcrHours += hrs;
+        lcrAmountEur += amt;
+      } else if (w.billable) {
+        openBillableCount++;
+        openBillableHours += hrs;
+        openBillableAmountEur += amt;
+      }
+    }
+    workSummary = {
+      openBillableCount,
+      openBillableHours: round2(openBillableHours),
+      openBillableAmountEur: round2(openBillableAmountEur),
+      lcrCount,
+      lcrHours: round2(lcrHours),
+      lcrAmountEur: round2(lcrAmountEur),
+      billedCount,
+      billedHours: round2(billedHours),
+      billedAmountEur: round2(billedAmountEur)
+    };
   }
 
   const totalMatched = items.length;
@@ -729,6 +862,7 @@ export function queryCollection(params: {
     revision,
     collection: params.collection,
     totalMatched,
+    ...(workSummary ? { workSummary } : {}),
     items: items.map((i) => projectFields(i))
   };
 }
@@ -2593,7 +2727,7 @@ export function createInvoiceAdminAction(
 ) {
   const store = getStore();
   const next: AppDataSnapshot = structuredClone(store.data);
-  const billingCust = next.customers.find((c) => c.id === params.customer_id);
+  const billingCust = resolveCustomerByIdOrName(params.customer_id, next.customers);
   if (!billingCust) {
     throw new Error(`Kunde mit ID "${params.customer_id}" nicht gefunden.`);
   }
@@ -2628,7 +2762,7 @@ export function createInvoiceAdminAction(
         !w.settlement_id &&
         !w.is_lcr &&
         w.billable &&
-        getEffectiveBillingCustomerId(w, next.customers) === params.customer_id
+        getEffectiveBillingCustomerId(w, next.customers) === billingCust.id
     );
   }
 
@@ -3043,6 +3177,7 @@ export async function sendInvoiceAdminAction(
     invoice_id: string;
     user_confirmed?: boolean;
     confirmed?: boolean;
+    dry_run?: boolean;
     recipient_email?: string;
   },
   actor: PersistedAppStore['lastActor'] = 'mcp'
@@ -3097,6 +3232,28 @@ export async function sendInvoiceAdminAction(
     throw new Error(
       `Versand fehlgeschlagen: Für Rechnung ${inv.invoice_number} (${resolvedData.recipientName}) ist keine gültige Empfänger-E-Mail-Adresse in Infinity hinterlegt.`
     );
+  }
+
+  // Trockenlauf (dry_run=true): Prüft Rechnung, Empfänger & Original-PDF-Erzeugung ohne echten Versand
+  if (params.dry_run === true) {
+    const pdfArtifact = await generateInvoicePdfAsync(resolvedData);
+    return {
+      ok: true,
+      action: 'send_invoice',
+      dry_run: true,
+      sent: false,
+      ready_to_send: true,
+      requires_user_confirmed: true,
+      revision: store.revision,
+      invoice_id: inv.id,
+      invoice_number: inv.invoice_number,
+      recipient_name: resolvedData.recipientName,
+      recipient_email: recipientEmail,
+      total_amount: resolvedData.totalAmount,
+      filename: pdfArtifact.filename,
+      pdf_size_bytes: pdfArtifact.blob.size,
+      subject: emailDefaults.subject
+    };
   }
 
   // Versand nur nach ausdrücklicher Freigabe durch den Nutzer
@@ -3382,9 +3539,26 @@ export function executeBatchAdmin(
 
 export const MCP_TOOLS = [
   {
+    name: 'infinity_status',
+    description:
+      'Liefert den aktuellen Verbindungs- und Datenbankstatus der Standard-Infinity-MCP-Schnittstelle (Revision, letzte Änderung, Schreibfreigabe und Datensatzzähler).',
+    annotations: {
+      title: 'Infinity Status & Revision',
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false
+    },
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {}
+    }
+  },
+  {
     name: 'pixel_abfrage',
     description:
-      'Gezielter Lese- & Suchzugriff in einem einzigen Aufruf (ersetzt mehrfache Einzelabfragen): Liest wahlweise eine oder mehrere Tabellen gleichzeitig (customers, properties, appointments, workRecords, invoices, inquiries, offers, orders, equipments, materials, expenses, taxSettings), liefert auf Wunsch die kompakte Betriebsübersicht sowie die österreichische GuV-/Steuerberechnung und gibt gezielt nur die angeforderten Daten zurück.',
+      'Gezielter Lese- & Suchzugriff in einem einzigen Aufruf (ersetzt mehrfache Einzelabfragen): Liest wahlweise eine oder mehrere Tabellen gleichzeitig (customers, properties, appointments, workRecords, invoices, inquiries, offers, orders, equipments, materials, expenses, taxSettings), erkennt Vor- und Nachnamen unabhängig von der Reihenfolge, liefert bei workRecords direkt die offenen Stunden/Beträge (workSummary) und gibt gezielt nur die angeforderten Daten zurück.',
     annotations: {
       title: 'Gezielte Abfrage (Übersicht, Tabellen & GuV in 1 Aufruf)',
       readOnlyHint: true,
@@ -3618,6 +3792,11 @@ export const MCP_TOOLS = [
           description:
             'Bei action="send_invoice" zwingend erforderlich (true): Bestätigt, dass der Nutzer den Rechnungsversand ausdrücklich freigegeben hat.'
         },
+        dry_run: {
+          type: 'boolean',
+          description:
+            'Optional bei action="send_invoice": Wenn true, werden Rechnung, Empfängeradresse und Original-PDF ohne echten E-Mail-Versand geprüft.'
+        },
         recipient_email: {
           type: 'string',
           description:
@@ -3649,6 +3828,17 @@ function executeTargetedPixelQuery(args: Record<string, unknown>) {
     const single = args.collection.trim();
     if (!requestedCollections.includes(single)) {
       requestedCollections.push(single);
+    }
+  }
+
+  // Wenn gezielte Filter ohne explizite Collection übergeben wurden, gezielte Tabellen statt Voll-Übersicht abfragen
+  if (requestedCollections.length === 0 && !args.include_overview && !args.include_guv) {
+    if (args.unbilled_only || typeof args.is_lcr === 'boolean') {
+      requestedCollections.push('workRecords');
+    } else if (typeof args.customer_id === 'string' && args.customer_id.trim()) {
+      requestedCollections.push('customers', 'workRecords', 'invoices');
+    } else if (typeof args.search === 'string' && args.search.trim()) {
+      requestedCollections.push('customers');
     }
   }
 
@@ -3850,6 +4040,7 @@ async function executeUnifiedPixelBilling(args: Record<string, unknown>) {
         invoice_id: String(args.invoice_id || args.id || ''),
         user_confirmed: Boolean(args.user_confirmed),
         confirmed: Boolean(args.confirmed),
+        dry_run: Boolean(args.dry_run),
         recipient_email:
           typeof args.recipient_email === 'string' ? args.recipient_email : undefined
       },
@@ -3893,6 +4084,32 @@ export async function callMcpTool(
 ): Promise<unknown> {
   recordMcpAccess(`mcp:${name}`);
   switch (name) {
+    case 'infinity_status': {
+      const store = getStore();
+      return {
+        app: 'Infinity',
+        standardConnection: 'infinity-mcp',
+        endpoint: '/mcp',
+        revision: store.revision,
+        updatedAt: store.updatedAt,
+        lastActor: store.lastActor,
+        writeEnabled: true,
+        counts: {
+          customers: store.data.customers.length,
+          properties: store.data.properties.length,
+          appointments: store.data.appointments.length,
+          workRecords: store.data.workRecords.length,
+          invoices: store.data.invoices.length,
+          inquiries: store.data.inquiries.length,
+          offers: store.data.offers.length,
+          orders: store.data.orders.length,
+          equipments: store.data.equipments.length,
+          materials: store.data.materials.length,
+          expenses: store.data.expenses.length
+        }
+      };
+    }
+
     // Neue gebündelte Hochgeschwindigkeits-Werkzeuge (1 Aufruf statt mehrerer Einzelaufrufe)
     case 'pixel_abfrage':
       return executeTargetedPixelQuery(args);
@@ -4012,6 +4229,7 @@ export async function callMcpTool(
           invoice_id: String(args.invoice_id || args.id || ''),
           user_confirmed: Boolean(args.user_confirmed),
           confirmed: Boolean(args.confirmed),
+          dry_run: Boolean(args.dry_run),
           recipient_email:
             typeof args.recipient_email === 'string' ? args.recipient_email : undefined
         },

@@ -165,19 +165,20 @@ class PixelTunnelService : Service() {
                         contact = true,
                         response = delivered > 0
                     )
+                    if (delivered == 0 && !closing.get()) {
+                        Thread.sleep(1500L)
+                    }
                 }
             } catch (limited: PixelTunnelWire.RateLimit) {
-                failures = minOf(8, failures + 1)
                 updateStatus(
                     "rate_limited",
-                    "Tunnel-Anfragen vorübergehend begrenzt. Nach der Wartezeit wird erneut verbunden."
+                    "Ältere Pixel-Schnittstelle wegen HTTP-429 automatisch deaktiviert. Bitte Standard Infinity-MCP verwenden."
                 )
-                try {
-                    Thread.sleep(maxOf(limited.retryAfterMs, minOf(60000L, 1000L shl failures)))
-                } catch (_: InterruptedException) {
-                    Thread.currentThread().interrupt()
-                    break
+                val current = PixelTunnelConfig(this)
+                if (current.bindingHash() == activeBinding) {
+                    current.enabled(false)
                 }
+                break
             } catch (denied: PixelTunnelWire.AccessError) {
                 updateStatus("auth_error", denied.userMessage())
                 val current = PixelTunnelConfig(this)

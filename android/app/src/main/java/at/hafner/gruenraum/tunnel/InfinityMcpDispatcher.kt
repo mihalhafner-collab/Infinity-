@@ -532,6 +532,18 @@ class InfinityMcpDispatcher(
             requested.add(singleCol)
         }
 
+        if (requested.isEmpty() && !args.optBoolean("include_overview", false) && !args.optBoolean("include_guv", false) && !args.has("guv_year")) {
+            if (args.optBoolean("unbilled_only", false) || (args.has("is_lcr") && !args.isNull("is_lcr"))) {
+                requested.add("workRecords")
+            } else if (args.optString("customer_id", "").trim().isNotEmpty()) {
+                requested.add("customers")
+                requested.add("workRecords")
+                requested.add("invoices")
+            } else if (args.optString("search", "").trim().isNotEmpty()) {
+                requested.add("customers")
+            }
+        }
+
         val includeOverview =
             args.optBoolean("include_overview", false) ||
                 (requested.isEmpty() && !args.optBoolean("include_guv", false) && !args.has("guv_year"))
@@ -637,20 +649,31 @@ class InfinityMcpDispatcher(
             }
         }
 
-        val matched = JSONArray()
-        var totalMatched = 0
+        val searchTokens = normalizeSearchTokens(search)
+        val resolvedTargetCustomerId = if (customerIdFilter.isNotEmpty()) {
+            resolveCustomerByIdOrName(customersArr, customerIdFilter)?.optString("id") ?: customerIdFilter
+        } else {
+            ""
+        }
+
+        val matchedItems = mutableListOf<JSONObject>()
         for (i in 0 until sourceArr.length()) {
             val item = sourceArr.optJSONObject(i) ?: continue
             if (idFilter.isNotEmpty()) {
-                val idMatch = item.optString("id") == idFilter ||
-                    (col == "invoices" && item.optString("invoice_number") == idFilter)
+                val idMatch = item.optString("id").equals(idFilter, ignoreCase = true) ||
+                    (col == "invoices" && item.optString("invoice_number").equals(idFilter, ignoreCase = true))
                 if (!idMatch) continue
             }
-            if (customerIdFilter.isNotEmpty()) {
-                val cMatch = item.optString("customer_id") == customerIdFilter ||
-                    optNullableString(item, "billing_customer_id") == customerIdFilter ||
-                    optNullableString(item, "default_billing_customer_id") == customerIdFilter ||
-                    (col == "workRecords" && getEffectiveBillingCustomerId(item, customersArr) == customerIdFilter)
+            if (resolvedTargetCustomerId.isNotEmpty()) {
+                val cMatch = if (col == "customers") {
+                    item.optString("id") == resolvedTargetCustomerId ||
+                        optNullableString(item, "default_billing_customer_id") == resolvedTargetCustomerId
+                } else {
+                    item.optString("customer_id") == resolvedTargetCustomerId ||
+                        optNullableString(item, "billing_customer_id") == resolvedTargetCustomerId ||
+                        optNullableString(item, "default_billing_customer_id") == resolvedTargetCustomerId ||
+                        (col == "workRecords" && getEffectiveBillingCustomerId(item, customersArr) == resolvedTargetCustomerId)
+                }
                 if (!cMatch) continue
             }
             if (statusFilter.isNotEmpty() && !item.optString("status").equals(statusFilter, ignoreCase = true)) {
@@ -684,23 +707,125 @@ class InfinityMcpDispatcher(
                 if (dateFrom.isNotEmpty() && itemDate < dateFrom) continue
                 if (dateTo.isNotEmpty() && itemDate > dateTo) continue
             }
-            if (search.isNotEmpty()) {
-                val strippedStr = stripHeavyPhotos(item, false).toString().lowercase(Locale.ROOT)
-                if (!strippedStr.contains(search)) continue
+            if (searchTokens.isNotEmpty()) {
+                val searchable = normalizeSearchText(stripHeavyPhotos(item, false).toString())
+                if (!searchTokens.all { token -> searchable.contains(token) }) continue
             }
 
-            totalMatched++
-            if (matched.length() < limit) {
-                matched.put(projectItem(item, fieldsFilter, includePhotos))
-            }
+            matchedItems.add(item)
         }
 
-        return JSONObject()
+        if (searchTokens.isNotEmpty() && col == "customers") {
+            matchedItems.sortByDescending { customerNameMatchScore(it, searchTokens) }
+        }
+
+        var workSummary: JSONObject? = null
+        if (col == "workRecords") {
+            var openBillableCount = 0
+            var openBillableHours = 0.0
+            var openBillableAmountEur = 0.0
+            var lcrCount = 0
+            var lcrHours = 0.0
+            var lcrAmountEur = 0.0
+            var billedCount = 0
+            var billedHours = 0.0
+            var billedAmountEur = 0.0
+            for (w in matchedItems) {
+                val hrs = w.optDouble("hours", 0.0)
+                val amt = getWorkAccountingAmount(w)
+                val sid = optNullableString(w, "settlement_id")
+                if (sid != null) {
+                    billedCount++
+                    billedHours += hrs
+                    billedAmountEur += amt
+                } else if (w.optBoolean("is_lcr", false)) {
+                    lcrCount++
+                    lcrHours += hrs
+                    lcrAmountEur += amt
+                } else if (w.optBoolean("billable", true)) {
+                    openBillableCount++
+                    openBillableHours += hrs
+                    openBillableAmountEur += amt
+                }
+            }
+            workSummary = JSONObject()
+                .put("openBillableCount", openBillableCount)
+                .put("openBillableHours", round2(openBillableHours))
+                .put("openBillableAmountEur", round2(openBillableAmountEur))
+                .put("lcrCount", lcrCount)
+                .put("lcrHours", round2(lcrHours))
+                .put("lcrAmountEur", round2(lcrAmountEur))
+                .put("billedCount", billedCount)
+                .put("billedHours", round2(billedHours))
+                .put("billedAmountEur", round2(billedAmountEur))
+        }
+
+        val totalMatched = matchedItems.size
+        val matched = JSONArray()
+        for (item in matchedItems.take(limit)) {
+            matched.put(projectItem(item, fieldsFilter, includePhotos))
+        }
+
+        val out = JSONObject()
             .put("revision", rev)
             .put("collection", col)
             .put("totalMatched", totalMatched)
             .put("returnedCount", matched.length())
-            .put("items", matched)
+        if (workSummary != null) {
+            out.put("workSummary", workSummary)
+        }
+        out.put("items", matched)
+        return out
+    }
+
+    private fun normalizeSearchText(raw: String?): String {
+        if (raw.isNullOrBlank()) return ""
+        return raw.lowercase(Locale.ROOT)
+            .replace(Regex("[,.;:/\\\\()\\[\\]{}\"'`]+"), " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+    }
+
+    private fun normalizeSearchTokens(raw: String?): List<String> {
+        val norm = normalizeSearchText(raw)
+        if (norm.isEmpty()) return emptyList()
+        return norm.split(" ").filter { it.isNotEmpty() }
+    }
+
+    private fun customerNameMatchScore(item: JSONObject, tokens: List<String>): Int {
+        if (tokens.isEmpty()) return 0
+        val combinedName = normalizeSearchText("${item.optString("name", "")} ${item.optString("company", "")}")
+        val nameWords = combinedName.split(" ").filter { it.isNotEmpty() }
+        if (tokens.all { nameWords.contains(it) }) return 100
+        if (tokens.all { combinedName.contains(it) }) return 80
+        val primary = normalizeSearchText(
+            "${item.optString("id", "")} ${item.optString("name", "")} ${item.optString("company", "")} ${item.optString("email", "")}"
+        )
+        if (tokens.all { primary.contains(it) }) return 50
+        return 10
+    }
+
+    private fun resolveCustomerByIdOrName(customers: JSONArray, rawRef: String): JSONObject? {
+        val ref = rawRef.trim()
+        if (ref.isEmpty()) return null
+        findById(customers, ref)?.let { return it }
+        for (i in 0 until customers.length()) {
+            val c = customers.optJSONObject(i) ?: continue
+            if (c.optString("id", "").equals(ref, ignoreCase = true)) return c
+        }
+        val tokens = normalizeSearchTokens(ref)
+        if (tokens.isEmpty()) return null
+        var best: JSONObject? = null
+        var bestScore = 0
+        for (i in 0 until customers.length()) {
+            val c = customers.optJSONObject(i) ?: continue
+            val score = customerNameMatchScore(c, tokens)
+            if (score >= 80 && score > bestScore) {
+                bestScore = score
+                best = c
+            }
+        }
+        return best
     }
 
     private fun stripHeavyPhotos(item: JSONObject, includePhotos: Boolean): JSONObject {
@@ -2428,8 +2553,9 @@ class InfinityMcpDispatcher(
         val workRecords = state.optJSONArray("workRecords") ?: JSONArray()
         val invoices = state.optJSONArray("invoices") ?: JSONArray().also { state.put("invoices", it) }
 
-        val billingCust = findById(customers, customerId)
+        val billingCust = resolveCustomerByIdOrName(customers, customerId)
             ?: throw IllegalArgumentException("Kunde mit ID '$customerId' nicht gefunden.")
+        val effectiveCustId = billingCust.optString("id", customerId)
 
         val requestedIds = mutableListOf<String>()
         val reqArr = args.optJSONArray("work_record_ids")
@@ -2464,7 +2590,7 @@ class InfinityMcpDispatcher(
                     optNullableString(w, "settlement_id") == null &&
                     !w.optBoolean("is_lcr", false) &&
                     w.optBoolean("billable", true) &&
-                    getEffectiveBillingCustomerId(w, customers) == customerId
+                    getEffectiveBillingCustomerId(w, customers) == effectiveCustId
                 ) {
                     candidateRecords.add(w)
                 }
@@ -2941,6 +3067,21 @@ class InfinityMcpDispatcher(
             throw IllegalStateException(
                 "Versand fehlgeschlagen: Für Rechnung $invNum ($recipientName) ist keine gültige Empfänger-E-Mail-Adresse in Infinity hinterlegt."
             )
+        }
+
+        if (args.optBoolean("dry_run", false)) {
+            return JSONObject()
+                .put("ok", true)
+                .put("action", "send_invoice")
+                .put("dry_run", true)
+                .put("sent", false)
+                .put("ready_to_send", true)
+                .put("requires_user_confirmed", true)
+                .put("invoice_id", inv.optString("id"))
+                .put("invoice_number", invNum)
+                .put("recipient_name", recipientName)
+                .put("recipient_email", recipientEmail)
+                .put("total_amount", inv.optDouble("total_amount", 0.0))
         }
 
         // Versand nur nach ausdrücklicher Freigabe durch den Nutzer
@@ -3494,6 +3635,7 @@ class InfinityMcpDispatcher(
                                 .put("paid_in_cash", JSONObject().put("type", "boolean"))
                                 .put("invoice_id", JSONObject().put("type", "string"))
                                 .put("user_confirmed", JSONObject().put("type", "boolean"))
+                                .put("dry_run", JSONObject().put("type", "boolean"))
                                 .put("recipient_email", JSONObject().put("type", "string"))
                                 .put("amount", JSONObject().put("type", "number"))
                                 .put("payment_id", JSONObject().put("type", "string"))

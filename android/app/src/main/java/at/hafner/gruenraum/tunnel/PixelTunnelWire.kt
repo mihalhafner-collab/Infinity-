@@ -97,7 +97,7 @@ class PixelTunnelWire(
 
     @Throws(Exception::class)
     fun cycle(): Int {
-        val poll = transport.request("GET", path("/poll?limit=1&timeout_ms=15000"), null, null, 35000)
+        val poll = transport.request("GET", path("/poll?limit=10&timeout_ms=25000"), null, null, 35000)
         check(poll)
         if (poll.code == 204) {
             return 0
@@ -297,7 +297,6 @@ class PixelTunnelWire(
                     }
                 }
             } finally {
-                connection.disconnect()
                 if (active === connection) {
                     active = null
                 }
