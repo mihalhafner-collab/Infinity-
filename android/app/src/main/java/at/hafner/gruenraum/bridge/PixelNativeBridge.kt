@@ -231,6 +231,24 @@ class PixelNativeBridge(
     }
 
     @JavascriptInterface
+    fun pasteGmailAppPasswordFromClipboard(senderEmail: String): String {
+        var result = activity.getNativeGmailConfigJson()
+        val latch = java.util.concurrent.CountDownLatch(1)
+        activity.runOnUiThread {
+            try {
+                result = activity.pasteAndSaveGmailAppPasswordFromClipboard(senderEmail)
+            } finally {
+                latch.countDown()
+            }
+        }
+        try {
+            latch.await(2, java.util.concurrent.TimeUnit.SECONDS)
+        } catch (_: InterruptedException) {
+        }
+        return result
+    }
+
+    @JavascriptInterface
     fun readDeviceCalendar(requestId: String, startDateIso: String, endDateIso: String) {
         activity.runOnUiThread {
             activity.requestCalendarEvents(requestId, startDateIso, endDateIso)

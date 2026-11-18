@@ -93,6 +93,7 @@ interface HafnerNativeInterface {
   notifyMailSent?: (recipientEmail: string, invoiceNumber: string) => boolean;
   getGmailConfigJson?: () => string;
   saveGmailAppPassword?: (senderEmail: string, appPassword: string) => string;
+  pasteGmailAppPasswordFromClipboard?: (senderEmail: string) => string;
   readDeviceCalendar: (requestId: string, startDateIso: string, endDateIso: string) => void;
   upsertDeviceCalendarEvent?: (requestId: string, payloadJson: string) => void;
   deleteDeviceCalendarEvent?: (requestId: string, googleEventId: string) => void;
@@ -115,6 +116,7 @@ declare global {
     __onHafnerNativeRemoteState?: (stateJson: string, revision: number, summary: string) => void;
     __onHafnerNativeMcpStatus?: (statusJson: string) => void;
     __onHafnerNativePixelTunnelStatus?: (statusJson: string) => void;
+    __onHafnerNativeGmailConfigUpdated?: (configJson: string, autoDetected: boolean) => void;
   }
 }
 
@@ -126,11 +128,13 @@ type PendingCallback = {
 type RemoteStateListener = (stateJson: string, revision: number, summary: string) => void;
 type McpStatusListener = (status: NativeMcpSyncStatus) => void;
 type PixelTunnelStatusListener = (status: NativePixelTunnelStatus) => void;
+type GmailConfigListener = (config: NativeGmailConfig, autoDetected: boolean) => void;
 
 const pendingCallbacks = new Map<string, PendingCallback>();
 const remoteStateListeners = new Set<RemoteStateListener>();
 const mcpStatusListeners = new Set<McpStatusListener>();
 const pixelTunnelStatusListeners = new Set<PixelTunnelStatusListener>();
+const gmailConfigListeners = new Set<GmailConfigListener>();
 
 const LEGACY_REMOTE_URL_KEY = 'hafner_remote_mcp_base_url';
 const LEGACY_REMOTE_TOKEN_KEY = 'hafner_remote_mcp_token';
@@ -209,6 +213,21 @@ if (typeof window !== 'undefined') {
       }
     } catch {
       // Ignore malformed status payload
+    }
+  };
+
+  window.__onHafnerNativeGmailConfigUpdated = (configJson: string, autoDetected: boolean) => {
+    try {
+      const parsed = JSON.parse(configJson) as NativeGmailConfig;
+      for (const listener of gmailConfigListeners) {
+        try {
+          listener(parsed, Boolean(autoDetected));
+        } catch {
+          // Ignore individual listener error
+        }
+      }
+    } catch {
+      // Ignore malformed config payload
     }
   };
 }
@@ -499,6 +518,28 @@ export function saveNativeGmailAppPassword(
   } catch {
     return null;
   }
+}
+
+export function pasteNativeGmailAppPasswordFromClipboard(
+  senderEmail: string
+): NativeGmailConfig | null {
+  if (!isNativeAndroidApp() || !window.HafnerNative?.pasteGmailAppPasswordFromClipboard) {
+    return null;
+  }
+  try {
+    const raw = window.HafnerNative.pasteGmailAppPasswordFromClipboard(senderEmail);
+    if (!raw) return null;
+    return JSON.parse(raw) as NativeGmailConfig;
+  } catch {
+    return null;
+  }
+}
+
+export function subscribeNativeGmailConfig(listener: GmailConfigListener): () => void {
+  gmailConfigListeners.add(listener);
+  return () => {
+    gmailConfigListeners.delete(listener);
+  };
 }
 
 export function notifyMailSentNatively(recipientEmail: string, invoiceNumber: string): void {

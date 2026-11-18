@@ -570,6 +570,65 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus && ::credentialStore.isInitialized) {
+            val creds = credentialStore.loadCredentials()
+            if (creds.effectiveGmailAppPassword.length < 8) {
+                val detected = extractGoogleAppPasswordFromClipboard()
+                if (detected.length == 16) {
+                    credentialStore.saveGmailConfig(
+                        senderEmail = creds.gmailSenderEmail.ifBlank { "mihalhafner@gmail.com" },
+                        appPassword = detected
+                    )
+                    dispatchGmailConfigUpdatedToWeb(getNativeGmailConfigJson(), autoDetected = true)
+                }
+            }
+        }
+    }
+
+    fun extractGoogleAppPasswordFromClipboard(): String {
+        return try {
+            val cm = getSystemService(Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
+            val raw = cm?.primaryClip?.getItemAt(0)?.coerceToText(this)?.toString()?.trim().orEmpty()
+            if (raw.isEmpty()) return ""
+            // Google App-Passwörter bestehen aus 16 Buchstaben (oft als "abcd efgh ijkl mnop" kopiert)
+            val groupedRegex = Regex("(?i)\\b([a-z]{4})\\s+([a-z]{4})\\s+([a-z]{4})\\s+([a-z]{4})\\b")
+            val groupedMatch = groupedRegex.find(raw)
+            if (groupedMatch != null) {
+                return (groupedMatch.groupValues[1] +
+                    groupedMatch.groupValues[2] +
+                    groupedMatch.groupValues[3] +
+                    groupedMatch.groupValues[4]).lowercase()
+            }
+            val compact = raw.replace("\\s+".toRegex(), "")
+            if (compact.length == 16 && compact.all { it in 'a'..'z' || it in 'A'..'Z' }) {
+                return compact.lowercase()
+            }
+            ""
+        } catch (_: Exception) {
+            ""
+        }
+    }
+
+    fun pasteAndSaveGmailAppPasswordFromClipboard(senderEmail: String): String {
+        val detected = extractGoogleAppPasswordFromClipboard()
+        val cm = getSystemService(Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
+        val fallbackRaw = cm?.primaryClip?.getItemAt(0)?.coerceToText(this)?.toString()
+            ?.replace("\\s+".toRegex(), "")
+            .orEmpty()
+        val candidate = if (detected.length == 16) detected else fallbackRaw
+        if (candidate.length >= 8 && !candidate.contains("@") && !candidate.startsWith("http")) {
+            credentialStore.saveGmailConfig(
+                senderEmail = senderEmail.trim().ifBlank { "mihalhafner@gmail.com" },
+                appPassword = candidate
+            )
+        }
+        val json = getNativeGmailConfigJson()
+        dispatchGmailConfigUpdatedToWeb(json, autoDetected = candidate.length >= 8)
+        return json
+    }
+
     fun getNativeGmailConfigJson(): String {
         val creds = credentialStore.loadCredentials()
         return JSONObject().apply {
@@ -584,7 +643,17 @@ class MainActivity : AppCompatActivity() {
             senderEmail = senderEmail.trim().ifBlank { "mihalhafner@gmail.com" },
             appPassword = appPassword.replace("\\s+".toRegex(), "")
         )
-        return getNativeGmailConfigJson()
+        val json = getNativeGmailConfigJson()
+        dispatchGmailConfigUpdatedToWeb(json, autoDetected = false)
+        return json
+    }
+
+    private fun dispatchGmailConfigUpdatedToWeb(configJson: String, autoDetected: Boolean) {
+        if (!::webView.isInitialized) return
+        val safeJson = JSONObject.quote(configJson)
+        val js =
+            "window.__onHafnerNativeGmailConfigUpdated && window.__onHafnerNativeGmailConfigUpdated($safeJson, $autoDetected);"
+        webView.evaluateJavascript(js, null)
     }
 
     fun showNativeMailSentNotification(recipientEmail: String, invoiceNumber: String) {
@@ -603,8 +672,20 @@ class MainActivity : AppCompatActivity() {
     ) {
         Thread {
             try {
-                val creds = credentialStore.loadCredentials()
+                var creds = credentialStore.loadCredentials()
                 val senderEmail = creds.gmailSenderEmail.ifBlank { "mihalhafner@gmail.com" }
+
+                // Falls noch kein App-Passwort gespeichert ist, vorab prüfen ob ein 16-stelliger Google-Code in der Zwischenablage liegt
+                if (creds.effectiveGmailAppPassword.length < 8) {
+                    val clipCode = extractGoogleAppPasswordFromClipboard()
+                    if (clipCode.length == 16) {
+                        creds = credentialStore.saveGmailConfig(senderEmail, clipCode)
+                        runOnUiThread {
+                            dispatchGmailConfigUpdatedToWeb(getNativeGmailConfigJson(), autoDetected = true)
+                        }
+                    }
+                }
+
                 val rawMime = mailSender.buildRawMimeMessage(
                     senderEmail = senderEmail,
                     recipientEmail = recipientEmail,
@@ -721,7 +802,7 @@ class MainActivity : AppCompatActivity() {
                             dispatchNativeCallback(
                                 requestId,
                                 false,
-                                "APP_PASSWORD_REQUIRED:Für den automatischen Hintergrund-Versand bitte einmalig Ihr 16-stelliges Google App-Passwort hinterlegen."
+                                "APP_PASSWORD_REQUIRED:Einmalige Google-Verknüpfung erforderlich."
                             )
                         }
                     }
@@ -747,7 +828,11 @@ class MainActivity : AppCompatActivity() {
             try {
                 val am = AccountManager.get(this)
                 val scope = "oauth2:https://www.googleapis.com/auth/gmail.send"
-                val future = am.getAuthToken(account, scope, null, false, null, null)
+                val future = if (allowConsentIntent) {
+                    am.getAuthToken(account, scope, null, this@MainActivity, null, null)
+                } else {
+                    am.getAuthToken(account, scope, null, false, null, null)
+                }
                 val bundle = future.result
 
                 val consentIntent = if (Build.VERSION.SDK_INT >= 33) {
@@ -766,7 +851,7 @@ class MainActivity : AppCompatActivity() {
                             dispatchNativeCallback(
                                 pending.requestId,
                                 false,
-                                "APP_PASSWORD_REQUIRED:Für den automatischen Hintergrund-Versand bitte einmalig Ihr 16-stelliges Google App-Passwort hinterlegen."
+                                "APP_PASSWORD_REQUIRED:Einmalige Google-Verknüpfung erforderlich."
                             )
                         }
                     }
@@ -803,7 +888,7 @@ class MainActivity : AppCompatActivity() {
                             dispatchNativeCallback(
                                 pending.requestId,
                                 false,
-                                "APP_PASSWORD_REQUIRED:${outcome.error ?: "Gmail-Direktversand benötigt einmalig ein Google App-Passwort."}"
+                                "APP_PASSWORD_REQUIRED:${outcome.error ?: "Einmalige Google-Verknüpfung erforderlich."}"
                             )
                         }
                     }
@@ -813,7 +898,7 @@ class MainActivity : AppCompatActivity() {
                         dispatchNativeCallback(
                             pending.requestId,
                             false,
-                            "APP_PASSWORD_REQUIRED:Für den automatischen Hintergrund-Versand bitte einmalig Ihr 16-stelliges Google App-Passwort hinterlegen."
+                            "APP_PASSWORD_REQUIRED:Einmalige Google-Verknüpfung erforderlich."
                         )
                     }
                 }
@@ -823,7 +908,7 @@ class MainActivity : AppCompatActivity() {
                     dispatchNativeCallback(
                         pending.requestId,
                         false,
-                        "APP_PASSWORD_REQUIRED:Für den automatischen Hintergrund-Versand bitte einmalig Ihr 16-stelliges Google App-Passwort hinterlegen."
+                        "APP_PASSWORD_REQUIRED:Einmalige Google-Verknüpfung erforderlich."
                     )
                 }
             }
