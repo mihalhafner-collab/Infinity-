@@ -92,6 +92,8 @@ interface HafnerNativeInterface {
   ) => void;
   notifyMailSent?: (recipientEmail: string, invoiceNumber: string) => boolean;
   getGmailConfigJson?: () => string;
+  signInWithGoogle?: (requestId: string) => void;
+  disconnectGmail?: () => string;
   saveGmailAppPassword?: (senderEmail: string, appPassword: string) => string;
   pasteGmailAppPasswordFromClipboard?: (senderEmail: string) => string;
   readDeviceCalendar: (requestId: string, startDateIso: string, endDateIso: string) => void;
@@ -497,6 +499,34 @@ export function getNativeGmailConfig(): NativeGmailConfig | null {
   }
   try {
     const raw = window.HafnerNative.getGmailConfigJson();
+    if (!raw) return null;
+    return JSON.parse(raw) as NativeGmailConfig;
+  } catch {
+    return null;
+  }
+}
+
+export async function signInWithGoogleNatively(): Promise<{
+  email: string;
+  accessToken: string;
+}> {
+  if (!isNativeAndroidApp() || !window.HafnerNative?.signInWithGoogle) {
+    throw new Error('Native Google-Anmeldung nicht verfügbar.');
+  }
+  const reqId = nextRequestId('google_signin');
+  const rawJson = await new Promise<string>((resolve, reject) => {
+    pendingCallbacks.set(reqId, { resolve, reject });
+    window.HafnerNative?.signInWithGoogle?.(reqId);
+  });
+  return JSON.parse(rawJson) as { email: string; accessToken: string };
+}
+
+export function disconnectNativeGmail(): NativeGmailConfig | null {
+  if (!isNativeAndroidApp() || !window.HafnerNative?.disconnectGmail) {
+    return null;
+  }
+  try {
+    const raw = window.HafnerNative.disconnectGmail();
     if (!raw) return null;
     return JSON.parse(raw) as NativeGmailConfig;
   } catch {
