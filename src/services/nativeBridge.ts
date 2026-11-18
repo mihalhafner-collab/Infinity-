@@ -589,7 +589,7 @@ export async function sendInvoiceEmailAutomaticallyNatively(params: {
   bodyText: string;
   invoiceNumber: string;
   webAccessToken?: string | null;
-}): Promise<{ ok: boolean; method: string }> {
+}): Promise<{ ok: boolean; method: string; messageId?: string }> {
   if (!isNativeAndroidApp() || !window.HafnerNative?.sendGmailAutomatically) {
     throw new Error('Nativer automatischer E-Mail-Versand auf diesem Gerät nicht verfügbar.');
   }
@@ -608,7 +608,7 @@ export async function sendInvoiceEmailAutomaticallyNatively(params: {
       params.webAccessToken || ''
     );
   });
-  return JSON.parse(rawJson) as { ok: boolean; method: string };
+  return JSON.parse(rawJson) as { ok: boolean; method: string; messageId?: string };
 }
 
 export async function readNativeDeviceCalendar(

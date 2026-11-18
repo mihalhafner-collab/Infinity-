@@ -28,7 +28,8 @@ class NativeMailSender(private val context: Context) {
     data class MailSendOutcome(
         val ok: Boolean,
         val method: String,
-        val error: String? = null
+        val error: String? = null,
+        val messageId: String? = null
     )
 
     fun sanitizeAttachmentFilename(filename: String): String {
@@ -78,11 +79,13 @@ class NativeMailSender(private val context: Context) {
         val safeFilename = sanitizeAttachmentFilename(filename)
         val boundary = "hafner_invoice_${System.currentTimeMillis().toString(36)}"
         val cleanFrom = senderEmail.trim().ifBlank { "mihalhafner@gmail.com" }
+        val rfcMsgId = "<hafner-${System.currentTimeMillis()}@gruenraum.at>"
 
         val lines = listOf(
             "From: \"Hafner Gruenraum Handwerk\" <$cleanFrom>",
             "To: ${recipientEmail.trim()}",
             "Subject: $encodedSubject",
+            "Message-ID: $rfcMsgId",
             "MIME-Version: 1.0",
             "Content-Type: multipart/mixed; boundary=\"$boundary\"",
             "",
@@ -142,7 +145,13 @@ class NativeMailSender(private val context: Context) {
 
             val code = conn.responseCode
             if (code in 200..299) {
-                MailSendOutcome(true, "gmail_api")
+                val respBody = runCatching {
+                    conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+                }.getOrDefault("")
+                val apiMsgId = runCatching {
+                    JSONObject(respBody).optString("id", "").trim()
+                }.getOrDefault("").ifEmpty { "gmail-${System.currentTimeMillis()}" }
+                MailSendOutcome(true, "gmail_api", null, apiMsgId)
             } else {
                 val errBody = runCatching {
                     conn.errorStream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
@@ -264,7 +273,7 @@ class NativeMailSender(private val context: Context) {
                 runCatching { sendCommand("QUIT", 2) }
 
                 if (sendCode / 100 == 2) {
-                    MailSendOutcome(true, "smtp_tls")
+                    MailSendOutcome(true, "smtp_tls", null, "smtp-${System.currentTimeMillis()}")
                 } else {
                     MailSendOutcome(false, "smtp_tls", "SMTP-Versand abgelehnt ($sendCode): $sendResp")
                 }
@@ -320,7 +329,13 @@ class NativeMailSender(private val context: Context) {
 
             val code = conn.responseCode
             if (code in 200..299) {
-                MailSendOutcome(true, "backend_relay")
+                val respBody = runCatching {
+                    conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+                }.getOrDefault("")
+                val relayMsgId = runCatching {
+                    JSONObject(respBody).optString("id", "").trim()
+                }.getOrDefault("").ifEmpty { "relay-${System.currentTimeMillis()}" }
+                MailSendOutcome(true, "backend_relay", null, relayMsgId)
             } else {
                 val errBody = runCatching {
                     conn.errorStream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()

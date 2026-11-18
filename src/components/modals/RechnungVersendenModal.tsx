@@ -5,16 +5,8 @@ import { InvoicePaperPreview } from '../common/InvoicePaperPreview.tsx';
 import { GoogleSignInButton } from '../common/GoogleSignInButton.tsx';
 import {
   HAFNER_LOGO_URL,
-  ISSUER_BANK_NAME,
-  ISSUER_BIC,
-  ISSUER_CITY,
-  ISSUER_COMPANY,
-  ISSUER_CONTACT_PERSON,
-  ISSUER_IBAN,
-  ISSUER_PHONE,
-  ISSUER_STREET,
+  buildDefaultInvoiceEmailPayload,
   buildInvoiceFilename,
-  detectRecipientSalutation,
   formatEuro,
   generateInvoicePdfAsync,
   resolveInvoiceDisplayData
@@ -145,66 +137,22 @@ export const RechnungVersendenModal: React.FC = () => {
 
   useEffect(() => {
     if (invoice && resolvedData) {
-      const docTitle = invoice.is_storno
-        ? `Stornorechnung Nr. ${invoice.invoice_number}`
-        : `Rechnungs Nr. ${invoice.invoice_number}`;
+      const defaults = buildDefaultInvoiceEmailPayload(invoice, resolvedData, customer);
 
-      const initEmail = customer?.email || '';
-      const initPhone = customer?.phone || '';
-
-      setRecipientEmail(initEmail);
-      setRecipientPhone(initPhone);
+      setRecipientEmail(defaults.recipientEmail);
+      setRecipientPhone(defaults.recipientPhone);
 
       // Sinnvolle Kanal-Vorauswahl: Gmail wenn E-Mail hinterlegt oder Token aktiv, sonst WhatsApp bei vorhandener Telefonnummer
-      if (!initEmail && initPhone && !hasToken) {
+      if (!defaults.recipientEmail && defaults.recipientPhone && !hasToken) {
         setChannel('whatsapp');
       } else {
         setChannel('gmail');
       }
 
-      const detectedSalutation = detectRecipientSalutation(
-        resolvedData.recipientName,
-        customer
-      ).salutationLine;
-
-      setEmailSubject(`${docTitle} – ${ISSUER_COMPANY}`);
-      setEmailBody(
-        [
-          detectedSalutation,
-          '',
-          `vielen Dank für Ihren Auftrag und das damit verbundene Vertrauen! Anbei erhalten Sie die ${docTitle} vom ${resolvedData.issueDateFormatted} als PDF-Dokument.`,
-          '',
-          `Leistungszeitraum: ${resolvedData.servicePeriod}`,
-          `Gesamtbetrag brutto: ${formatEuro(resolvedData.totalAmount)}`,
-          `Fällig bis zum: ${resolvedData.dueDateFormatted} (innerhalb von 14 Tagen ohne Abzüge)`,
-          `Bankverbindung: ${ISSUER_BANK_NAME} · IBAN ${ISSUER_IBAN} · BIC ${ISSUER_BIC}`,
-          '',
-          'Mit freundlichen Grüßen',
-          ISSUER_CONTACT_PERSON,
-          `${ISSUER_STREET}, ${ISSUER_CITY}`,
-          `Tel. ${ISSUER_PHONE}`
-        ].join('\n')
-      );
-
-      setWhatsappBody(
-        [
-          'Guten Tag,',
-          `anbei erhalten Sie die ${docTitle} vom ${resolvedData.issueDateFormatted} als PDF (${ISSUER_COMPANY}).`,
-          '',
-          `Betrag: ${formatEuro(resolvedData.totalAmount)}`,
-          `Zahlbar bis: ${resolvedData.dueDateFormatted}`,
-          `IBAN: ${ISSUER_IBAN} (${ISSUER_BANK_NAME})`,
-          '',
-          'Vielen Dank für Ihren Auftrag!',
-          ISSUER_CONTACT_PERSON
-        ].join('\n')
-      );
-
-      setSmsBody(
-        `${ISSUER_COMPANY}: ${docTitle} vom ${resolvedData.issueDateFormatted} über ${formatEuro(
-          resolvedData.totalAmount
-        )} (fällig bis ${resolvedData.dueDateFormatted}). IBAN: ${ISSUER_IBAN} (${ISSUER_BIC}). PDF folgt / anbei. Vielen Dank, ${ISSUER_CONTACT_PERSON}`
-      );
+      setEmailSubject(defaults.subject);
+      setEmailBody(defaults.bodyText);
+      setWhatsappBody(defaults.whatsappBody);
+      setSmsBody(defaults.smsBody);
 
       setCustomizeMailOpen(false);
       setShowPreview(false);
@@ -263,11 +211,14 @@ export const RechnungVersendenModal: React.FC = () => {
 
   const isNativeAndroid = isNativeAndroidApp();
 
-  const finalizeSuccessfulMailSend = (cleanEmail: string) => {
+  const finalizeSuccessfulMailSend = (cleanEmail: string, messageId?: string | null) => {
     const todayIso = new Date().toISOString().slice(0, 10);
     updateInvoice(invoice.id, {
       sent_at: todayIso,
-      sent_via: `Gmail PDF (${cleanEmail})`
+      sent_via: `Gmail PDF (${cleanEmail})`,
+      sent_to: cleanEmail,
+      sent_status: 'sent',
+      sent_message_id: messageId || `gmail-${Date.now()}`
     });
 
     if (customer && cleanEmail !== customer.email) {
@@ -301,10 +252,11 @@ export const RechnungVersendenModal: React.FC = () => {
     try {
       const freshPdf = pdfArtifact || (await generateInvoicePdfAsync(resolvedData));
       const cleanSubject = emailSubject.trim() || `Rechnungs Nr. ${invoice.invoice_number}`;
+      let sentMessageId: string | null = null;
 
       if (isNativeAndroid) {
         const webToken = await getAccessToken();
-        await sendInvoiceEmailAutomaticallyNatively({
+        const nativeRes = await sendInvoiceEmailAutomaticallyNatively({
           blob: freshPdf.blob,
           filename: freshPdf.filename,
           recipientEmail: cleanEmail,
@@ -313,6 +265,7 @@ export const RechnungVersendenModal: React.FC = () => {
           invoiceNumber: invoice.invoice_number,
           webAccessToken: webToken
         });
+        sentMessageId = nativeRes.messageId || null;
       } else {
         const token = await getAccessToken();
         if (!token) {
@@ -320,7 +273,7 @@ export const RechnungVersendenModal: React.FC = () => {
           return;
         }
 
-        await sendInvoicePdfViaGmail({
+        const sendRes = await sendInvoicePdfViaGmail({
           accessToken: token,
           to: cleanEmail,
           subject: cleanSubject,
@@ -328,9 +281,10 @@ export const RechnungVersendenModal: React.FC = () => {
           pdfBlob: freshPdf.blob,
           filename: freshPdf.filename
         });
+        sentMessageId = sendRes.id || null;
       }
 
-      finalizeSuccessfulMailSend(cleanEmail);
+      finalizeSuccessfulMailSend(cleanEmail, sentMessageId);
     } catch (err) {
       const rawMsg = err instanceof Error ? err.message : 'Fehler beim Gmail-Versand.';
       setErrorMessage(rawMsg);

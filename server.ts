@@ -24,6 +24,7 @@ import {
   recordMcpAccess,
   rotateMcpToken,
   saveStore,
+  setServerGmailAccessToken,
   subscribeStoreChanges
 } from './src/server/mcpAdminEngine.ts';
 import type { AppDataSnapshot } from './src/server/mcpAdminEngine.ts';
@@ -638,7 +639,9 @@ interface JsonRpcRequest {
 
 const SUPPORTED_MCP_VERSIONS = ['2025-06-18', '2025-03-26', '2024-11-05'] as const;
 
-function handleSingleJsonRpc(payload: JsonRpcRequest): Record<string, unknown> | null {
+async function handleSingleJsonRpc(
+  payload: JsonRpcRequest
+): Promise<Record<string, unknown> | null> {
   const isNotification = payload.id === undefined;
   const id = payload.id ?? null;
   const method = typeof payload.method === 'string' ? payload.method : '';
@@ -681,7 +684,7 @@ function handleSingleJsonRpc(payload: JsonRpcRequest): Record<string, unknown> |
             version: '1.3.0'
           },
           instructions:
-            'Privater OpenAI-MCP-Tunnel mit ausgehendem HTTPS (ChatGPT ↔ privater Tunnel ↔ Pixel-App ↔ lokale Datenbank auf Google Pixel 10 Pro). Bündle Leseabfragen über pixel_abfrage (collections: [...]) und Schreibvorgänge über pixel_aktion oder pixel_abrechnung in einem einzigen Aufruf, um Wartezeiten zu minimieren. Verwendet exakt dieselbe geprüfte App-Logik (L.C.R.-Sperren, RE-75/2026 Rechnungen, Storno-Regeln und österreichische GuV).'
+            'Privater OpenAI-MCP-Tunnel mit ausgehendem HTTPS (ChatGPT ↔ privater Tunnel ↔ Pixel-App ↔ lokale Datenbank auf Google Pixel 10 Pro). Bündle Leseabfragen über pixel_abfrage (collections: [...]) und Schreibvorgänge über pixel_aktion oder pixel_abrechnung in einem einzigen Aufruf, um Wartezeiten zu minimieren. Verwendet exakt dieselbe geprüfte App-Logik (L.C.R.-Sperren, RE-75/2026 Rechnungen, Rechnungsversand nach Nutzerfreigabe, Storno-Regeln und österreichische GuV).'
         }
       };
     }
@@ -708,7 +711,7 @@ function handleSingleJsonRpc(payload: JsonRpcRequest): Record<string, unknown> |
           ? (params.arguments as Record<string, unknown>)
           : {};
       try {
-        const output = callMcpTool(toolName, toolArgs);
+        const output = await callMcpTool(toolName, toolArgs);
         return {
           jsonrpc: '2.0',
           id,
@@ -1469,6 +1472,7 @@ async function startServer() {
     }
     if (token) {
       cachedServerGmailAccessToken = token;
+      setServerGmailAccessToken(token);
     }
     res.json({ ok: true, hasToken: Boolean(cachedServerGmailAccessToken) });
   });
@@ -1554,6 +1558,7 @@ async function startServer() {
       if (gmailResp.status === 401 || gmailResp.status === 403) {
         if (token === cachedServerGmailAccessToken) {
           cachedServerGmailAccessToken = null;
+          setServerGmailAccessToken(null);
         }
         res.status(401).json({ ok: false, error: 'Gmail-Token abgelaufen.' });
         return;
@@ -1843,7 +1848,7 @@ async function startServer() {
 
   const sseSessions = new Map<string, Response>();
 
-  const handleMcpPost = (req: Request, res: Response) => {
+  const handleMcpPost = async (req: Request, res: Response) => {
     const sessionId =
       (req.headers['mcp-session-id'] as string | undefined) || crypto.randomUUID();
     res.setHeader('Mcp-Session-Id', sessionId);
@@ -1851,9 +1856,10 @@ async function startServer() {
 
     const body = req.body;
     if (Array.isArray(body)) {
-      const responses = body
-        .map((item) => handleSingleJsonRpc(item as JsonRpcRequest))
-        .filter((r): r is Record<string, unknown> => r !== null);
+      const resolved = await Promise.all(
+        body.map((item) => handleSingleJsonRpc(item as JsonRpcRequest))
+      );
+      const responses = resolved.filter((r): r is Record<string, unknown> => r !== null);
       if (responses.length === 0) {
         res.status(202).end();
         return;
@@ -1862,7 +1868,7 @@ async function startServer() {
       return;
     }
 
-    const reply = handleSingleJsonRpc((body || {}) as JsonRpcRequest);
+    const reply = await handleSingleJsonRpc((body || {}) as JsonRpcRequest);
     if (reply === null) {
       res.status(202).end();
       return;
@@ -1895,10 +1901,10 @@ async function startServer() {
     });
   };
 
-  const handleMcpSseMessage = (req: Request, res: Response) => {
+  const handleMcpSseMessage = async (req: Request, res: Response) => {
     const sessionId = String(req.query.sessionId || '');
     const sseRes = sseSessions.get(sessionId);
-    const reply = handleSingleJsonRpc((req.body || {}) as JsonRpcRequest);
+    const reply = await handleSingleJsonRpc((req.body || {}) as JsonRpcRequest);
 
     if (sseRes && reply !== null) {
       sseRes.write(`event: message\ndata: ${JSON.stringify(reply)}\n\n`);

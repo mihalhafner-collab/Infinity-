@@ -274,6 +274,7 @@ class MainActivity : AppCompatActivity() {
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        activeInstance = java.lang.ref.WeakReference(this)
 
         // Native Edge-to-Edge Window Configuration for Google Pixel 10 Pro
         WindowCompat.setDecorFitsSystemWindows(window, false)
@@ -837,6 +838,7 @@ class MainActivity : AppCompatActivity() {
                             val res = JSONObject().apply {
                                 put("ok", true)
                                 put("method", "gmail_api")
+                                put("messageId", apiOutcome.messageId ?: "gmail-${System.currentTimeMillis()}")
                             }.toString()
                             dispatchNativeCallback(requestId, true, res)
                         }
@@ -859,6 +861,7 @@ class MainActivity : AppCompatActivity() {
                             val res = JSONObject().apply {
                                 put("ok", true)
                                 put("method", "smtp_tls")
+                                put("messageId", smtpOutcome.messageId ?: "smtp-${System.currentTimeMillis()}")
                             }.toString()
                             dispatchNativeCallback(requestId, true, res)
                         }
@@ -887,6 +890,7 @@ class MainActivity : AppCompatActivity() {
                             val res = JSONObject().apply {
                                 put("ok", true)
                                 put("method", "gmail_api")
+                                put("messageId", retryOutcome.messageId ?: "gmail-${System.currentTimeMillis()}")
                             }.toString()
                             dispatchNativeCallback(requestId, true, res)
                         }
@@ -908,6 +912,7 @@ class MainActivity : AppCompatActivity() {
                                     val res = JSONObject().apply {
                                         put("ok", true)
                                         put("method", "gmail_api")
+                                        put("messageId", finalOutcome.messageId ?: "gmail-${System.currentTimeMillis()}")
                                     }.toString()
                                     dispatchNativeCallback(requestId, true, res)
                                 } else {
@@ -1342,6 +1347,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        if (activeInstance?.get() === this) {
+            activeInstance = null
+        }
         NativeStoreManager.unregisterTunnelMutationListener(tunnelMutationListener)
         NativeStoreManager.unregisterStaticLocalSaveListener(staticLocalSaveListener)
         PixelTunnelService.unregisterStatusListener(pixelTunnelStatusListener)
@@ -1350,5 +1358,153 @@ class MainActivity : AppCompatActivity() {
         }
         webView.destroy()
         super.onDestroy()
+    }
+
+    companion object {
+        @Volatile
+        private var activeInstance: java.lang.ref.WeakReference<MainActivity>? = null
+
+        private val pendingMcpPdfCallbacks =
+            java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.CompletableFuture<String>>()
+
+        fun completeMcpPdfCallback(callbackId: String, payloadJson: String) {
+            pendingMcpPdfCallbacks.remove(callbackId)?.complete(payloadJson)
+        }
+
+        fun sendInvoiceViaExistingEngineBlocking(
+            context: Context,
+            invoice: JSONObject,
+            customers: org.json.JSONArray,
+            workRecords: org.json.JSONArray,
+            recipientEmail: String
+        ): JSONObject {
+            val activity = activeInstance?.get()
+                ?: throw IllegalStateException(
+                    "Bitte Infinity auf dem Pixel 10 Pro geöffnet lassen, damit das Original-Rechnungs-PDF erzeugt und versendet werden kann."
+                )
+
+            val callbackId = "mcp_pdf_${System.currentTimeMillis()}_${java.util.UUID.randomUUID()}"
+            val pdfFuture = java.util.concurrent.CompletableFuture<String>()
+            pendingMcpPdfCallbacks[callbackId] = pdfFuture
+
+            val safeInv = JSONObject.quote(invoice.toString())
+            val safeCust = JSONObject.quote(customers.toString())
+            val safeWork = JSONObject.quote(workRecords.toString())
+            val safeCb = JSONObject.quote(callbackId)
+
+            activity.runOnUiThread {
+                if (!activity::webView.isInitialized) {
+                    pendingMcpPdfCallbacks.remove(callbackId)
+                        ?.complete(JSONObject().put("ok", false).put("error", "WebView nicht initialisiert.").toString())
+                    return@runOnUiThread
+                }
+                activity.webView.evaluateJavascript(
+                    "window.__hafnerBuildInvoicePdfForMcp && window.__hafnerBuildInvoicePdfForMcp($safeInv, $safeCust, $safeWork, $safeCb);",
+                    null
+                )
+            }
+
+            val pdfJsonStr = try {
+                pdfFuture.get(15, java.util.concurrent.TimeUnit.SECONDS)
+            } catch (e: Exception) {
+                pendingMcpPdfCallbacks.remove(callbackId)
+                throw IllegalStateException("Zeitüberschreitung beim Erzeugen des Original-Rechnungs-PDFs.")
+            }
+
+            val pdfPayload = JSONObject(pdfJsonStr)
+            if (!pdfPayload.optBoolean("ok", false)) {
+                throw IllegalStateException(
+                    pdfPayload.optString("error", "Original-Rechnungs-PDF konnte nicht erzeugt werden.")
+                )
+            }
+
+            val base64Pdf = pdfPayload.optString("base64Pdf", "")
+            val filename = pdfPayload.optString("filename", "Rechnung.pdf")
+            val subject = pdfPayload.optString("subject", "Rechnung – Hafner Grünraum Handwerk")
+            val bodyText = pdfPayload.optString("bodyText", "")
+            val invNumber = invoice.optString("invoice_number", "Rechnung")
+
+            val credentialStore = SecureMcpCredentialStore(context.applicationContext)
+            val mailSender = NativeMailSender(context.applicationContext)
+            val creds = credentialStore.loadCredentials()
+            val senderEmail = creds.gmailSenderEmail.ifBlank { "mihalhafner@gmail.com" }
+
+            val rawMime = mailSender.buildRawMimeMessage(
+                senderEmail = senderEmail,
+                recipientEmail = recipientEmail,
+                subject = subject,
+                bodyText = bodyText,
+                filename = filename,
+                base64Pdf = base64Pdf
+            )
+
+            // 1. Gespeichertes Google OAuth-Token
+            val storedToken = creds.gmailOAuthToken.trim()
+            if (storedToken.isNotEmpty()) {
+                val apiOutcome = mailSender.sendViaGmailRestApi(storedToken, rawMime)
+                if (apiOutcome.ok) {
+                    activity.runOnUiThread {
+                        mailSender.showMailSentNotification(recipientEmail, invNumber)
+                    }
+                    return JSONObject()
+                        .put("ok", true)
+                        .put("method", "gmail_api")
+                        .put("messageId", apiOutcome.messageId ?: "gmail-${System.currentTimeMillis()}")
+                        .put("filename", filename)
+                }
+            }
+
+            // 2. Falls SMTP App-Passwort hinterlegt ist
+            val appPwd = creds.effectiveGmailAppPassword
+            if (appPwd.length >= 8) {
+                val smtpOutcome = mailSender.sendViaDirectGmailSmtp(
+                    senderEmail = senderEmail,
+                    appPassword = appPwd,
+                    recipientEmail = recipientEmail,
+                    rawMimeMessage = rawMime
+                )
+                if (smtpOutcome.ok) {
+                    activity.runOnUiThread {
+                        mailSender.showMailSentNotification(recipientEmail, invNumber)
+                    }
+                    return JSONObject()
+                        .put("ok", true)
+                        .put("method", "smtp_tls")
+                        .put("messageId", smtpOutcome.messageId ?: "smtp-${System.currentTimeMillis()}")
+                        .put("filename", filename)
+                }
+            }
+
+            // 3. Stille Hintergrund-Erneuerung des Google-OAuth-Tokens
+            val latch = java.util.concurrent.CountDownLatch(1)
+            var refreshedToken: String? = null
+            activity.requestNativeGoogleSignIn(
+                requestId = "",
+                silentOnly = true
+            ) { token, _ ->
+                refreshedToken = token
+                latch.countDown()
+            }
+            runCatching { latch.await(8, java.util.concurrent.TimeUnit.SECONDS) }
+
+            val silentToken = refreshedToken?.trim().orEmpty()
+            if (silentToken.isNotEmpty()) {
+                val retryOutcome = mailSender.sendViaGmailRestApi(silentToken, rawMime)
+                if (retryOutcome.ok) {
+                    activity.runOnUiThread {
+                        mailSender.showMailSentNotification(recipientEmail, invNumber)
+                    }
+                    return JSONObject()
+                        .put("ok", true)
+                        .put("method", "gmail_api")
+                        .put("messageId", retryOutcome.messageId ?: "gmail-${System.currentTimeMillis()}")
+                        .put("filename", filename)
+                }
+            }
+
+            throw IllegalStateException(
+                "Gmail-Versand fehlgeschlagen: Keine aktive Google-Anmeldung vorhanden. Bitte in Infinity einmalig beim Rechnungsversand mit Google anmelden."
+            )
+        }
     }
 }

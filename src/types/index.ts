@@ -165,6 +165,9 @@ export interface Invoice {
   open_refund_amount: number; // Stornierte bezahlte Rechnung bis Rückzahlung erfolgt
   sent_at?: string | null;
   sent_via?: string | null;
+  sent_to?: string | null;
+  sent_status?: 'sent' | 'failed' | null;
+  sent_message_id?: string | null;
   created_at?: string;
   updated_at?: string;
 }

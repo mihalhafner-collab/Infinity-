@@ -2,6 +2,7 @@ package at.hafner.gruenraum.tunnel
 
 import android.content.Context
 import at.hafner.gruenraum.BuildConfig
+import at.hafner.gruenraum.MainActivity
 import at.hafner.gruenraum.storage.ConflictingRequestException
 import at.hafner.gruenraum.storage.NativeStoreManager
 import at.hafner.gruenraum.storage.StaleRevisionException
@@ -314,6 +315,7 @@ class InfinityMcpDispatcher(
 
             "pixel_abrechnung",
             "admin_create_invoice",
+            "admin_send_invoice",
             "admin_pay_invoice",
             "admin_storno_invoice" -> {
                 assertWritePermitted()
@@ -375,6 +377,7 @@ class InfinityMcpDispatcher(
         val copy = JSONObject(args.toString())
         when (toolName) {
             "admin_create_invoice" -> copy.put("action", "create_invoice")
+            "admin_send_invoice" -> copy.put("action", "send_invoice")
             "admin_storno_invoice" -> copy.put("action", "storno")
             "admin_pay_invoice" -> {
                 if (!copy.has("action")) copy.put("action", "pay")
@@ -2407,6 +2410,7 @@ class InfinityMcpDispatcher(
     private fun applyPixelBillingMutation(state: JSONObject, args: JSONObject): JSONObject {
         return when (val action = args.optString("action", "create_invoice").trim()) {
             "create_invoice" -> createInvoiceInState(state, args)
+            "send_invoice" -> sendInvoiceInState(state, args)
             "storno" -> stornoInvoiceInState(state, args)
             "pay", "update_payment", "reverse_payment", "delete_payment", "refund" ->
                 payInvoiceInState(state, action, args)
@@ -2614,6 +2618,9 @@ class InfinityMcpDispatcher(
             .put("open_refund_amount", 0.0)
             .put("sent_at", JSONObject.NULL)
             .put("sent_via", JSONObject.NULL)
+            .put("sent_to", JSONObject.NULL)
+            .put("sent_status", JSONObject.NULL)
+            .put("sent_message_id", JSONObject.NULL)
 
         prependToArray(invoices, newInvoice)
 
@@ -2846,6 +2853,9 @@ class InfinityMcpDispatcher(
             .put("open_refund_amount", if (totalPaid > 0.0) totalPaid else 0.0)
             .put("sent_at", JSONObject.NULL)
             .put("sent_via", JSONObject.NULL)
+            .put("sent_to", JSONObject.NULL)
+            .put("sent_status", JSONObject.NULL)
+            .put("sent_message_id", JSONObject.NULL)
 
         orig.put("status", "cancelled")
         orig.put("open_refund_amount", if (totalPaid > 0.0) totalPaid else 0.0)
@@ -2867,6 +2877,113 @@ class InfinityMcpDispatcher(
             .put("action", "storno")
             .put("stornoInvoice", stornoDoc)
             .put("cancelledOriginalId", origId)
+    }
+
+    private fun sendInvoiceInState(state: JSONObject, args: JSONObject): JSONObject {
+        val invRef = firstNonBlank(
+            args.optString("invoice_id", ""),
+            args.optString("id", "")
+        )
+        if (invRef.isEmpty()) {
+            throw IllegalArgumentException("Parameter 'invoice_id' (ID oder Rechnungsnummer, z.B. RE-75/2026) ist erforderlich.")
+        }
+
+        val invoices = state.optJSONArray("invoices") ?: JSONArray()
+        var inv: JSONObject? = null
+        for (i in 0 until invoices.length()) {
+            val candidate = invoices.optJSONObject(i) ?: continue
+            val candId = candidate.optString("id", "").trim()
+            val candNum = candidate.optString("invoice_number", "").trim()
+            if (
+                candId == invRef ||
+                candNum == invRef ||
+                candId.equals(invRef, ignoreCase = true) ||
+                candNum.equals(invRef, ignoreCase = true)
+            ) {
+                inv = candidate
+                break
+            }
+        }
+        if (inv == null) {
+            throw IllegalArgumentException("Rechnung '$invRef' nicht gefunden.")
+        }
+
+        val invNum = inv.optString("invoice_number", inv.optString("id"))
+        if (inv.optString("status") == "cancelled" && !inv.optBoolean("is_storno", false)) {
+            throw IllegalStateException("Versand abgelehnt: Rechnung $invNum ist storniert und kann nicht versendet werden.")
+        }
+
+        // Doppelten Versand durch wiederholte MCP-Aufrufe verhindern
+        val existingSentStatus = optNullableString(inv, "sent_status")
+        val existingSentAt = optNullableString(inv, "sent_at")
+        if (existingSentStatus == "sent" || existingSentAt != null) {
+            val prevTo = optNullableString(inv, "sent_to") ?: optNullableString(inv, "sent_via") ?: "den Empfänger"
+            val prevMsgId = optNullableString(inv, "sent_message_id") ?: "vorhanden"
+            throw IllegalStateException(
+                "Doppelversand verhindert: Rechnung $invNum wurde bereits am ${existingSentAt ?: "zuvor"} an $prevTo versendet (Status: ${existingSentStatus ?: "sent"}, Nachrichten-ID: $prevMsgId)."
+            )
+        }
+
+        val customers = state.optJSONArray("customers") ?: JSONArray()
+        val workRecords = state.optJSONArray("workRecords") ?: JSONArray()
+        val customer = findById(customers, inv.optString("customer_id", ""))
+        val recipientName = firstNonBlank(
+            inv.optString("billing_customer_name", ""),
+            customer?.optString("name", "").orEmpty(),
+            "Kunde"
+        )
+        val recipientEmail = firstNonBlank(
+            args.optString("recipient_email", ""),
+            optNullableString(inv, "sent_to").orEmpty(),
+            customer?.optString("email", "").orEmpty()
+        )
+        if (recipientEmail.isEmpty() || !recipientEmail.contains("@")) {
+            throw IllegalStateException(
+                "Versand fehlgeschlagen: Für Rechnung $invNum ($recipientName) ist keine gültige Empfänger-E-Mail-Adresse in Infinity hinterlegt."
+            )
+        }
+
+        // Versand nur nach ausdrücklicher Freigabe durch den Nutzer
+        val userConfirmed = args.optBoolean("user_confirmed", false) || args.optBoolean("confirmed", false)
+        if (!userConfirmed) {
+            val totalStr = "${formatDec(inv.optDouble("total_amount", 0.0))} EUR"
+            throw IllegalStateException(
+                "Freigabe erforderlich: Rechnung $invNum ($totalStr) an $recipientEmail ($recipientName) darf nur nach ausdrücklicher Freigabe durch den Nutzer versendet werden. Bitte Freigabe einholen und anschließend mit \"user_confirmed\": true erneut aufrufen."
+            )
+        }
+
+        val sendResult = MainActivity.sendInvoiceViaExistingEngineBlocking(
+            context = context,
+            invoice = inv,
+            customers = customers,
+            workRecords = workRecords,
+            recipientEmail = recipientEmail
+        )
+
+        val sentDateIso = todayIso()
+        val messageId = sendResult.optString("messageId", "gmail-${System.currentTimeMillis()}")
+        val filename = sendResult.optString("filename", "Rechnung.pdf")
+        val sentViaLabel = "Gmail PDF ($recipientEmail)"
+
+        inv.put("sent_at", sentDateIso)
+        inv.put("sent_to", recipientEmail)
+        inv.put("sent_status", "sent")
+        inv.put("sent_message_id", messageId)
+        inv.put("sent_via", sentViaLabel)
+        inv.put("updated_at", Instant.now().toString())
+
+        return JSONObject()
+            .put("ok", true)
+            .put("action", "send_invoice")
+            .put("invoice_id", inv.optString("id"))
+            .put("invoice_number", invNum)
+            .put("sent_at", sentDateIso)
+            .put("sent_to", recipientEmail)
+            .put("sent_status", "sent")
+            .put("sent_message_id", messageId)
+            .put("sent_via", sentViaLabel)
+            .put("filename", filename)
+            .put("invoice", inv)
     }
 
     /**
@@ -3313,12 +3430,12 @@ class InfinityMcpDispatcher(
                 .put("name", "pixel_abrechnung")
                 .put(
                     "description",
-                    "Geprüfte Abrechnungs-Logik auf dem Pixel 10 Pro (erfordert aktive Schreibfreigabe am Gerät): Erstellt Rechnungen (Format RE-75/2026, §6 Abs. 1 Z 27 UStG Kleinunternehmerregelung, Sperre abgerechneter Arbeiten über settlement_id), verbucht Zahlungen oder erstellt Stornobelege (RE-S01/2026)."
+                    "Geprüfte Abrechnungs-Logik auf dem Pixel 10 Pro (erfordert aktive Schreibfreigabe am Gerät): Erstellt Rechnungen (Format RE-75/2026, §6 Abs. 1 Z 27 UStG Kleinunternehmerregelung, Sperre abgerechneter Arbeiten über settlement_id), versendet bestehende Original-Rechnungs-PDFs nach ausdrücklicher Nutzerfreigabe (action='send_invoice', user_confirmed=true), verbucht Zahlungen oder erstellt Stornobelege (RE-S01/2026)."
                 )
                 .put(
                     "annotations",
                     JSONObject()
-                        .put("title", "Infinity Rechnung erstellen, Zahlung buchen oder stornieren")
+                        .put("title", "Infinity Rechnung erstellen, versenden, Zahlung buchen oder stornieren")
                         .put("readOnlyHint", false)
                         .put("destructiveHint", false)
                         .put("idempotentHint", true)
@@ -3341,6 +3458,7 @@ class InfinityMcpDispatcher(
                                             "enum",
                                             JSONArray()
                                                 .put("create_invoice")
+                                                .put("send_invoice")
                                                 .put("pay")
                                                 .put("update_payment")
                                                 .put("reverse_payment")
@@ -3375,6 +3493,8 @@ class InfinityMcpDispatcher(
                                 .put("payment_terms_text", JSONObject().put("type", "string"))
                                 .put("paid_in_cash", JSONObject().put("type", "boolean"))
                                 .put("invoice_id", JSONObject().put("type", "string"))
+                                .put("user_confirmed", JSONObject().put("type", "boolean"))
+                                .put("recipient_email", JSONObject().put("type", "string"))
                                 .put("amount", JSONObject().put("type", "number"))
                                 .put("payment_id", JSONObject().put("type", "string"))
                                 .put("date", JSONObject().put("type", "string"))

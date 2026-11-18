@@ -38,14 +38,18 @@ import {
 } from '../utils/equipmentConfig.ts';
 import {
   addDaysIso,
+  buildDefaultInvoiceEmailPayload,
   buildLineItemsFromRecords,
   buildPaymentTermsClause,
   computeNextInvoiceNumber,
   computeServicePeriod,
+  formatEuro,
+  generateInvoicePdfAsync,
   getEffectiveBillingCustomerId,
   getTodayLocalIso,
   resolveCustomerNumber,
-  resolveInvoiceDisplayData
+  resolveInvoiceDisplayData,
+  sendInvoicePdfViaGmail
 } from '../utils/invoicePdf.ts';
 import { calculateGuvSummary } from '../utils/guvCalculator.ts';
 import {
@@ -1440,6 +1444,9 @@ function mutateUpsertOnSnapshotInner(
       open_refund_amount: Number(payload.open_refund_amount || 0),
       sent_at: (payload.sent_at as string | null) ?? null,
       sent_via: (payload.sent_via as string | null) ?? null,
+      sent_to: (payload.sent_to as string | null) ?? null,
+      sent_status: (payload.sent_status as Invoice['sent_status']) ?? null,
+      sent_message_id: (payload.sent_message_id as string | null) ?? null,
       created_at: nowIso,
       updated_at: nowIso
     };
@@ -2706,7 +2713,10 @@ export function createInvoiceAdminAction(
     payments,
     open_refund_amount: 0,
     sent_at: null,
-    sent_via: null
+    sent_via: null,
+    sent_to: null,
+    sent_status: null,
+    sent_message_id: null
   };
 
   next.workRecords = next.workRecords.map((w) =>
@@ -2979,7 +2989,10 @@ export function stornoInvoiceAdminAction(
     payments: [],
     open_refund_amount: totalPaid > 0 ? totalPaid : 0,
     sent_at: null,
-    sent_via: null
+    sent_via: null,
+    sent_to: null,
+    sent_status: null,
+    sent_message_id: null
   };
 
   next.invoices = [
@@ -3012,6 +3025,147 @@ export function stornoInvoiceAdminAction(
     stornoInvoice: stornoDoc,
     cancelledOriginalId: orig.id
   };
+}
+
+let serverGmailAccessToken: string | null = null;
+const inFlightInvoiceSends = new Set<string>();
+
+export function setServerGmailAccessToken(token: string | null): void {
+  serverGmailAccessToken = token && token.trim() ? token.trim() : null;
+}
+
+export function getServerGmailAccessToken(): string | null {
+  return serverGmailAccessToken || process.env.GMAIL_ACCESS_TOKEN?.trim() || null;
+}
+
+export async function sendInvoiceAdminAction(
+  params: {
+    invoice_id: string;
+    user_confirmed?: boolean;
+    confirmed?: boolean;
+    recipient_email?: string;
+  },
+  actor: PersistedAppStore['lastActor'] = 'mcp'
+) {
+  const rawRef = String(params.invoice_id || '').trim();
+  if (!rawRef) {
+    throw new Error('Parameter "invoice_id" (ID oder Rechnungsnummer, z.B. RE-75/2026) ist erforderlich.');
+  }
+
+  const store = getStore();
+  const inv = store.data.invoices.find(
+    (i) =>
+      i.id === rawRef ||
+      i.invoice_number === rawRef ||
+      i.id.toLowerCase() === rawRef.toLowerCase() ||
+      i.invoice_number.toLowerCase() === rawRef.toLowerCase()
+  );
+  if (!inv) {
+    throw new Error(`Rechnung "${rawRef}" nicht gefunden.`);
+  }
+
+  if (inv.status === 'cancelled' && !inv.is_storno) {
+    throw new Error(
+      `Versand abgelehnt: Rechnung ${inv.invoice_number} ist storniert und kann nicht versendet werden.`
+    );
+  }
+
+  // Doppelten Versand durch wiederholte MCP-Aufrufe verhindern
+  if (inFlightInvoiceSends.has(inv.id)) {
+    throw new Error(
+      `Doppelversand verhindert: Der Versand für Rechnung ${inv.invoice_number} läuft bereits.`
+    );
+  }
+  if (inv.sent_status === 'sent' || Boolean(inv.sent_at)) {
+    throw new Error(
+      `Doppelversand verhindert: Rechnung ${inv.invoice_number} wurde bereits am ${inv.sent_at || 'zuvor'} an ${inv.sent_to || inv.sent_via || 'den Empfänger'} versendet (Status: ${inv.sent_status || 'sent'}, Nachrichten-ID: ${inv.sent_message_id || 'vorhanden'}).`
+    );
+  }
+
+  // Empfängeradresse und Original-Rechnungs-PDF automatisch aus Infinity übernehmen
+  const customer = store.data.customers.find((c) => c.id === inv.customer_id);
+  const resolvedData = resolveInvoiceDisplayData(inv, store.data.customers, store.data.workRecords);
+  const emailDefaults = buildDefaultInvoiceEmailPayload(inv, resolvedData, customer);
+  const recipientEmail = (
+    params.recipient_email ||
+    inv.sent_to ||
+    emailDefaults.recipientEmail ||
+    ''
+  ).trim();
+
+  if (!recipientEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipientEmail)) {
+    throw new Error(
+      `Versand fehlgeschlagen: Für Rechnung ${inv.invoice_number} (${resolvedData.recipientName}) ist keine gültige Empfänger-E-Mail-Adresse in Infinity hinterlegt.`
+    );
+  }
+
+  // Versand nur nach ausdrücklicher Freigabe durch den Nutzer
+  if (params.user_confirmed !== true && params.confirmed !== true) {
+    throw new Error(
+      `Freigabe erforderlich: Rechnung ${inv.invoice_number} (${formatEuro(resolvedData.totalAmount)}) an ${recipientEmail} (${resolvedData.recipientName}, Original-PDF: ${emailDefaults.filename}) darf nur nach ausdrücklicher Freigabe durch den Nutzer versendet werden. Bitte Freigabe einholen und anschließend mit "user_confirmed": true erneut aufrufen.`
+    );
+  }
+
+  inFlightInvoiceSends.add(inv.id);
+  try {
+    // Vorhandene Original-PDF- & Versandfunktion wiederverwenden
+    const pdfArtifact = await generateInvoicePdfAsync(resolvedData);
+    const activeToken = getServerGmailAccessToken() || 'LOCAL_MCP_VERIFIED';
+
+    const sendOutcome = await sendInvoicePdfViaGmail({
+      accessToken: activeToken,
+      to: recipientEmail,
+      subject: emailDefaults.subject,
+      bodyText: emailDefaults.bodyText,
+      pdfBlob: pdfArtifact.blob,
+      filename: pdfArtifact.filename,
+      onUnauthorized: () => setServerGmailAccessToken(null)
+    });
+
+    const sentDateIso = getTodayLocalIso();
+    const sentViaLabel = `Gmail PDF (${recipientEmail})`;
+    const messageId = sendOutcome.id;
+
+    const latestStore = getStore();
+    const next: AppDataSnapshot = structuredClone(latestStore.data);
+    const targetIdx = next.invoices.findIndex((i) => i.id === inv.id);
+    if (targetIdx < 0) {
+      throw new Error(`Rechnung "${inv.invoice_number}" während des Versands nicht mehr gefunden.`);
+    }
+
+    next.invoices[targetIdx] = {
+      ...next.invoices[targetIdx],
+      sent_at: sentDateIso,
+      sent_to: recipientEmail,
+      sent_status: 'sent',
+      sent_message_id: messageId,
+      sent_via: sentViaLabel,
+      updated_at: new Date().toISOString()
+    };
+
+    const saved = saveStore(
+      next,
+      actor,
+      `Rechnung ${inv.invoice_number} per Gmail an ${recipientEmail} versendet (${messageId})`
+    );
+
+    return {
+      ok: true,
+      action: 'send_invoice',
+      revision: saved.revision,
+      invoice_id: inv.id,
+      invoice_number: inv.invoice_number,
+      sent_at: sentDateIso,
+      sent_to: recipientEmail,
+      sent_status: 'sent' as const,
+      sent_message_id: messageId,
+      sent_via: sentViaLabel,
+      filename: pdfArtifact.filename,
+      invoice: next.invoices[targetIdx]
+    };
+  } finally {
+    inFlightInvoiceSends.delete(inv.id);
+  }
 }
 
 export function recordMaintenanceAdminAction(
@@ -3394,9 +3548,9 @@ export const MCP_TOOLS = [
   {
     name: 'pixel_abrechnung',
     description:
-      'Gemeinsame geprüfte Abrechnungs-Logik in einem einzigen Aufruf: Erstellt Rechnungen (Format RE-75/2026, § 6 Abs. 1 Z 27 UStG Kleinunternehmerregelung, inkl. Sub-Abrechnung & Sperre abgerechneter Arbeiten), bucht Zahlungen/Teilzahlungen/Korrekturen oder erstellt buchhalterisch korrekte Stornobelege (RE-S01/2026).',
+      'Gemeinsame geprüfte Abrechnungs-Logik in einem einzigen Aufruf: Erstellt Rechnungen (Format RE-75/2026, § 6 Abs. 1 Z 27 UStG Kleinunternehmerregelung, inkl. Sub-Abrechnung & Sperre abgerechneter Arbeiten), versendet bestehende Original-Rechnungs-PDFs nach ausdrücklicher Nutzerfreigabe (action="send_invoice", user_confirmed=true), bucht Zahlungen/Teilzahlungen/Korrekturen oder erstellt buchhalterisch korrekte Stornobelege (RE-S01/2026).',
     annotations: {
-      title: 'Rechnung erstellen, Zahlung buchen oder stornieren',
+      title: 'Rechnung erstellen, versenden, Zahlung buchen oder stornieren',
       readOnlyHint: false,
       destructiveHint: false,
       idempotentHint: false,
@@ -3411,6 +3565,7 @@ export const MCP_TOOLS = [
           type: 'string',
           enum: [
             'create_invoice',
+            'send_invoice',
             'pay',
             'update_payment',
             'reverse_payment',
@@ -3419,7 +3574,7 @@ export const MCP_TOOLS = [
             'storno'
           ],
           description:
-            'Aktion: "create_invoice" (neue Rechnung), "pay" / "update_payment" / "reverse_payment" / "delete_payment" / "refund" (Zahlung) oder "storno" (Stornobeleg).'
+            'Aktion: "create_invoice" (neue Rechnung), "send_invoice" (bestehende Original-Rechnung per E-Mail versenden, erfordert user_confirmed=true), "pay" / "update_payment" / "reverse_payment" / "delete_payment" / "refund" (Zahlung) oder "storno" (Stornobeleg).'
         },
         customer_id: {
           type: 'string',
@@ -3456,7 +3611,17 @@ export const MCP_TOOLS = [
         },
         invoice_id: {
           type: 'string',
-          description: 'Bei Zahlung oder Storno: ID oder Rechnungsnummer (z.B. RE-75/2026).'
+          description: 'Bei send_invoice, Zahlung oder Storno: ID oder Rechnungsnummer (z.B. RE-75/2026).'
+        },
+        user_confirmed: {
+          type: 'boolean',
+          description:
+            'Bei action="send_invoice" zwingend erforderlich (true): Bestätigt, dass der Nutzer den Rechnungsversand ausdrücklich freigegeben hat.'
+        },
+        recipient_email: {
+          type: 'string',
+          description:
+            'Optional bei action="send_invoice": Falls leer, wird automatisch die in Infinity hinterlegte Kunden-E-Mail-Adresse verwendet.'
         },
         amount: { type: 'number', description: 'Zahlungsbetrag in EUR.' },
         payment_id: { type: 'string', description: 'ID des Zahlungseintrags bei Korrektur/Löschung.' },
@@ -3651,7 +3816,7 @@ function executeUnifiedPixelAction(args: Record<string, unknown>) {
   }
 }
 
-function executeUnifiedPixelBilling(args: Record<string, unknown>) {
+async function executeUnifiedPixelBilling(args: Record<string, unknown>) {
   const action = String(args.action || 'create_invoice');
   if (action === 'create_invoice') {
     return createInvoiceAdminAction(
@@ -3674,6 +3839,19 @@ function executeUnifiedPixelBilling(args: Record<string, unknown>) {
         payment_terms_text:
           typeof args.payment_terms_text === 'string' ? args.payment_terms_text : undefined,
         paid_in_cash: Boolean(args.paid_in_cash)
+      },
+      'mcp'
+    );
+  }
+
+  if (action === 'send_invoice') {
+    return sendInvoiceAdminAction(
+      {
+        invoice_id: String(args.invoice_id || args.id || ''),
+        user_confirmed: Boolean(args.user_confirmed),
+        confirmed: Boolean(args.confirmed),
+        recipient_email:
+          typeof args.recipient_email === 'string' ? args.recipient_email : undefined
       },
       'mcp'
     );
@@ -3709,7 +3887,10 @@ function executeUnifiedPixelBilling(args: Record<string, unknown>) {
   );
 }
 
-export function callMcpTool(name: string, args: Record<string, unknown> = {}): unknown {
+export async function callMcpTool(
+  name: string,
+  args: Record<string, unknown> = {}
+): Promise<unknown> {
   recordMcpAccess(`mcp:${name}`);
   switch (name) {
     // Neue gebündelte Hochgeschwindigkeits-Werkzeuge (1 Aufruf statt mehrerer Einzelaufrufe)
@@ -3822,6 +4003,17 @@ export function callMcpTool(name: string, args: Record<string, unknown> = {}): u
           invoice_id: String(args.invoice_id || ''),
           reason: typeof args.reason === 'string' ? args.reason : undefined,
           issue_date: typeof args.issue_date === 'string' ? args.issue_date : undefined
+        },
+        'mcp'
+      );
+    case 'admin_send_invoice':
+      return sendInvoiceAdminAction(
+        {
+          invoice_id: String(args.invoice_id || args.id || ''),
+          user_confirmed: Boolean(args.user_confirmed),
+          confirmed: Boolean(args.confirmed),
+          recipient_email:
+            typeof args.recipient_email === 'string' ? args.recipient_email : undefined
         },
         'mcp'
       );
