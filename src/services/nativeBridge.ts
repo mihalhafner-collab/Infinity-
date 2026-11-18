@@ -471,11 +471,16 @@ export async function shareDocumentNatively(params: {
   bodyText: string;
   channel: 'gmail' | 'whatsapp' | 'sms' | 'share';
   recipientEmail?: string;
+  recipientPhone?: string;
 }): Promise<boolean> {
   if (!isNativeAndroidApp() || !window.HafnerNative) {
     return false;
   }
   const base64 = await blobToBase64(params.blob);
+  const recipientTarget =
+    params.channel === 'whatsapp' || params.channel === 'sms'
+      ? params.recipientPhone || params.recipientEmail || ''
+      : params.recipientEmail || params.recipientPhone || '';
   return window.HafnerNative.shareDocument(
     base64,
     params.filename,
@@ -483,7 +488,7 @@ export async function shareDocumentNatively(params: {
     params.subject,
     params.bodyText,
     params.channel,
-    params.recipientEmail || ''
+    recipientTarget
   );
 }
 

@@ -170,15 +170,14 @@ class PixelTunnelService : Service() {
                     }
                 }
             } catch (limited: PixelTunnelWire.RateLimit) {
+                val waitMs = maxOf(limited.retryAfterMs, 15000L)
                 updateStatus(
                     "rate_limited",
-                    "Ältere Pixel-Schnittstelle wegen HTTP-429 automatisch deaktiviert. Bitte Standard Infinity-MCP verwenden."
+                    "HTTP-429 Ratenlimit · automatische Pause (${waitMs / 1000}s)."
                 )
-                val current = PixelTunnelConfig(this)
-                if (current.bindingHash() == activeBinding) {
-                    current.enabled(false)
+                if (!closing.get()) {
+                    Thread.sleep(waitMs)
                 }
-                break
             } catch (denied: PixelTunnelWire.AccessError) {
                 updateStatus("auth_error", denied.userMessage())
                 val current = PixelTunnelConfig(this)

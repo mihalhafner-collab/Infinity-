@@ -675,16 +675,16 @@ async function handleSingleJsonRpc(
         result: {
           protocolVersion: negotiated,
           capabilities: {
-            tools: { listChanged: false },
+            tools: { listChanged: true },
             resources: { subscribe: false, listChanged: false },
             prompts: { listChanged: false }
           },
           serverInfo: {
             name: 'infinity-hafner-mcp',
-            version: '1.3.0'
+            version: '1.3.6'
           },
           instructions:
-            'Privater OpenAI-MCP-Tunnel mit ausgehendem HTTPS (ChatGPT ↔ privater Tunnel ↔ Pixel-App ↔ lokale Datenbank auf Google Pixel 10 Pro). Bündle Leseabfragen über pixel_abfrage (collections: [...]) und Schreibvorgänge über pixel_aktion oder pixel_abrechnung in einem einzigen Aufruf, um Wartezeiten zu minimieren. Verwendet exakt dieselbe geprüfte App-Logik (L.C.R.-Sperren, RE-75/2026 Rechnungen, Rechnungsversand nach Nutzerfreigabe, Storno-Regeln und österreichische GuV).'
+            'Privater OpenAI-MCP-Tunnel mit ausgehendem HTTPS (ChatGPT ↔ privater Tunnel ↔ Pixel-App ↔ lokale Datenbank auf Google Pixel 10 Pro). Bündle Leseabfragen über pixel_abfrage (collections: [...]) und Schreibvorgänge über pixel_aktion oder pixel_abrechnung (inkl. action="send_invoice" oder admin_send_invoice für den Rechnungsversand nach Nutzerfreigabe) in einem einzigen Aufruf, um Wartezeiten zu minimieren. Verwendet exakt dieselbe geprüfte App-Logik (L.C.R.-Sperren, RE-75/2026 Rechnungen, Rechnungsversand nach Nutzerfreigabe, Storno-Regeln und österreichische GuV).'
         }
       };
     }

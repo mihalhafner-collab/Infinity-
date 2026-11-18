@@ -1233,6 +1233,35 @@ class MainActivity : AppCompatActivity() {
         try {
             val uri = Uri.parse(rawUrl)
             val scheme = uri.scheme?.lowercase() ?: ""
+            val host = uri.host?.lowercase() ?: ""
+
+            // WhatsApp-Links (wa.me / api.whatsapp.com / whatsapp://) direkt in der nativen WhatsApp-App öffnen
+            if (scheme == "whatsapp" || host == "wa.me" || host == "api.whatsapp.com") {
+                val waUri = if (scheme == "whatsapp") {
+                    uri
+                } else {
+                    val pathPhone = uri.pathSegments.firstOrNull()?.replace(Regex("\\D"), "").orEmpty()
+                    val queryPhone = uri.getQueryParameter("phone")?.replace(Regex("\\D"), "").orEmpty()
+                    val phone = pathPhone.ifEmpty { queryPhone }
+                    val text = uri.getQueryParameter("text").orEmpty()
+                    Uri.Builder()
+                        .scheme("whatsapp")
+                        .authority("send")
+                        .apply {
+                            if (phone.isNotEmpty()) appendQueryParameter("phone", phone)
+                            if (text.isNotEmpty()) appendQueryParameter("text", text)
+                        }
+                        .build()
+                }
+                for (waPkg in listOf("com.whatsapp", "com.whatsapp.w4b")) {
+                    val directWa = Intent(Intent.ACTION_VIEW, waUri).setPackage(waPkg)
+                    if (directWa.resolveActivity(packageManager) != null) {
+                        startActivity(directWa)
+                        return
+                    }
+                }
+            }
+
             val intent = when (scheme) {
                 "tel" -> Intent(Intent.ACTION_DIAL, uri)
                 "mailto", "sms", "smsto" -> Intent(Intent.ACTION_SENDTO, uri)
@@ -1275,13 +1304,20 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun resumePixelTunnelIfEnabled() {
-        // Standardmäßig wird die direkte Infinity-MCP-Verbindung (/mcp) verwendet.
-        // Die ältere Pixel-Tunnel-Pollschnittstelle wird beim App-Start nicht mehr
-        // automatisch im Hintergrund gestartet, um unnötige HTTP-429-Anfragen zu vermeiden.
         try {
             val tunnelCfg = PixelTunnelConfig(this)
             if (tunnelCfg.enabled() && !tunnelCfg.configured()) {
                 tunnelCfg.enabled(false)
+                return
+            }
+            if (tunnelCfg.enabled() && tunnelCfg.configured() && !PixelTunnelService.isServiceRunning()) {
+                if (
+                    Build.VERSION.SDK_INT < 33 ||
+                    ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) ==
+                        PackageManager.PERMISSION_GRANTED
+                ) {
+                    startForegroundService(Intent(this, PixelTunnelService::class.java))
+                }
             }
         } catch (_: Exception) {
         }

@@ -61,7 +61,7 @@ class InfinityMcpDispatcher(
                         .put(
                             "capabilities",
                             JSONObject()
-                                .put("tools", JSONObject().put("listChanged", false))
+                                .put("tools", JSONObject().put("listChanged", true))
                                 .put(
                                     "resources",
                                     JSONObject().put("subscribe", false).put("listChanged", false)
@@ -76,7 +76,7 @@ class InfinityMcpDispatcher(
                         )
                         .put(
                             "instructions",
-                            "Direkter privater OpenAI-Pixel-Tunnel auf dem Google Pixel 10 Pro (App: Infinity · Hafner Michael – Grünraum Handwerk, Paket: at.hafner.gruenraum). Nutze infinity_status für Status/Revisionsprüfung, pixel_abfrage für Lesezugriffe (Übersicht, Kundensuche, Einzeldatensätze, GuV), pixel_aktion für Schreibvorgänge (Anlegen, Ändern, Löschen, L.C.R., Wartung, Steuereinstellungen) und pixel_abrechnung für Rechnungen (RE-75/2026), Zahlungen und Storno."
+                            "Direkter privater OpenAI-Pixel-Tunnel auf dem Google Pixel 10 Pro (App: Infinity · Hafner Michael – Grünraum Handwerk, Paket: at.hafner.gruenraum). Nutze infinity_status für Status/Revisionsprüfung, pixel_abfrage für Lesezugriffe (Übersicht, Kundensuche unabhängig von Namensreihenfolge, Einzeldatensätze, GuV), pixel_aktion für Schreibvorgänge (Anlegen, Ändern, Löschen, L.C.R., Wartung, Steuereinstellungen) und pixel_abrechnung bzw. admin_send_invoice für Rechnungen (RE-75/2026), Rechnungsversand nach ausdrücklicher Nutzerfreigabe (action='send_invoice', user_confirmed=true), Zahlungen und Storno."
                         )
                     okResponse(idVal, result)
                 }
@@ -1023,6 +1023,8 @@ class InfinityMcpDispatcher(
                 val settingsObj = args.optJSONObject("tax_settings") ?: args
                 updateTaxSettingsInState(state, settingsObj)
             }
+
+            "send_invoice" -> sendInvoiceInState(state, args)
 
             else -> throw IllegalArgumentException("Unbekannte Aktion '$op'.")
         }
@@ -3519,8 +3521,13 @@ class InfinityMcpDispatcher(
                                                 .put("maintenance")
                                                 .put("equipment_media")
                                                 .put("tax_settings")
+                                                .put("send_invoice")
                                         )
                                 )
+                                .put("invoice_id", JSONObject().put("type", "string"))
+                                .put("user_confirmed", JSONObject().put("type", "boolean"))
+                                .put("dry_run", JSONObject().put("type", "boolean"))
+                                .put("recipient_email", JSONObject().put("type", "string"))
                                 .put("collection", JSONObject().put("type", "string"))
                                 .put("id", JSONObject().put("type", "string"))
                                 .put(
@@ -3642,6 +3649,41 @@ class InfinityMcpDispatcher(
                                 .put("date", JSONObject().put("type", "string"))
                                 .put("note", JSONObject().put("type", "string"))
                                 .put("reason", JSONObject().put("type", "string"))
+                                .put("request_id", JSONObject().put("type", "string"))
+                                .put("expected_revision", JSONObject().put("type", "number"))
+                        )
+                )
+        )
+
+        tools.put(
+            JSONObject()
+                .put("name", "admin_send_invoice")
+                .put(
+                    "description",
+                    "Versendet eine bestehende Original-Rechnung (PDF) aus Infinity per E-Mail an die hinterlegte Kundenadresse. Erfordert ausdrückliche Nutzerfreigabe (user_confirmed=true) oder dry_run=true für einen Trockenlauf ohne echten Versand."
+                )
+                .put(
+                    "annotations",
+                    JSONObject()
+                        .put("title", "Bestehende Rechnung per E-Mail versenden")
+                        .put("readOnlyHint", false)
+                        .put("destructiveHint", false)
+                        .put("idempotentHint", true)
+                        .put("openWorldHint", false)
+                )
+                .put(
+                    "inputSchema",
+                    JSONObject()
+                        .put("type", "object")
+                        .put("additionalProperties", false)
+                        .put("required", JSONArray().put("invoice_id"))
+                        .put(
+                            "properties",
+                            JSONObject()
+                                .put("invoice_id", JSONObject().put("type", "string"))
+                                .put("user_confirmed", JSONObject().put("type", "boolean"))
+                                .put("dry_run", JSONObject().put("type", "boolean"))
+                                .put("recipient_email", JSONObject().put("type", "string"))
                                 .put("request_id", JSONObject().put("type", "string"))
                                 .put("expected_revision", JSONObject().put("type", "number"))
                         )
