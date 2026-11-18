@@ -65,8 +65,10 @@ export function ensureHafnerLogoLoaded(): Promise<string | null> {
     } else {
       logoLoadPromise = (async () => {
         try {
-          const fsMod = await import('node:fs');
-          const pathMod = await import('node:path');
+          const fsModName = 'node:fs';
+          const pathModName = 'node:path';
+          const fsMod = await import(/* @vite-ignore */ fsModName);
+          const pathMod = await import(/* @vite-ignore */ pathModName);
           const relPath = HAFNER_LOGO_URL.replace(/^\/+/, '');
           const absPath = pathMod.resolve(process.cwd(), 'public', relPath);
           if (fsMod.existsSync(absPath)) {
