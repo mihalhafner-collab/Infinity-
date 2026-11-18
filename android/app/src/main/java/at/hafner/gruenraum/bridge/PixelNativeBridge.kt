@@ -226,6 +226,16 @@ class PixelNativeBridge(
     }
 
     @JavascriptInterface
+    fun signInWithGoogle(requestId: String) {
+        activity.requestNativeGoogleSignIn(requestId, silentOnly = false)
+    }
+
+    @JavascriptInterface
+    fun disconnectGmail(): String {
+        return activity.disconnectNativeGmail()
+    }
+
+    @JavascriptInterface
     fun saveGmailAppPassword(senderEmail: String, appPassword: String): String {
         return activity.saveNativeGmailAppPassword(senderEmail, appPassword)
     }

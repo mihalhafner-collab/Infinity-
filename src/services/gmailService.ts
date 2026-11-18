@@ -7,7 +7,15 @@ import {
   signInWithRedirect
 } from 'firebase/auth';
 import { auth } from './firebaseClient.ts';
-import { isNativeAndroidApp, getWebSessionToken, setWebSessionToken } from './nativeBridge.ts';
+import {
+  disconnectNativeGmail,
+  getNativeGmailConfig,
+  getWebSessionToken,
+  isNativeAndroidApp,
+  setWebSessionToken,
+  signInWithGoogleNatively,
+  subscribeNativeGmailConfig
+} from './nativeBridge.ts';
 
 export const OWNER_EMAIL = 'mihalhafner@gmail.com';
 
@@ -235,6 +243,22 @@ if (typeof window !== 'undefined' && !isNativeAndroidApp()) {
     notifyListeners();
     finalizeBootCheckingIfReady();
   });
+} else if (typeof window !== 'undefined' && isNativeAndroidApp()) {
+  const applyNativeGmailConfig = () => {
+    const cfg = getNativeGmailConfig();
+    if (cfg && (cfg.hasOAuthToken || cfg.hasAppPassword)) {
+      currentUser = { email: cfg.senderEmail || OWNER_EMAIL } as User;
+      cachedAccessToken = cachedAccessToken || 'native_android_gmail_connected';
+    } else {
+      currentUser = null;
+      cachedAccessToken = null;
+    }
+    notifyListeners();
+  };
+  applyNativeGmailConfig();
+  subscribeNativeGmailConfig(() => {
+    applyNativeGmailConfig();
+  });
 }
 
 export const subscribeGmailAuth = (listener: GmailAuthListener): (() => void) => {
@@ -309,7 +333,21 @@ export const googleSignIn = async (
   returnScreenId?: string
 ): Promise<{ user: User; accessToken: string } | null> => {
   if (isNativeAndroidApp()) {
-    return null;
+    lastRedirectAuthError = null;
+    try {
+      isSigningIn = true;
+      const res = await signInWithGoogleNatively();
+      const email = (res.email || OWNER_EMAIL).trim();
+      const userObj = { email } as User;
+      cachedAccessToken = res.accessToken || 'native_android_gmail_connected';
+      currentUser = userObj;
+      notifyListeners();
+      return { user: userObj, accessToken: cachedAccessToken };
+    } catch (err: unknown) {
+      throw new Error(formatFirebaseAuthError(err));
+    } finally {
+      isSigningIn = false;
+    }
   }
 
   lastRedirectAuthError = null;
@@ -353,6 +391,9 @@ export const googleSignIn = async (
 };
 
 export const getAccessToken = async (): Promise<string | null> => {
+  if (isNativeAndroidApp() && cachedAccessToken === 'native_android_gmail_connected') {
+    return '';
+  }
   return cachedAccessToken;
 };
 
@@ -366,6 +407,9 @@ export const invalidateAccessToken = (): void => {
 };
 
 export const logoutGmail = async (): Promise<void> => {
+  if (isNativeAndroidApp()) {
+    disconnectNativeGmail();
+  }
   await auth.signOut().catch(() => undefined);
   setWebSessionToken(null);
   cachedAccessToken = null;

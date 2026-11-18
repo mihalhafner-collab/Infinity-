@@ -20,7 +20,6 @@ import {
   resolveInvoiceDisplayData
 } from '../../utils/invoicePdf.ts';
 import {
-  OWNER_EMAIL,
   getAccessToken,
   googleSignIn,
   logoutGmail,
@@ -29,27 +28,19 @@ import {
 } from '../../services/gmailService.ts';
 import {
   downloadOrSaveBlob,
-  getNativeGmailConfig,
   isNativeAndroidApp,
   notifyMailSentNatively,
-  openExternalUrlNatively,
-  pasteNativeGmailAppPasswordFromClipboard,
-  saveNativeGmailAppPassword,
   sendInvoiceEmailAutomaticallyNatively,
-  shareDocumentNatively,
-  subscribeNativeGmailConfig
+  shareDocumentNatively
 } from '../../services/nativeBridge.ts';
 import {
   AlertCircle,
   Check,
   ChevronDown,
   ChevronUp,
-  ClipboardPaste,
   Download,
-  ExternalLink,
   Eye,
   FileText,
-  KeyRound,
   Loader2,
   LogOut,
   Mail,
@@ -116,14 +107,6 @@ export const RechnungVersendenModal: React.FC = () => {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
 
-  // Nativer Gmail-Direktversand auf dem Pixel 10 Pro (Titan M2 Keystore)
-  const [nativeGmailCfg, setNativeGmailCfg] = useState(() => getNativeGmailConfig());
-  const [showAppPasswordBox, setShowAppPasswordBox] = useState(false);
-  const [senderEmailDraft, setSenderEmailDraft] = useState(
-    () => getNativeGmailConfig()?.senderEmail || OWNER_EMAIL
-  );
-  const [appPasswordDraft, setAppPasswordDraft] = useState('');
-
   const [pdfArtifact, setPdfArtifact] = useState<{
     blob: Blob;
     file: File;
@@ -134,20 +117,6 @@ export const RechnungVersendenModal: React.FC = () => {
     const unsubscribe = subscribeGmailAuth(({ user, hasToken: tokenReady }) => {
       setGmailUser(user);
       setHasToken(tokenReady);
-    });
-    return unsubscribe;
-  }, []);
-
-  useEffect(() => {
-    const unsubscribe = subscribeNativeGmailConfig((cfg, autoDetected) => {
-      setNativeGmailCfg(cfg);
-      if (cfg.hasAppPassword || cfg.hasOAuthToken) {
-        setShowAppPasswordBox(false);
-        setErrorMessage(null);
-        if (autoDetected) {
-          setFeedbackMessage('Google-Code automatisch aus Zwischenablage übernommen');
-        }
-      }
     });
     return unsubscribe;
   }, []);
@@ -186,18 +155,8 @@ export const RechnungVersendenModal: React.FC = () => {
       setRecipientEmail(initEmail);
       setRecipientPhone(initPhone);
 
-      const latestNativeCfg = getNativeGmailConfig();
-      setNativeGmailCfg(latestNativeCfg);
-      setSenderEmailDraft(latestNativeCfg?.senderEmail || OWNER_EMAIL);
-      setShowAppPasswordBox(
-        isNativeAndroidApp() &&
-          !latestNativeCfg?.hasAppPassword &&
-          !latestNativeCfg?.hasOAuthToken
-      );
-      setAppPasswordDraft('');
-
       // Sinnvolle Kanal-Vorauswahl: Gmail wenn E-Mail hinterlegt oder Token aktiv, sonst WhatsApp bei vorhandener Telefonnummer
-      if (!initEmail && initPhone && !hasToken && !isNativeAndroidApp()) {
+      if (!initEmail && initPhone && !hasToken) {
         setChannel('whatsapp');
       } else {
         setChannel('gmail');
@@ -333,7 +292,7 @@ export const RechnungVersendenModal: React.FC = () => {
       return;
     }
 
-    if (!hasToken && !isNativeAndroid) {
+    if (!hasToken) {
       setErrorMessage('Bitte zuerst über „Sign in with Google“ mit Gmail verbinden.');
       return;
     }
@@ -342,17 +301,6 @@ export const RechnungVersendenModal: React.FC = () => {
     try {
       const freshPdf = pdfArtifact || (await generateInvoicePdfAsync(resolvedData));
       const cleanSubject = emailSubject.trim() || `Rechnungs Nr. ${invoice.invoice_number}`;
-
-      // Falls der Nutzer gerade ein Google App-Passwort eingegeben hat, zuerst im Titan M2 Keystore sichern
-      if (isNativeAndroid && appPasswordDraft.replace(/\s+/g, '').length >= 8) {
-        const updatedCfg = saveNativeGmailAppPassword(
-          senderEmailDraft.trim() || OWNER_EMAIL,
-          appPasswordDraft
-        );
-        setNativeGmailCfg(updatedCfg);
-        setAppPasswordDraft('');
-        setShowAppPasswordBox(false);
-      }
 
       if (isNativeAndroid) {
         const webToken = await getAccessToken();
@@ -385,43 +333,7 @@ export const RechnungVersendenModal: React.FC = () => {
       finalizeSuccessfulMailSend(cleanEmail);
     } catch (err) {
       const rawMsg = err instanceof Error ? err.message : 'Fehler beim Gmail-Versand.';
-      if (rawMsg.startsWith('APP_PASSWORD_REQUIRED:')) {
-        setShowAppPasswordBox(true);
-        setErrorMessage(null);
-      } else {
-        setErrorMessage(rawMsg);
-      }
-    } finally {
-      setIsSending(false);
-    }
-  };
-
-  const handleOpenPixelGmailAppFallback = async () => {
-    setErrorMessage(null);
-    const cleanEmail = recipientEmail.trim();
-    if (!cleanEmail || !cleanEmail.includes('@')) {
-      setErrorMessage('Bitte eine gültige Empfänger-E-Mail-Adresse eingeben.');
-      return;
-    }
-    setIsSending(true);
-    try {
-      const freshPdf = pdfArtifact || (await generateInvoicePdfAsync(resolvedData));
-      const cleanSubject = emailSubject.trim() || `Rechnungs Nr. ${invoice.invoice_number}`;
-      const opened = await shareDocumentNatively({
-        blob: freshPdf.blob,
-        filename: freshPdf.filename,
-        mimeType: 'application/pdf',
-        subject: cleanSubject,
-        bodyText: emailBody,
-        channel: 'gmail',
-        recipientEmail: cleanEmail
-      });
-      if (!opened) {
-        throw new Error('Gmail-App konnte auf dem Gerät nicht geöffnet werden.');
-      }
-      finalizeSuccessfulMailSend(cleanEmail);
-    } catch (err) {
-      setErrorMessage(err instanceof Error ? err.message : 'Fehler beim Öffnen der Gmail-App.');
+      setErrorMessage(rawMsg);
     } finally {
       setIsSending(false);
     }
@@ -684,14 +596,6 @@ export const RechnungVersendenModal: React.FC = () => {
                       <LogOut size={12} />
                       <span>Trennen</span>
                     </button>
-                  ) : isNativeAndroid ? (
-                    <button
-                      type="button"
-                      onClick={() => setShowAppPasswordBox((prev) => !prev)}
-                      className="text-[10px] font-semibold text-[#2C7738] bg-emerald-50 px-2 py-0.5 rounded-md flex items-center gap-1"
-                    >
-                      <span>Automatischer Direktversand</span>
-                    </button>
                   ) : (
                     <span className="text-[10px] font-semibold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md">
                       Anmeldung erforderlich
@@ -705,131 +609,6 @@ export const RechnungVersendenModal: React.FC = () => {
                       Verbunden: {gmailUser.email}
                     </span>
                     <Check size={14} className="text-[#2C7738] shrink-0" />
-                  </div>
-                ) : isNativeAndroid ? (
-                  <div className="space-y-2">
-                    <div className="px-2.5 py-2 bg-emerald-50/70 border border-emerald-200 rounded-xl flex items-center justify-between gap-2">
-                      <span className="text-xs font-semibold text-[#2C7738] truncate">
-                        {nativeGmailCfg?.hasAppPassword || nativeGmailCfg?.hasOAuthToken
-                          ? `Automatischer Hintergrund-Versand (${nativeGmailCfg.senderEmail})`
-                          : 'Automatischer Gmail-Versand inkl. PDF bei Aktivierung'}
-                      </span>
-                      <Check size={14} className="text-[#2C7738] shrink-0" />
-                    </div>
-
-                    {showAppPasswordBox && (
-                      <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2.5 animate-fade-in">
-                        <div className="flex items-center justify-between gap-1.5">
-                          <div className="flex items-center gap-1.5 text-xs font-bold text-slate-900">
-                            <KeyRound size={14} className="text-[#3138A0]" />
-                            <span>Einmalig Gmail verknüpfen (Titan M2)</span>
-                          </div>
-                          <span className="text-[10px] font-semibold text-slate-500">
-                            Nur 1× nötig
-                          </span>
-                        </div>
-
-                        <p className="text-[11px] text-slate-600 leading-snug">
-                          Tippe auf Schritt 1, kopiere den angezeigten 16-stelligen Google-Code und kehre hierher zurück – die App übernimmt ihn automatisch.
-                        </p>
-
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setErrorMessage(null);
-                            const url = 'https://myaccount.google.com/apppasswords';
-                            if (!openExternalUrlNatively(url)) {
-                              window.location.href = url;
-                            }
-                          }}
-                          className="w-full h-10 px-3 rounded-xl bg-white hover:bg-slate-100 border border-[#3138A0]/30 text-[#3138A0] text-xs font-bold flex items-center justify-between shadow-2xs transition-colors"
-                        >
-                          <span>1. Google-Code öffnen & kopieren</span>
-                          <ExternalLink size={14} className="shrink-0" />
-                        </button>
-
-                        <button
-                          type="button"
-                          disabled={isSending}
-                          onClick={async () => {
-                            setErrorMessage(null);
-                            const updated = pasteNativeGmailAppPasswordFromClipboard(
-                              senderEmailDraft.trim() || OWNER_EMAIL
-                            );
-                            if (updated?.hasAppPassword) {
-                              setNativeGmailCfg(updated);
-                              setShowAppPasswordBox(false);
-                              void handleSendGmailDirectly();
-                              return;
-                            }
-                            try {
-                              if (typeof navigator !== 'undefined' && navigator.clipboard?.readText) {
-                                const clip = (await navigator.clipboard.readText()).replace(/\s+/g, '');
-                                if (clip.length >= 8) {
-                                  const saved = saveNativeGmailAppPassword(
-                                    senderEmailDraft.trim() || OWNER_EMAIL,
-                                    clip
-                                  );
-                                  setNativeGmailCfg(saved);
-                                  setShowAppPasswordBox(false);
-                                  void handleSendGmailDirectly();
-                                  return;
-                                }
-                              }
-                            } catch {
-                              // Fallback to manual input below
-                            }
-                            setErrorMessage(
-                              'Noch kein 16-stelliger Code in der Zwischenablage gefunden. Bitte erst in Schritt 1 kopieren oder unten einfügen.'
-                            );
-                          }}
-                          className="w-full h-10 px-3 rounded-xl bg-[#2C7738] hover:bg-[#23602d] text-white text-xs font-bold flex items-center justify-center gap-2 shadow-2xs transition-colors disabled:opacity-50"
-                        >
-                          <ClipboardPaste size={14} />
-                          <span>2. Kopierten Code automatisch einfügen & Senden</span>
-                        </button>
-
-                        <div className="pt-1 border-t border-slate-200/80 flex items-center gap-1.5">
-                          <input
-                            type="text"
-                            value={appPasswordDraft}
-                            onChange={(e) => setAppPasswordDraft(e.target.value)}
-                            placeholder="Oder 16-stelligen Code hier einfügen"
-                            className="flex-1 h-9 px-2.5 bg-white border border-slate-200 rounded-lg text-xs text-slate-900 font-mono"
-                          />
-                          <button
-                            type="button"
-                            onClick={() => {
-                              if (appPasswordDraft.replace(/\s+/g, '').length >= 8) {
-                                const updated = saveNativeGmailAppPassword(
-                                  senderEmailDraft.trim() || OWNER_EMAIL,
-                                  appPasswordDraft
-                                );
-                                setNativeGmailCfg(updated);
-                                setAppPasswordDraft('');
-                                setShowAppPasswordBox(false);
-                                setErrorMessage(null);
-                                void handleSendGmailDirectly();
-                              }
-                            }}
-                            disabled={appPasswordDraft.replace(/\s+/g, '').length < 8 || isSending}
-                            className="px-3 h-9 rounded-lg bg-[#3138A0] text-white text-[11px] font-bold disabled:opacity-40 shrink-0"
-                          >
-                            Speichern
-                          </button>
-                        </div>
-
-                        <button
-                          type="button"
-                          onClick={handleOpenPixelGmailAppFallback}
-                          disabled={isSending}
-                          className="w-full h-9 rounded-lg bg-slate-200/70 hover:bg-slate-200 text-slate-800 text-[11px] font-bold flex items-center justify-center gap-1.5 transition-colors"
-                        >
-                          <Mail size={13} className="text-red-600" />
-                          <span>Ohne Code direkt über Pixel Gmail-App senden</span>
-                        </button>
-                      </div>
-                    )}
                   </div>
                 ) : (
                   <div className="space-y-1.5">
@@ -1033,7 +812,7 @@ export const RechnungVersendenModal: React.FC = () => {
           {channel === 'gmail' && (
             <button
               type="button"
-              disabled={isSending || (!hasToken && !isNativeAndroid)}
+              disabled={isSending || !hasToken}
               onClick={() => void handleSendGmailDirectly()}
               className="flex-1 h-12 bg-[#3138A0] hover:bg-[#272d82] disabled:opacity-50 active:scale-98 text-white font-semibold rounded-xl text-xs flex items-center justify-center gap-2 shadow-xs transition-all"
             >
