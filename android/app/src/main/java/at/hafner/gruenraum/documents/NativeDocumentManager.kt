@@ -28,6 +28,20 @@ class NativeDocumentManager(private val context: Context) {
         )
     }
 
+    fun normalizeWhatsAppDigits(rawPhone: String?): String {
+        val raw = rawPhone?.trim().orEmpty()
+        if (raw.isEmpty() || raw.contains("@")) return ""
+        val stripped = raw.replace(Regex("[\\s\\-()/]"), "")
+        if (stripped.isEmpty()) return ""
+        val e164 = when {
+            stripped.startsWith("00") -> "+${stripped.drop(2)}"
+            stripped.startsWith("0") -> "+43${stripped.drop(1)}"
+            !stripped.startsWith("+") -> "+$stripped"
+            else -> stripped
+        }
+        return e164.replace(Regex("\\D"), "")
+    }
+
     fun shareDocument(
         activityContext: Context,
         base64Data: String,
@@ -40,6 +54,9 @@ class NativeDocumentManager(private val context: Context) {
     ): Boolean {
         return try {
             val uri = writeSharedTempFile(base64Data, filename)
+            val cleanChannel = channel.lowercase().trim()
+            val targetStr = recipientEmail?.trim().orEmpty()
+
             val baseIntent = Intent(Intent.ACTION_SEND).apply {
                 type = mimeType.ifBlank { "application/pdf" }
                 putExtra(Intent.EXTRA_STREAM, uri)
@@ -50,32 +67,74 @@ class NativeDocumentManager(private val context: Context) {
                 if (bodyText.isNotBlank()) {
                     putExtra(Intent.EXTRA_TEXT, bodyText)
                 }
-                if (!recipientEmail.isNullOrBlank()) {
-                    putExtra(Intent.EXTRA_EMAIL, arrayOf(recipientEmail.trim()))
+                if (targetStr.isNotEmpty() && targetStr.contains("@")) {
+                    putExtra(Intent.EXTRA_EMAIL, arrayOf(targetStr))
                 }
                 clipData = ClipData.newRawUri(filename, uri)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
 
-            val preferredPackage = when (channel.lowercase()) {
+            if (cleanChannel == "whatsapp") {
+                val waDigits = normalizeWhatsAppDigits(targetStr)
+                for (waPkg in listOf("com.whatsapp", "com.whatsapp.w4b")) {
+                    runCatching {
+                        context.grantUriPermission(
+                            waPkg,
+                            uri,
+                            Intent.FLAG_GRANT_READ_URI_PERMISSION
+                        )
+                    }
+                    // 1. Direkt in den WhatsApp-Chat des Empfängers springen (mit angehängtem Original-PDF + Begleittext)
+                    if (waDigits.length >= 6) {
+                        val directChatIntent = Intent(baseIntent).apply {
+                            setPackage(waPkg)
+                            putExtra("jid", "$waDigits@s.whatsapp.net")
+                        }
+                        if (directChatIntent.resolveActivity(context.packageManager) != null) {
+                            val openedDirect = runCatching {
+                                activityContext.startActivity(directChatIntent)
+                                true
+                            }.getOrDefault(false)
+                            if (openedDirect) return true
+                        }
+                    }
+                    // 2. Fallback: WhatsApp direkt öffnen (falls keine Nummer hinterlegt ist)
+                    val pkgIntent = Intent(baseIntent).setPackage(waPkg)
+                    if (pkgIntent.resolveActivity(context.packageManager) != null) {
+                        val openedPkg = runCatching {
+                            activityContext.startActivity(pkgIntent)
+                            true
+                        }.getOrDefault(false)
+                        if (openedPkg) return true
+                    }
+                }
+            }
+
+            val preferredPackage = when (cleanChannel) {
                 "gmail" -> "com.google.android.gm"
-                "whatsapp" -> "com.whatsapp"
                 "sms", "rcs" -> "com.google.android.apps.messaging"
                 else -> null
             }
 
             if (preferredPackage != null) {
-                val targeted = Intent(baseIntent).setPackage(preferredPackage)
-                if (targeted.resolveActivity(context.packageManager) != null) {
-                    activityContext.startActivity(targeted)
-                    return true
+                runCatching {
+                    context.grantUriPermission(
+                        preferredPackage,
+                        uri,
+                        Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    )
                 }
-                if (channel.lowercase() == "whatsapp") {
-                    val waBusiness = Intent(baseIntent).setPackage("com.whatsapp.w4b")
-                    if (waBusiness.resolveActivity(context.packageManager) != null) {
-                        activityContext.startActivity(waBusiness)
-                        return true
+                val targeted = Intent(baseIntent).setPackage(preferredPackage).apply {
+                    if ((cleanChannel == "sms" || cleanChannel == "rcs") && targetStr.isNotEmpty() && !targetStr.contains("@")) {
+                        putExtra("address", targetStr)
                     }
+                }
+                if (targeted.resolveActivity(context.packageManager) != null) {
+                    val opened = runCatching {
+                        activityContext.startActivity(targeted)
+                        true
+                    }.getOrDefault(false)
+                    if (opened) return true
                 }
             }
 

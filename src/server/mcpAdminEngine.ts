@@ -3163,13 +3163,37 @@ export function stornoInvoiceAdminAction(
 
 let serverGmailAccessToken: string | null = null;
 const inFlightInvoiceSends = new Set<string>();
+const GMAIL_TOKEN_KEY = 'gmail_oauth_token';
+const GMAIL_TOKEN_FILENAME = 'gmail-token.json';
 
 export function setServerGmailAccessToken(token: string | null): void {
-  serverGmailAccessToken = token && token.trim() ? token.trim() : null;
+  const clean = token && token.trim() ? token.trim() : null;
+  serverGmailAccessToken = clean;
+  try {
+    persistStoreToDiskAndCloud(GMAIL_TOKEN_KEY, GMAIL_TOKEN_FILENAME, {
+      accessToken: clean,
+      updatedAt: new Date().toISOString()
+    });
+  } catch {
+    // Ignore persistence error
+  }
 }
 
 export function getServerGmailAccessToken(): string | null {
-  return serverGmailAccessToken || process.env.GMAIL_ACCESS_TOKEN?.trim() || null;
+  if (serverGmailAccessToken) return serverGmailAccessToken;
+  if (process.env.GMAIL_ACCESS_TOKEN?.trim()) {
+    return process.env.GMAIL_ACCESS_TOKEN.trim();
+  }
+  try {
+    const saved = readLocalJsonSync<{ accessToken?: string | null }>(GMAIL_TOKEN_FILENAME);
+    if (saved?.accessToken && saved.accessToken.trim()) {
+      serverGmailAccessToken = saved.accessToken.trim();
+      return serverGmailAccessToken;
+    }
+  } catch {
+    // Ignore read error
+  }
+  return null;
 }
 
 export async function sendInvoiceAdminAction(
@@ -3267,7 +3291,12 @@ export async function sendInvoiceAdminAction(
   try {
     // Vorhandene Original-PDF- & Versandfunktion wiederverwenden
     const pdfArtifact = await generateInvoicePdfAsync(resolvedData);
-    const activeToken = getServerGmailAccessToken() || 'LOCAL_MCP_VERIFIED';
+    const activeToken = getServerGmailAccessToken();
+    if (!activeToken) {
+      throw new Error(
+        `Gmail-Versand fehlgeschlagen: Kein aktives Gmail-Zugriffstoken für Rechnung ${inv.invoice_number} (${recipientEmail}) vorhanden. Bitte in Infinity einmalig beim Rechnungsversand mit Google (mihalhafner@gmail.com) anmelden.`
+      );
+    }
 
     const sendOutcome = await sendInvoicePdfViaGmail({
       accessToken: activeToken,
@@ -3646,8 +3675,24 @@ export const MCP_TOOLS = [
       properties: {
         op: {
           type: 'string',
-          enum: ['upsert', 'update', 'delete', 'toggle_lcr', 'maintenance', 'equipment_media', 'tax_settings'],
+          enum: ['upsert', 'update', 'delete', 'toggle_lcr', 'maintenance', 'equipment_media', 'tax_settings', 'send_invoice'],
           description: 'Art der Einzelaktion (falls nicht "operations" als Liste übergeben wird).'
+        },
+        invoice_id: {
+          type: 'string',
+          description: 'Optional bei op="send_invoice": ID oder Rechnungsnummer (z.B. RE-101/2026).'
+        },
+        user_confirmed: {
+          type: 'boolean',
+          description: 'Bei op="send_invoice" zwingend erforderlich (true): Bestätigt, dass der Nutzer den Rechnungsversand ausdrücklich freigegeben hat.'
+        },
+        dry_run: {
+          type: 'boolean',
+          description: 'Optional bei op="send_invoice": Wenn true, Trockenlauf ohne echten E-Mail-Versand.'
+        },
+        recipient_email: {
+          type: 'string',
+          description: 'Optional bei op="send_invoice": Empfänger-E-Mail-Adresse (Standard: Kunden-E-Mail aus Infinity).'
         },
         collection: {
           type: 'string',
@@ -3807,6 +3852,44 @@ export const MCP_TOOLS = [
         date: { type: 'string', description: 'Zahlungsdatum YYYY-MM-DD.' },
         note: { type: 'string', description: 'Zahlungsnotiz.' },
         reason: { type: 'string', description: 'Stornogrund bei action="storno".' }
+      }
+    }
+  },
+  {
+    name: 'admin_send_invoice',
+    description:
+      'Versendet eine bestehende Original-Rechnung (PDF) aus Infinity per E-Mail an die hinterlegte Kundenadresse. Erfordert ausdrückliche Nutzerfreigabe (user_confirmed=true) oder dry_run=true für einen Trockenlauf ohne echten Versand.',
+    annotations: {
+      title: 'Bestehende Rechnung per E-Mail versenden',
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false
+    },
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['invoice_id'],
+      properties: {
+        invoice_id: {
+          type: 'string',
+          description: 'Rechnungs-ID oder Rechnungsnummer (z.B. RE-101/2026).'
+        },
+        user_confirmed: {
+          type: 'boolean',
+          description:
+            'Zwingend erforderlich für echten Versand (true): Bestätigt, dass der Nutzer den Rechnungsversand ausdrücklich freigegeben hat.'
+        },
+        dry_run: {
+          type: 'boolean',
+          description:
+            'Optional: Wenn true, werden Rechnung, Empfängeradresse und Original-PDF ohne echten E-Mail-Versand geprüft.'
+        },
+        recipient_email: {
+          type: 'string',
+          description:
+            'Optionale Empfänger-E-Mail-Adresse (falls leer, wird automatisch die in Infinity hinterlegte Kunden-E-Mail-Adresse verwendet).'
+        }
       }
     }
   }
@@ -4001,6 +4084,18 @@ function executeUnifiedPixelAction(args: Record<string, unknown>) {
           : ((args.settings as Partial<TaxSettings>) || {});
       return updateTaxSettingsAdmin(settings, 'mcp');
     }
+    case 'send_invoice':
+      return sendInvoiceAdminAction(
+        {
+          invoice_id: String(args.invoice_id || args.id || ''),
+          user_confirmed: Boolean(args.user_confirmed),
+          confirmed: Boolean(args.confirmed),
+          dry_run: Boolean(args.dry_run),
+          recipient_email:
+            typeof args.recipient_email === 'string' ? args.recipient_email : undefined
+        },
+        'mcp'
+      );
     default:
       throw new Error(`Unbekannte Aktion "${op}".`);
   }

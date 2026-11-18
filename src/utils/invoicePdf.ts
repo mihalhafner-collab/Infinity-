@@ -1537,8 +1537,8 @@ export async function sendInvoicePdfViaGmail({
     throw new Error('Original-Rechnungs-PDF konnte nicht erzeugt werden.');
   }
 
-  if (accessToken === 'LOCAL_MCP_VERIFIED') {
-    return { id: generatedMsgId };
+  if (!accessToken || accessToken === 'LOCAL_MCP_VERIFIED') {
+    throw new Error('Kein gültiges Gmail-Zugriffstoken vorhanden. Bitte zuerst in Infinity mit Google (Gmail) anmelden.');
   }
 
   const response = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {

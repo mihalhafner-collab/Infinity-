@@ -52,6 +52,12 @@ import {
   parseSearchQuery,
   scoreSearchIndex
 } from '../../utils/searchUtils.ts';
+import { isNativeAndroidApp, openExternalUrlNatively } from '../../services/nativeBridge.ts';
+import {
+  WHATSAPP_TEMPLATES,
+  type WhatsAppTemplateId,
+  personalizeWhatsAppTemplate
+} from '../../utils/whatsappTemplates.ts';
 
 function buildMapsUrl(addressQuery: string): string {
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(addressQuery)}`;
@@ -75,8 +81,12 @@ function formatWhatsAppNumber(phone: string): string {
   return cleaned.replace(/\D/g, '');
 }
 
-function buildWhatsAppUrl(phone: string): string {
-  return `https://wa.me/${formatWhatsAppNumber(phone)}`;
+function buildWhatsAppUrl(phone: string, text?: string): string {
+  const digits = formatWhatsAppNumber(phone);
+  if (!text || !text.trim()) {
+    return `https://wa.me/${digits}`;
+  }
+  return `https://wa.me/${digits}?text=${encodeURIComponent(text)}`;
 }
 
 export const KundenView: React.FC = () => {
@@ -138,6 +148,9 @@ export const KundenView: React.FC = () => {
 
   // Kundenliste Schnellsuche & Filter
   const [customerListFilter, setCustomerListFilter] = useState<'all' | 'open_work' | 'sub'>('all');
+  const [waTemplateCustomer, setWaTemplateCustomer] = useState<Customer | null>(null);
+  const [waTemplateId, setWaTemplateId] = useState<WhatsAppTemplateId>('terminbestaetigung');
+  const [waTemplateText, setWaTemplateText] = useState('');
 
   const contentScrollRef = useRef<HTMLDivElement>(null);
   const listScrollRef = useRef<HTMLDivElement>(null);
@@ -146,6 +159,50 @@ export const KundenView: React.FC = () => {
   usePixelBackLayer(Boolean(previewPhoto), () => setPreviewPhoto(null));
   usePixelBackLayer(Boolean(photoSourceCustomer), () => setPhotoSourceCustomer(null));
   usePixelBackLayer(Boolean(previewCustomerPhoto), () => setPreviewCustomerPhoto(null));
+  usePixelBackLayer(Boolean(waTemplateCustomer), () => setWaTemplateCustomer(null));
+
+  const buildPersonalizedWaTextForCustomer = (
+    cust: Customer,
+    tplId: WhatsAppTemplateId
+  ): string => {
+    const todayStr = getTodayLocalIso();
+    const custProps = properties.filter((p) => p.customer_id === cust.id);
+    const custPropIds = new Set(custProps.map((p) => p.id));
+    const custApps = appointments.filter(
+      (a) =>
+        a.customer_id === cust.id || (a.property_id ? custPropIds.has(a.property_id) : false)
+    );
+    const nextApp =
+      custApps.filter((a) => a.date >= todayStr).sort((a, b) => a.date.localeCompare(b.date))[0] ||
+      custApps.sort((a, b) => b.date.localeCompare(a.date))[0] ||
+      null;
+    const latestInv =
+      invoices
+        .filter((i) => i.customer_id === cust.id && !i.is_storno && i.status !== 'cancelled')
+        .sort((a, b) => b.issue_date.localeCompare(a.issue_date))[0] || null;
+    const targetProp =
+      custProps.find((p) => p.id === nextApp?.property_id) || custProps[0] || null;
+
+    return personalizeWhatsAppTemplate(tplId, {
+      customer: cust,
+      customerName: cust.name,
+      invoice: latestInv,
+      appointment: nextApp,
+      property: targetProp
+    });
+  };
+
+  const openWhatsAppTemplateSheet = (cust: Customer, preferredTpl?: WhatsAppTemplateId) => {
+    const todayStr = getTodayLocalIso();
+    const hasUpcomingApp = appointments.some(
+      (a) => a.customer_id === cust.id && a.date >= todayStr
+    );
+    const initialTpl: WhatsAppTemplateId =
+      preferredTpl || (hasUpcomingApp ? 'terminbestaetigung' : 'angebot_rueckfrage');
+    setWaTemplateCustomer(cust);
+    setWaTemplateId(initialTpl);
+    setWaTemplateText(buildPersonalizedWaTextForCustomer(cust, initialTpl));
+  };
 
   const handleCustomerPhotoUpload = async (
     customerId: string,
@@ -274,6 +331,117 @@ export const KundenView: React.FC = () => {
             >
               <Trash2 size={16} />
             </button>
+          </div>
+        </div>
+      )}
+
+      {waTemplateCustomer && (
+        <div className="absolute inset-0 z-50 bg-black/45 backdrop-blur-2xs flex flex-col justify-end animate-fade-in">
+          <div className="flex-1" onClick={() => setWaTemplateCustomer(null)} />
+          <div className="bg-[#F8F9FA] rounded-t-3xl border-t border-slate-200 shadow-2xl p-4 space-y-3 animate-slide-up">
+            <div className="w-10 h-1 bg-slate-300 rounded-full mx-auto -mt-1" />
+            <div className="flex items-center justify-between gap-2">
+              <div className="min-w-0">
+                <h3 className="text-sm font-bold text-slate-950 truncate">
+                  WhatsApp an {waTemplateCustomer.name}
+                </h3>
+                <p className="text-[11px] text-slate-500 truncate">
+                  Vorlage per Klick personalisieren & direkt im Chat öffnen
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setWaTemplateCustomer(null)}
+                className="w-8 h-8 rounded-full bg-white border border-slate-200 flex items-center justify-center text-slate-500 hover:text-slate-800 shrink-0"
+                aria-label="Schließen"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-1.5">
+              {WHATSAPP_TEMPLATES.map((tpl) => {
+                const isSelected = waTemplateId === tpl.id;
+                return (
+                  <button
+                    key={tpl.id}
+                    type="button"
+                    onClick={() => {
+                      setWaTemplateId(tpl.id);
+                      setWaTemplateText(
+                        buildPersonalizedWaTextForCustomer(waTemplateCustomer, tpl.id)
+                      );
+                    }}
+                    className={`h-9 px-2.5 rounded-xl text-[11px] font-bold flex items-center justify-between transition-all border ${
+                      isSelected
+                        ? 'bg-[#128C7E] border-[#128C7E] text-white shadow-2xs'
+                        : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                    }`}
+                  >
+                    <span className="truncate">{tpl.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="bg-white p-2.5 rounded-2xl border border-slate-200 space-y-1.5">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-semibold text-slate-600">
+                  Personalisierter Nachrichtentext
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setWaTemplateText('')}
+                  className="text-[10px] font-semibold text-slate-400 hover:text-slate-700"
+                >
+                  Text leeren
+                </button>
+              </div>
+              <textarea
+                rows={5}
+                value={waTemplateText}
+                onChange={(e) => setWaTemplateText(e.target.value)}
+                placeholder="Nachricht eingeben oder oben eine Vorlage wählen..."
+                className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 resize-none focus:bg-white focus:border-[#128C7E] outline-hidden"
+              />
+            </div>
+
+            <div className="flex items-center gap-2 pt-1">
+              <a
+                href={buildWhatsAppUrl(waTemplateCustomer.phone)}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => {
+                  const href = buildWhatsAppUrl(waTemplateCustomer.phone);
+                  if (isNativeAndroidApp()) {
+                    e.preventDefault();
+                    openExternalUrlNatively(href);
+                  }
+                  setWaTemplateCustomer(null);
+                }}
+                className="px-3.5 h-11 rounded-xl bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 font-semibold text-xs flex items-center justify-center shrink-0 transition-colors"
+              >
+                Leerer Chat
+              </a>
+
+              <a
+                href={buildWhatsAppUrl(waTemplateCustomer.phone, waTemplateText)}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => {
+                  const href = buildWhatsAppUrl(waTemplateCustomer.phone, waTemplateText);
+                  if (isNativeAndroidApp()) {
+                    e.preventDefault();
+                    openExternalUrlNatively(href);
+                  }
+                  setWaTemplateCustomer(null);
+                }}
+                className="flex-1 h-11 rounded-xl bg-[#128C7E] hover:bg-[#0e7266] active:scale-98 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-xs transition-all"
+              >
+                <MessageCircle size={16} />
+                <span>Direkt in WhatsApp senden</span>
+              </a>
+            </div>
           </div>
         </div>
       )}
@@ -535,16 +703,15 @@ export const KundenView: React.FC = () => {
                       )}
 
                       {hasWhatsApp ? (
-                        <a
-                          href={buildWhatsAppUrl(c.phone)}
-                          target="_blank"
-                          rel="noopener noreferrer"
+                        <button
+                          type="button"
+                          onClick={() => openWhatsAppTemplateSheet(c)}
                           className="w-9 h-9 rounded-xl bg-emerald-50 hover:bg-emerald-100 active:scale-95 text-[#128C7E] flex items-center justify-center transition-all"
-                          title={`WhatsApp Nachricht an ${c.name}`}
+                          title={`WhatsApp mit Vorlage an ${c.name}`}
                           aria-label={`WhatsApp an ${c.name}`}
                         >
                           <MessageCircle size={16} />
-                        </a>
+                        </button>
                       ) : (
                         <button
                           type="button"
@@ -2546,16 +2713,15 @@ export const KundenView: React.FC = () => {
             )}
 
             {currentCustomer.phone && formatWhatsAppNumber(currentCustomer.phone).length > 0 ? (
-              <a
-                href={buildWhatsAppUrl(currentCustomer.phone)}
-                target="_blank"
-                rel="noopener noreferrer"
+              <button
+                type="button"
+                onClick={() => openWhatsAppTemplateSheet(currentCustomer)}
                 className="h-12 px-1 bg-emerald-50 hover:bg-emerald-100 active:scale-95 text-[#128C7E] font-bold text-[11px] rounded-xl flex flex-col items-center justify-center gap-0.5 transition-all whitespace-nowrap"
-                title="WhatsApp Nachricht senden"
+                title="WhatsApp-Vorlage wählen & senden"
               >
                 <MessageCircle size={17} />
                 <span>WhatsApp</span>
-              </a>
+              </button>
             ) : (
               <button
                 type="button"

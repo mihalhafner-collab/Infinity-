@@ -340,6 +340,13 @@ export const googleSignIn = async (
       const email = (res.email || OWNER_EMAIL).trim();
       const userObj = { email } as User;
       cachedAccessToken = res.accessToken || 'native_android_gmail_connected';
+      if (res.accessToken && res.accessToken !== 'native_android_gmail_connected') {
+        void fetch('/api/internal/gmail-token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ accessToken: res.accessToken })
+        }).catch(() => undefined);
+      }
       currentUser = userObj;
       notifyListeners();
       return { user: userObj, accessToken: cachedAccessToken };

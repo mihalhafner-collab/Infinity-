@@ -22,9 +22,15 @@ import {
   downloadOrSaveBlob,
   isNativeAndroidApp,
   notifyMailSentNatively,
+  openExternalUrlNatively,
   sendInvoiceEmailAutomaticallyNatively,
   shareDocumentNatively
 } from '../../services/nativeBridge.ts';
+import {
+  WHATSAPP_TEMPLATES,
+  type WhatsAppTemplateId,
+  personalizeWhatsAppTemplate
+} from '../../utils/whatsappTemplates.ts';
 import {
   AlertCircle,
   Check,
@@ -70,6 +76,8 @@ export const RechnungVersendenModal: React.FC = () => {
     invoices,
     customers,
     workRecords,
+    appointments,
+    properties,
     updateInvoice,
     updateCustomer,
     setUndoToast
@@ -79,6 +87,8 @@ export const RechnungVersendenModal: React.FC = () => {
   const customer = customers.find((c) => c.id === invoice?.customer_id) || null;
 
   const [channel, setChannel] = useState<SendChannel>('gmail');
+  const [activeWaTemplate, setActiveWaTemplate] =
+    useState<WhatsAppTemplateId>('rechnungszusendung');
 
   const [gmailUser, setGmailUser] = useState<FirebaseUser | null>(null);
   const [hasToken, setHasToken] = useState<boolean>(false);
@@ -299,11 +309,17 @@ export const RechnungVersendenModal: React.FC = () => {
     return freshPdf;
   };
 
-  // Teilt die echte PDF-Datei + Begleittext direkt über Android Share / Kotlin FileProvider an WhatsApp oder Google Nachrichten/RCS
+  // Teilt die echte PDF-Datei + Begleittext direkt über Android Share / Kotlin FileProvider in den WhatsApp-Chat des Kunden oder Google Nachrichten/RCS
   const handleSharePdfWithText = async (viaLabel: 'WhatsApp' | 'SMS / RCS', messageText: string) => {
     setErrorMessage(null);
     persistPhoneIfChanged();
     const freshPdf = pdfArtifact || (await generateInvoicePdfAsync(resolvedData));
+    const targetPhone =
+      viaLabel === 'WhatsApp'
+        ? normalizedWaDigits || recipientPhone.trim()
+        : normalizedPhoneE164 || recipientPhone.trim();
+    const todayIso = new Date().toISOString().slice(0, 10);
+    const phoneSuffix = recipientPhone.trim() ? ` (${recipientPhone.trim()})` : '';
 
     try {
       if (isNativeAndroid) {
@@ -313,17 +329,19 @@ export const RechnungVersendenModal: React.FC = () => {
           mimeType: 'application/pdf',
           subject: emailSubject,
           bodyText: messageText,
-          channel: viaLabel === 'WhatsApp' ? 'whatsapp' : 'sms'
+          channel: viaLabel === 'WhatsApp' ? 'whatsapp' : 'sms',
+          recipientPhone: targetPhone
         });
         if (shared) {
-          const phoneSuffix = recipientPhone.trim() ? ` (${recipientPhone.trim()})` : '';
           updateInvoice(invoice.id, {
-            sent_at: new Date().toISOString().slice(0, 10),
-            sent_via: `${viaLabel} PDF${phoneSuffix}`
+            sent_at: todayIso,
+            sent_via: `${viaLabel} PDF${phoneSuffix}`,
+            sent_to: normalizedPhoneE164 || recipientPhone.trim() || invoice.sent_to,
+            sent_status: 'sent'
           });
           setUndoToast({
             visible: true,
-            message: `PDF-Rechnung ${invoice.invoice_number} über ${viaLabel} übergeben`
+            message: `PDF-Rechnung ${invoice.invoice_number} direkt an ${viaLabel} übergeben`
           });
           setSendingInvoiceId(null);
           return;
@@ -341,10 +359,11 @@ export const RechnungVersendenModal: React.FC = () => {
           text: messageText,
           files: [freshPdf.file]
         });
-        const phoneSuffix = recipientPhone.trim() ? ` (${recipientPhone.trim()})` : '';
         updateInvoice(invoice.id, {
-          sent_at: new Date().toISOString().slice(0, 10),
-          sent_via: `${viaLabel} PDF${phoneSuffix}`
+          sent_at: todayIso,
+          sent_via: `${viaLabel} PDF${phoneSuffix}`,
+          sent_to: normalizedPhoneE164 || recipientPhone.trim() || invoice.sent_to,
+          sent_status: 'sent'
         });
         setUndoToast({
           visible: true,
@@ -359,10 +378,11 @@ export const RechnungVersendenModal: React.FC = () => {
           title: emailSubject,
           text: messageText
         });
-        const phoneSuffix = recipientPhone.trim() ? ` (${recipientPhone.trim()})` : '';
         updateInvoice(invoice.id, {
-          sent_at: new Date().toISOString().slice(0, 10),
-          sent_via: `${viaLabel}${phoneSuffix}`
+          sent_at: todayIso,
+          sent_via: `${viaLabel}${phoneSuffix}`,
+          sent_to: normalizedPhoneE164 || recipientPhone.trim() || invoice.sent_to,
+          sent_status: 'sent'
         });
         setUndoToast({
           visible: true,
@@ -377,19 +397,47 @@ export const RechnungVersendenModal: React.FC = () => {
       }
     }
 
+    // Fallback in der Web-Vorschau: PDF herunterladen und direkt den WhatsApp-Chat zur Rufnummer öffnen
+    if (viaLabel === 'WhatsApp') {
+      await triggerPdfDownload();
+      if (isNativeAndroid) {
+        openExternalUrlNatively(whatsappChatHref);
+      }
+      updateInvoice(invoice.id, {
+        sent_at: todayIso,
+        sent_via: `WhatsApp${phoneSuffix}`,
+        sent_to: normalizedPhoneE164 || recipientPhone.trim() || invoice.sent_to,
+        sent_status: 'sent'
+      });
+      setFeedbackMessage(
+        `PDF gespeichert – bitte im geöffneten WhatsApp-Chat anhängen (auf dem Pixel 10 Pro wird das PDF automatisch direkt im Chat angehängt).`
+      );
+      return;
+    }
+
     setErrorMessage(
       `Direktes Datei-Teilen wird in dieser Browser-Vorschau blockiert (auf dem Pixel 10 Pro direkt verfügbar). Nutzen Sie alternativ „Direkt öffnen“.`
     );
   };
 
-  const handleDirectAppLinkClick = (viaLabel: 'WhatsApp' | 'SMS') => {
+  const handleDirectAppLinkClick = (
+    e: React.MouseEvent<HTMLAnchorElement>,
+    viaLabel: 'WhatsApp' | 'SMS',
+    href: string
+  ) => {
     setErrorMessage(null);
     persistPhoneIfChanged();
     const phoneSuffix = recipientPhone.trim() ? ` (${recipientPhone.trim()})` : '';
     updateInvoice(invoice.id, {
       sent_at: new Date().toISOString().slice(0, 10),
-      sent_via: `${viaLabel}${phoneSuffix}`
+      sent_via: `${viaLabel}${phoneSuffix}`,
+      sent_to: normalizedPhoneE164 || recipientPhone.trim() || invoice.sent_to,
+      sent_status: 'sent'
     });
+    if (isNativeAndroid) {
+      e.preventDefault();
+      openExternalUrlNatively(href);
+    }
     setFeedbackMessage(`${viaLabel} geöffnet`);
   };
 
@@ -656,6 +704,71 @@ export const RechnungVersendenModal: React.FC = () => {
               </div>
 
               <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-[11px] font-semibold text-slate-600">
+                    WhatsApp-Vorlage per Klick personalisieren
+                  </label>
+                  <span className="text-[10px] font-semibold text-[#128C7E]">
+                    Auto-Ausfüllen
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 gap-1.5 mb-2.5">
+                  {WHATSAPP_TEMPLATES.map((tpl) => {
+                    const isSelected = activeWaTemplate === tpl.id;
+                    return (
+                      <button
+                        key={tpl.id}
+                        type="button"
+                        onClick={() => {
+                          setActiveWaTemplate(tpl.id);
+                          const todayIso = new Date().toISOString().slice(0, 10);
+                          const nextApp =
+                            appointments
+                              .filter(
+                                (a) =>
+                                  a.customer_id === invoice.customer_id &&
+                                  a.date >= todayIso
+                              )
+                              .sort((a, b) => a.date.localeCompare(b.date))[0] ||
+                            appointments
+                              .filter((a) => a.customer_id === invoice.customer_id)
+                              .sort((a, b) => b.date.localeCompare(a.date))[0] ||
+                            null;
+                          const prop =
+                            properties.find(
+                              (p) =>
+                                p.id === nextApp?.property_id ||
+                                p.customer_id === invoice.customer_id
+                            ) || null;
+                          setWhatsappBody(
+                            personalizeWhatsAppTemplate(tpl.id, {
+                              customer,
+                              customerName: resolvedData.recipientName,
+                              invoice,
+                              invoiceNumber: resolvedData.invoiceNumber,
+                              totalAmount: resolvedData.totalAmount,
+                              issueDate: resolvedData.issueDateIso,
+                              dueDate: resolvedData.dueDateIso,
+                              servicePeriod: resolvedData.servicePeriod,
+                              paymentTermsText: resolvedData.paymentTermsText,
+                              appointment: nextApp,
+                              property: prop
+                            })
+                          );
+                        }}
+                        className={`h-8 px-2.5 rounded-xl text-[11px] font-bold flex items-center justify-between transition-all border ${
+                          isSelected
+                            ? 'bg-emerald-50 border-[#128C7E] text-[#128C7E]'
+                            : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'
+                        }`}
+                      >
+                        <span className="truncate">{tpl.label}</span>
+                        {isSelected && <Check size={12} className="shrink-0 ml-1" />}
+                      </button>
+                    );
+                  })}
+                </div>
+
                 <label className="text-[11px] font-semibold text-slate-600 block mb-1">
                   Begleittext zur PDF-Rechnung
                 </label>
@@ -675,7 +788,7 @@ export const RechnungVersendenModal: React.FC = () => {
                   href={whatsappChatHref}
                   target="_blank"
                   rel="noopener noreferrer"
-                  onClick={() => handleDirectAppLinkClick('WhatsApp')}
+                  onClick={(e) => handleDirectAppLinkClick(e, 'WhatsApp', whatsappChatHref)}
                   className="px-3 h-9 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-[#128C7E] font-bold text-[11px] flex items-center gap-1.5 shrink-0 transition-colors"
                 >
                   <MessageCircle size={13} />
@@ -727,7 +840,7 @@ export const RechnungVersendenModal: React.FC = () => {
                 </span>
                 <a
                   href={smsHref}
-                  onClick={() => handleDirectAppLinkClick('SMS')}
+                  onClick={(e) => handleDirectAppLinkClick(e, 'SMS', smsHref)}
                   className="px-3 h-9 rounded-xl bg-blue-50 hover:bg-blue-100 text-[#0B57D0] font-bold text-[11px] flex items-center gap-1.5 shrink-0 transition-colors"
                 >
                   <MessageSquare size={13} />
