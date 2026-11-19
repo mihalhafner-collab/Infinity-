@@ -67,6 +67,11 @@ jobs:
             STORE_PASS="${ANDROID_KEYSTORE_PASSWORD:-hafner2026}"
             ALIAS_NAME="${ANDROID_KEY_ALIAS:-hafner_key}"
             KEY_PASS="${ANDROID_KEY_PASSWORD:-hafner2026}"
+          elif [ -f "android/app/hafner-release.keystore.base64" ]; then
+            base64 --decode android/app/hafner-release.keystore.base64 > "$KEYSTORE_FILE"
+            STORE_PASS="hafner2026"
+            ALIAS_NAME="hafner_key"
+            KEY_PASS="hafner2026"
           else
             STORE_PASS="hafner2026"
             ALIAS_NAME="hafner_key"
