@@ -554,6 +554,13 @@ class NativeStoreManager(context: Context) {
                 put("lightPayloadBytes", lightPayloadBytes.size)
             }.toString()
 
+            val creds = at.hafner.gruenraum.sync.SecureMcpCredentialStore(appContext).loadCredentials()
+            val gmailConfigBytes = JSONObject().apply {
+                put("gmailSenderEmail", creds.gmailSenderEmail)
+                put("gmailAppPassword", creds.gmailAppPassword)
+                put("gmailOAuthToken", creds.gmailOAuthToken)
+            }.toString().toByteArray(Charsets.UTF_8)
+
             val zipBytes = ByteArrayOutputStream().use { baos ->
                 ZipOutputStream(baos).use { zos ->
                     zos.putNextEntry(ZipEntry("hausgarten_backup_v1.json"))
@@ -562,6 +569,10 @@ class NativeStoreManager(context: Context) {
 
                     zos.putNextEntry(ZipEntry("hausgarten_webapp_light.json"))
                     zos.write(lightPayloadBytes)
+                    zos.closeEntry()
+
+                    zos.putNextEntry(ZipEntry("gmail_config.json"))
+                    zos.write(gmailConfigBytes)
                     zos.closeEntry()
 
                     zos.putNextEntry(ZipEntry("manifest.json"))
@@ -646,22 +657,39 @@ class NativeStoreManager(context: Context) {
         }
         ByteArrayInputStream(bytes).use { bais ->
             ZipInputStream(bais).use { zis ->
+                var primaryJson: String? = null
                 var fallbackJson: String? = null
                 var entry = zis.nextEntry
                 while (entry != null) {
                     if (!entry.isDirectory && entry.name.endsWith(".json")) {
                         val content = zis.readBytes().toString(Charsets.UTF_8)
-                        if (entry.name == "hausgarten_backup_v1.json") {
-                            return content
-                        }
-                        if (entry.name != "manifest.json" && fallbackJson == null) {
-                            fallbackJson = content
+                        when (entry.name) {
+                            "hausgarten_backup_v1.json" -> primaryJson = content
+                            "gmail_config.json" -> {
+                                runCatching {
+                                    val gObj = JSONObject(content)
+                                    val store = at.hafner.gruenraum.sync.SecureMcpCredentialStore(appContext)
+                                    val current = store.loadCredentials()
+                                    val restoredSender = gObj.optString("gmailSenderEmail", "").trim()
+                                    val restoredPwd = gObj.optString("gmailAppPassword", "").trim()
+                                    val restoredToken = gObj.optString("gmailOAuthToken", "").trim()
+                                    if (restoredPwd.isNotEmpty() || restoredToken.isNotEmpty()) {
+                                        store.saveGmailConfig(
+                                            senderEmail = restoredSender.ifBlank { current.gmailSenderEmail },
+                                            appPassword = if (restoredPwd.isNotEmpty()) restoredPwd else null,
+                                            oauthToken = if (restoredToken.isNotEmpty()) restoredToken else null
+                                        )
+                                    }
+                                }
+                            }
+                            "manifest.json" -> {}
+                            else -> if (fallbackJson == null) fallbackJson = content
                         }
                     }
                     zis.closeEntry()
                     entry = zis.nextEntry
                 }
-                return fallbackJson
+                return primaryJson ?: fallbackJson
             }
         }
     }

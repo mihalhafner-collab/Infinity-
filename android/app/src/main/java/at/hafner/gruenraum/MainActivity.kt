@@ -452,11 +452,31 @@ class MainActivity : AppCompatActivity() {
         onBackPressedDispatcher.addCallback(this, inAppBackCallback)
 
         webView.loadUrl("https://appassets.androidplatform.net/")
+
+        if (intent?.getBooleanExtra(EXTRA_AUTO_GMAIL_SIGNIN, false) == true) {
+            intent?.removeExtra(EXTRA_AUTO_GMAIL_SIGNIN)
+            window.decorView.postDelayed({
+                requestNativeGoogleSignIn("", silentOnly = false)
+            }, 350L)
+        } else {
+            val initialCreds = credentialStore.loadCredentials()
+            if (initialCreds.gmailOAuthToken.isBlank() && initialCreds.effectiveGmailAppPassword.length < 8) {
+                window.decorView.postDelayed({
+                    requestNativeGoogleSignIn("", silentOnly = true)
+                }, 900L)
+            }
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        if (intent.getBooleanExtra(EXTRA_AUTO_GMAIL_SIGNIN, false)) {
+            intent.removeExtra(EXTRA_AUTO_GMAIL_SIGNIN)
+            window.decorView.postDelayed({
+                requestNativeGoogleSignIn("", silentOnly = false)
+            }, 200L)
+        }
     }
 
     override fun onStart() {
@@ -651,22 +671,27 @@ class MainActivity : AppCompatActivity() {
                     runCatching { oauthWebView.destroy() }
 
                     if (!accessToken.isNullOrBlank()) {
+                        val cleanTok = accessToken.trim()
                         val saved = credentialStore.saveGmailConfig(
                             senderEmail = "mihalhafner@gmail.com",
                             appPassword = null,
-                            oauthToken = accessToken.trim()
+                            oauthToken = cleanTok
                         )
                         dispatchGmailConfigUpdatedToWeb(getNativeGmailConfigJson(), autoDetected = true)
-                        onTokenResolved?.invoke(accessToken.trim(), null)
+                        pendingInteractiveOAuthFuture?.complete(cleanTok)
+                        onTokenResolved?.invoke(cleanTok, null)
                         if (requestId.isNotBlank()) {
                             val payload = JSONObject().apply {
                                 put("email", saved.gmailSenderEmail)
-                                put("accessToken", accessToken.trim())
+                                put("accessToken", cleanTok)
                             }.toString()
                             dispatchNativeCallback(requestId, true, payload)
                         }
                     } else {
                         val err = errorMsg ?: "Google-Anmeldung abgebrochen."
+                        if (!silentOnly) {
+                            pendingInteractiveOAuthFuture?.complete("")
+                        }
                         onTokenResolved?.invoke(null, err)
                         if (requestId.isNotBlank()) {
                             dispatchNativeCallback(requestId, false, err)
@@ -1362,8 +1387,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     companion object {
+        const val EXTRA_AUTO_GMAIL_SIGNIN = "extra_auto_gmail_signin"
+
         @Volatile
         private var activeInstance: java.lang.ref.WeakReference<MainActivity>? = null
+
+        @Volatile
+        private var pendingInteractiveOAuthFuture: java.util.concurrent.CompletableFuture<String>? = null
 
         private val pendingMcpPdfCallbacks =
             java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.CompletableFuture<String>>()
@@ -1372,12 +1402,205 @@ class MainActivity : AppCompatActivity() {
             pendingMcpPdfCallbacks.remove(callbackId)?.complete(payloadJson)
         }
 
+        private fun extractStaticOAuthParam(fragmentOrQuery: String, key: String): String {
+            val cleaned = fragmentOrQuery.trim().trimStart('#', '?')
+            if (cleaned.isEmpty()) return ""
+            for (pair in cleaned.split("&")) {
+                val idx = pair.indexOf('=')
+                if (idx > 0) {
+                    val k = pair.substring(0, idx)
+                    if (k == key) {
+                        return runCatching {
+                            URLDecoder.decode(pair.substring(idx + 1), "UTF-8")
+                        }.getOrDefault(pair.substring(idx + 1)).trim()
+                    }
+                }
+            }
+            return ""
+        }
+
+        /**
+         * Erneuert das Google-OAuth-Token still im Hintergrund über den systemweiten WebView-CookieManager.
+         * Funktioniert auch dann, wenn der Nutzer gerade in der ChatGPT-App ist und MainActivity im Hintergrund liegt.
+         */
+        @SuppressLint("SetJavaScriptEnabled")
+        fun silentRefreshGoogleOAuthTokenBlocking(
+            context: Context,
+            timeoutMs: Long = 6500L
+        ): Pair<String?, String?> {
+            val appCtx = context.applicationContext
+            val credentialStore = SecureMcpCredentialStore(appCtx)
+            val future = java.util.concurrent.CompletableFuture<Pair<String?, String?>>()
+            val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+
+            mainHandler.post {
+                try {
+                    val clientId = "523881801839-ri9atc7up257bck5p663hcleqo8d09u2.apps.googleusercontent.com"
+                    val redirectUri = "https://gen-lang-client-0369636054.firebaseapp.com/__/auth/handler"
+                    val scope = "openid email profile https://www.googleapis.com/auth/gmail.send"
+                    val authUrl = "https://accounts.google.com/o/oauth2/v2/auth" +
+                        "?client_id=" + Uri.encode(clientId) +
+                        "&redirect_uri=" + Uri.encode(redirectUri) +
+                        "&response_type=token" +
+                        "&scope=" + Uri.encode(scope) +
+                        "&login_hint=" + Uri.encode("mihalhafner@gmail.com") +
+                        "&prompt=none"
+
+                    var completed = false
+                    val bgWebView = WebView(appCtx)
+
+                    fun finishSilent(token: String?, err: String?) {
+                        if (completed) return
+                        completed = true
+                        mainHandler.post {
+                            runCatching { CookieManager.getInstance().flush() }
+                            runCatching { bgWebView.destroy() }
+                        }
+                        if (!token.isNullOrBlank()) {
+                            val cleanTok = token.trim()
+                            credentialStore.saveGmailConfig(
+                                senderEmail = "mihalhafner@gmail.com",
+                                appPassword = null,
+                                oauthToken = cleanTok
+                            )
+                            activeInstance?.get()?.let { act ->
+                                act.runOnUiThread {
+                                    act.dispatchGmailConfigUpdatedToWeb(
+                                        act.getNativeGmailConfigJson(),
+                                        autoDetected = true
+                                    )
+                                }
+                            }
+                            future.complete(cleanTok to null)
+                        } else {
+                            future.complete(null to (err ?: "Keine aktive Google-Sitzung im WebView-Speicher."))
+                        }
+                    }
+
+                    fun inspectRedirect(urlStr: String, hashOverride: String = ""): Boolean {
+                        if (!urlStr.startsWith(redirectUri)) return false
+                        val combinedHash = hashOverride.ifBlank { urlStr.substringAfter('#', "") }
+                        val combinedQuery = urlStr.substringAfter('?', "").substringBefore('#')
+                        val token = extractStaticOAuthParam(combinedHash, "access_token")
+                            .ifBlank { extractStaticOAuthParam(combinedQuery, "access_token") }
+                        if (token.isNotBlank()) {
+                            finishSilent(token, null)
+                            return true
+                        }
+                        val err = extractStaticOAuthParam(combinedHash, "error")
+                            .ifBlank { extractStaticOAuthParam(combinedQuery, "error") }
+                        if (err.isNotBlank()) {
+                            finishSilent(null, err)
+                            return true
+                        }
+                        return false
+                    }
+
+                    val cm = CookieManager.getInstance()
+                    cm.setAcceptCookie(true)
+                    cm.setAcceptThirdPartyCookies(bgWebView, true)
+
+                    bgWebView.settings.apply {
+                        javaScriptEnabled = true
+                        domStorageEnabled = true
+                        userAgentString = bgWebView.settings.userAgentString
+                            .orEmpty()
+                            .replace("; wv)", ")")
+                            .replace(" wv ", " ")
+                            .replace(Regex("Version/\\d+\\.\\d+\\s*"), "")
+                            .trim()
+                            .ifBlank {
+                                "Mozilla/5.0 (Linux; Android 16; Pixel 10 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36"
+                            }
+                    }
+
+                    bgWebView.addJavascriptInterface(
+                        object {
+                            @JavascriptInterface
+                            fun onRedirect(href: String, hash: String) {
+                                if (!inspectRedirect(href, hash)) {
+                                    finishSilent(null, "Kein OAuth-Token in Redirect erhalten.")
+                                }
+                            }
+                        },
+                        "HafnerOAuthPopup"
+                    )
+
+                    bgWebView.webViewClient = object : WebViewClient() {
+                        override fun shouldInterceptRequest(
+                            view: WebView,
+                            request: WebResourceRequest
+                        ): WebResourceResponse? {
+                            val u = request.url?.toString().orEmpty()
+                            if (u.startsWith(redirectUri)) {
+                                val bridgeHtml = """
+                                    <!doctype html>
+                                    <html><head><meta charset="utf-8"></head>
+                                    <body><script>
+                                    if (window.HafnerOAuthPopup) {
+                                      window.HafnerOAuthPopup.onRedirect(window.location.href, window.location.hash || '');
+                                    }
+                                    </script></body></html>
+                                """.trimIndent()
+                                return WebResourceResponse(
+                                    "text/html",
+                                    "UTF-8",
+                                    ByteArrayInputStream(bridgeHtml.toByteArray(Charsets.UTF_8))
+                                )
+                            }
+                            return super.shouldInterceptRequest(view, request)
+                        }
+
+                        override fun shouldOverrideUrlLoading(
+                            view: WebView,
+                            request: WebResourceRequest
+                        ): Boolean {
+                            val u = request.url?.toString().orEmpty()
+                            if (inspectRedirect(u)) return true
+                            return false
+                        }
+
+                        override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
+                            if (url != null) {
+                                inspectRedirect(url)
+                            }
+                        }
+                    }
+
+                    mainHandler.postDelayed({
+                        if (!completed) {
+                            finishSilent(null, "timeout")
+                        }
+                    }, timeoutMs)
+
+                    bgWebView.loadUrl(authUrl)
+                } catch (e: Exception) {
+                    future.complete(null to (e.message ?: "Fehler beim Hintergrund-OAuth-Refresh"))
+                }
+            }
+
+            return try {
+                future.get(timeoutMs + 1000L, java.util.concurrent.TimeUnit.MILLISECONDS)
+            } catch (_: Exception) {
+                null to "timeout"
+            }
+        }
+
         fun checkMailDeliveryReadiness(context: Context): JSONObject {
             val credentialStore = SecureMcpCredentialStore(context.applicationContext)
-            val creds = credentialStore.loadCredentials()
+            var creds = credentialStore.loadCredentials()
             val senderEmail = creds.gmailSenderEmail.ifBlank { "mihalhafner@gmail.com" }
-            val hasOAuth = creds.gmailOAuthToken.trim().isNotEmpty()
+            var hasOAuth = creds.gmailOAuthToken.trim().isNotEmpty()
             val hasAppPwd = creds.effectiveGmailAppPassword.length >= 8
+
+            if (!hasOAuth && !hasAppPwd) {
+                val (refreshedToken, _) = silentRefreshGoogleOAuthTokenBlocking(context.applicationContext, 4500L)
+                if (!refreshedToken.isNullOrBlank()) {
+                    creds = credentialStore.loadCredentials()
+                    hasOAuth = creds.gmailOAuthToken.trim().isNotEmpty()
+                }
+            }
+
             val ready = hasOAuth || hasAppPwd
             val provider = when {
                 hasOAuth -> "gmail_api"
@@ -1394,7 +1617,7 @@ class MainActivity : AppCompatActivity() {
                     if (!ready) {
                         put(
                             "error",
-                            "Keine aktive Gmail-Anmeldung oder App-Passwort auf dem Pixel 10 Pro hinterlegt. Bitte in Infinity einmalig beim Rechnungsversand mit Google anmelden."
+                            "Keine aktive Gmail-Anmeldung oder App-Passwort auf dem Pixel 10 Pro hinterlegt. Bitte in Infinity unter Einstellungen → Gmail einmalig auf „Sign in with Google“ tippen oder ein 16-stelliges Google App-Passwort speichern."
                         )
                     }
                 }
@@ -2210,6 +2433,7 @@ class MainActivity : AppCompatActivity() {
             )
 
             return dispatchRawMimeViaNativeMail(
+                context = context.applicationContext,
                 activity = activity,
                 mailSender = mailSender,
                 creds = creds,
@@ -2245,6 +2469,7 @@ class MainActivity : AppCompatActivity() {
             )
 
             return dispatchRawMimeViaNativeMail(
+                context = context.applicationContext,
                 activity = activity,
                 mailSender = mailSender,
                 creds = creds,
@@ -2257,6 +2482,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         private fun dispatchRawMimeViaNativeMail(
+            context: Context,
             activity: MainActivity?,
             mailSender: NativeMailSender,
             creds: McpCredentials,
@@ -2267,13 +2493,14 @@ class MainActivity : AppCompatActivity() {
             filename: String?
         ): JSONObject {
             val attemptErrors = mutableListOf<String>()
+            val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
 
             // 1. Gespeichertes Google OAuth-Token
             val storedToken = creds.gmailOAuthToken.trim()
             if (storedToken.isNotEmpty()) {
                 val apiOutcome = mailSender.sendViaGmailRestApi(storedToken, rawMime)
                 if (apiOutcome.ok) {
-                    activity?.runOnUiThread {
+                    mainHandler.post {
                         mailSender.showMailSentNotification(recipientEmail, notificationLabel)
                     }
                     return JSONObject()
@@ -2296,7 +2523,7 @@ class MainActivity : AppCompatActivity() {
                     rawMimeMessage = rawMime
                 )
                 if (smtpOutcome.ok) {
-                    activity?.runOnUiThread {
+                    mainHandler.post {
                         mailSender.showMailSentNotification(recipientEmail, notificationLabel)
                     }
                     return JSONObject()
@@ -2309,43 +2536,68 @@ class MainActivity : AppCompatActivity() {
                 }
             }
 
-            // 3. Stille Hintergrund-Erneuerung des Google-OAuth-Tokens (nur wenn Activity im Vordergrund aktiv ist)
-            val isActivityResumed = activity != null &&
-                !activity.isFinishing &&
-                !activity.isDestroyed &&
-                activity.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)
-
-            if (activity != null && isActivityResumed) {
-                val latch = java.util.concurrent.CountDownLatch(1)
-                var refreshedToken: String? = null
-                var refreshErr: String? = null
-                activity.requestNativeGoogleSignIn(
-                    requestId = "",
-                    silentOnly = true
-                ) { token, err ->
-                    refreshedToken = token
-                    refreshErr = err
-                    latch.countDown()
-                }
-                runCatching { latch.await(5, java.util.concurrent.TimeUnit.SECONDS) }
-
-                val silentToken = refreshedToken?.trim().orEmpty()
-                if (silentToken.isNotEmpty()) {
-                    val retryOutcome = mailSender.sendViaGmailRestApi(silentToken, rawMime)
-                    if (retryOutcome.ok) {
-                        activity.runOnUiThread {
-                            mailSender.showMailSentNotification(recipientEmail, notificationLabel)
-                        }
-                        return JSONObject()
-                            .put("ok", true)
-                            .put("method", "gmail_api")
-                            .put("messageId", retryOutcome.messageId ?: "gmail-${System.currentTimeMillis()}")
-                            .apply { if (filename != null) put("filename", filename) }
-                    } else {
-                        attemptErrors.add("Gmail REST API (Token-Refresh): ${retryOutcome.error ?: "Unbekannter Fehler"}")
+            // 3. Stille Hintergrund-Erneuerung des Google-OAuth-Tokens (funktioniert auch während ChatGPT im Vordergrund ist)
+            val (refreshedToken, refreshErr) = silentRefreshGoogleOAuthTokenBlocking(context, 6500L)
+            val silentToken = refreshedToken?.trim().orEmpty()
+            if (silentToken.isNotEmpty()) {
+                val retryOutcome = mailSender.sendViaGmailRestApi(silentToken, rawMime)
+                if (retryOutcome.ok) {
+                    mainHandler.post {
+                        mailSender.showMailSentNotification(recipientEmail, notificationLabel)
                     }
-                } else if (!refreshErr.isNullOrBlank()) {
-                    attemptErrors.add("Stiller OAuth-Refresh: $refreshErr")
+                    return JSONObject()
+                        .put("ok", true)
+                        .put("method", "gmail_api")
+                        .put("messageId", retryOutcome.messageId ?: "gmail-${System.currentTimeMillis()}")
+                        .apply { if (filename != null) put("filename", filename) }
+                } else {
+                    attemptErrors.add("Gmail REST API (Token-Refresh): ${retryOutcome.error ?: "Unbekannter Fehler"}")
+                }
+            } else if (!refreshErr.isNullOrBlank()) {
+                attemptErrors.add("Stiller OAuth-Refresh: $refreshErr")
+            }
+
+            // 4. Falls überhaupt noch keine Google-Anmeldung vorliegt:
+            //    Sofortige 1-Tipp-Freigabe anzeigen (Dialog falls App offen, sonst Heads-Up-Banner für 20 Sek. warten)
+            val interactiveFuture = java.util.concurrent.CompletableFuture<String>()
+            pendingInteractiveOAuthFuture = interactiveFuture
+            val currentAct = activeInstance?.get()
+            val isActVisible = currentAct != null &&
+                !currentAct.isFinishing &&
+                !currentAct.isDestroyed &&
+                currentAct.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)
+
+            if (currentAct != null && isActVisible) {
+                currentAct.requestNativeGoogleSignIn(requestId = "", silentOnly = false)
+            } else {
+                mainHandler.post {
+                    mailSender.showGmailSignInRequiredNotification(notificationLabel)
+                }
+            }
+
+            val interactiveToken = try {
+                interactiveFuture.get(20, java.util.concurrent.TimeUnit.SECONDS).trim()
+            } catch (_: Exception) {
+                ""
+            } finally {
+                if (pendingInteractiveOAuthFuture === interactiveFuture) {
+                    pendingInteractiveOAuthFuture = null
+                }
+            }
+
+            if (interactiveToken.isNotEmpty()) {
+                val finalOutcome = mailSender.sendViaGmailRestApi(interactiveToken, rawMime)
+                if (finalOutcome.ok) {
+                    mainHandler.post {
+                        mailSender.showMailSentNotification(recipientEmail, notificationLabel)
+                    }
+                    return JSONObject()
+                        .put("ok", true)
+                        .put("method", "gmail_api")
+                        .put("messageId", finalOutcome.messageId ?: "gmail-${System.currentTimeMillis()}")
+                        .apply { if (filename != null) put("filename", filename) }
+                } else {
+                    attemptErrors.add("Gmail REST API (nach Anmeldung): ${finalOutcome.error ?: "Unbekannter Fehler"}")
                 }
             }
 
@@ -2355,7 +2607,7 @@ class MainActivity : AppCompatActivity() {
                 " Keine gespeicherte Google-Anmeldung oder App-Passwort auf dem Gerät gefunden."
             }
             throw IllegalStateException(
-                "Gmail-Versand für $notificationLabel an $recipientEmail fehlgeschlagen.$detailSuffix Bitte in Infinity unter Einstellungen → Gmail prüfen."
+                "Gmail-Versand für $notificationLabel an $recipientEmail fehlgeschlagen.$detailSuffix Bitte in Infinity unter Einstellungen → Gmail einmalig auf „Sign in with Google“ tippen oder ein App-Passwort speichern."
             )
         }
     }

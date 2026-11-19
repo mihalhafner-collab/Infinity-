@@ -29,18 +29,25 @@ import {
 import { useSmartphoneWeather } from '../../services/weatherService.ts';
 import { useApp } from '../../context/AppContext.tsx';
 import {
+  NativeGmailConfig,
   NativePixelTunnelStatus,
+  getNativeGmailConfig,
   getNativePixelTunnelStatus,
   isNativeAndroidApp,
   openNativePixelTunnelSetup,
+  pasteNativeGmailAppPasswordFromClipboard,
+  saveNativeGmailAppPassword,
   setNativePixelTunnelEnabled,
   setNativePixelTunnelWriteEnabled,
+  subscribeNativeGmailConfig,
   subscribeNativePixelTunnelStatus
 } from '../../services/nativeBridge.ts';
 import {
   Calendar,
+  ClipboardPaste,
   CloudSun,
   Bot,
+  KeyRound,
   Mail,
   LogOut,
   RefreshCw,
@@ -56,9 +63,15 @@ export const EinstellungenView: React.FC = () => {
   const [gmailHasToken, setGmailHasToken] = useState(false);
   const [gmailConnecting, setGmailConnecting] = useState(false);
   const [gmailAuthError, setGmailAuthError] = useState<string | null>(null);
+  const [gmailAuthInfo, setGmailAuthInfo] = useState<string | null>(null);
+  const [appPasswordInput, setAppPasswordInput] = useState('');
   const [ownerSession, setOwnerSession] = useState(() => getOwnerSessionState());
 
   const isNativeAndroid = isNativeAndroidApp();
+
+  const [nativeGmailConfig, setNativeGmailConfig] = useState<NativeGmailConfig | null>(() =>
+    getNativeGmailConfig()
+  );
 
   // Direkter Pixel-Tunnel auf dem Pixel 10 Pro
   const [pixelTunnelStatus, setPixelTunnelStatus] = useState<NativePixelTunnelStatus | null>(() =>
@@ -71,6 +84,9 @@ export const EinstellungenView: React.FC = () => {
       setGmailHasToken(hasToken);
       if (error) {
         setGmailAuthError(error);
+      }
+      if (isNativeAndroid) {
+        setNativeGmailConfig(getNativeGmailConfig());
       }
     });
     const unsubOwner = subscribeOwnerSession((state) => {
@@ -88,15 +104,23 @@ export const EinstellungenView: React.FC = () => {
     if (latestTunnel) {
       setPixelTunnelStatus(latestTunnel);
     }
+    const latestGmail = getNativeGmailConfig();
+    if (latestGmail) {
+      setNativeGmailConfig(latestGmail);
+    }
 
     const unsubTunnelStatus = subscribeNativePixelTunnelStatus((tStatus) => {
       setPixelTunnelStatus(tStatus);
+    });
+    const unsubNativeGmail = subscribeNativeGmailConfig((cfg) => {
+      setNativeGmailConfig(cfg);
     });
 
     return () => {
       unsubGmail();
       unsubOwner();
       unsubTunnelStatus();
+      unsubNativeGmail();
     };
   }, [isNativeAndroid]);
 
@@ -385,70 +409,184 @@ export const EinstellungenView: React.FC = () => {
           )}
 
           {/* Gmail Automatisierter PDF-Rechnungsversand */}
-          <div className="p-3 bg-white border border-slate-200 rounded-xl space-y-2">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2.5 min-w-0">
-                <Mail size={17} className="text-red-600 shrink-0" />
-                <div className="min-w-0">
-                  <span className="font-bold text-slate-800 block text-xs">
-                    Gmail (PDF-Rechnungsversand)
-                  </span>
-                  <span className="text-[10px] text-slate-500 block truncate">
-                    {gmailHasToken && gmailUser
-                      ? `Aktiv: ${gmailUser.email}`
-                      : isNativeAndroid
-                        ? 'Direktübergabe inkl. PDF an deine Pixel Gmail-App'
-                        : 'Rechnungen automatisch als PDF per Gmail senden'}
-                  </span>
-                </div>
-              </div>
-              {gmailHasToken && gmailUser ? (
-                <button
-                  type="button"
-                  onClick={() => logoutGmail()}
-                  className="text-[10px] font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 px-2 py-1 rounded-md flex items-center gap-1 shrink-0"
-                >
-                  <LogOut size={11} />
-                  <span>Trennen</span>
-                </button>
-              ) : isNativeAndroid ? (
-                <span className="text-[10px] font-bold text-[#2C7738] bg-emerald-50 px-2 py-0.5 rounded-md shrink-0">
-                  Nativ bereit
-                </span>
-              ) : (
-                <span className="text-[10px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md shrink-0">
-                  Nicht angemeldet
-                </span>
-              )}
-            </div>
+          {(() => {
+            const hasNativeOAuth = Boolean(nativeGmailConfig?.hasOAuthToken);
+            const hasNativeAppPwd = Boolean(nativeGmailConfig?.hasAppPassword);
+            const isGmailConnected = gmailHasToken || hasNativeOAuth || hasNativeAppPwd;
+            const activeEmail =
+              gmailUser?.email || nativeGmailConfig?.senderEmail || OWNER_EMAIL;
 
-            {!gmailHasToken && !isNativeAndroid && (
-              <div className="space-y-1.5">
-                <GoogleSignInButton
-                  onClick={async () => {
-                    setGmailConnecting(true);
-                    setGmailAuthError(null);
-                    try {
-                      await googleSignIn('M13_EINSTELLUNGEN');
-                    } catch (err: unknown) {
-                      setGmailAuthError(
-                        err instanceof Error ? err.message : 'Google-Anmeldung fehlgeschlagen.'
-                      );
-                    } finally {
-                      setGmailConnecting(false);
-                    }
-                  }}
-                  disabled={gmailConnecting}
-                  label={gmailConnecting ? 'Verbinde...' : 'Sign in with Google'}
-                />
+            return (
+              <div className="p-3 bg-white border border-slate-200 rounded-xl space-y-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <Mail size={17} className="text-red-600 shrink-0" />
+                    <div className="min-w-0">
+                      <span className="font-bold text-slate-800 block text-xs">
+                        Gmail (PDF-Rechnungsversand & MCP)
+                      </span>
+                      <span className="text-[10px] text-slate-500 block truncate">
+                        {isGmailConnected
+                          ? `Aktiv: ${activeEmail} (${
+                              hasNativeAppPwd && hasNativeOAuth
+                                ? 'Google-Login + App-Passwort'
+                                : hasNativeAppPwd
+                                  ? 'Dauerhaftes App-Passwort'
+                                  : 'Google OAuth-Login'
+                            })`
+                          : 'Einmalig anmelden für direkten PDF-Rechnungsversand'}
+                      </span>
+                    </div>
+                  </div>
+                  {isGmailConnected ? (
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <span className="text-[10px] font-bold text-[#2C7738] bg-emerald-50 px-2 py-0.5 rounded-md">
+                        Bereit
+                      </span>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          setGmailAuthInfo(null);
+                          setGmailAuthError(null);
+                          await logoutGmail();
+                          if (isNativeAndroid) {
+                            setNativeGmailConfig(getNativeGmailConfig());
+                          }
+                        }}
+                        className="text-[10px] font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 px-2 py-1 rounded-md flex items-center gap-1"
+                      >
+                        <LogOut size={11} />
+                        <span>Trennen</span>
+                      </button>
+                    </div>
+                  ) : (
+                    <span className="text-[10px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md shrink-0">
+                      Nicht angemeldet
+                    </span>
+                  )}
+                </div>
+
+                {(!gmailHasToken && !hasNativeOAuth) && (
+                  <div className="space-y-1.5">
+                    <GoogleSignInButton
+                      onClick={async () => {
+                        setGmailConnecting(true);
+                        setGmailAuthError(null);
+                        setGmailAuthInfo(null);
+                        try {
+                          await googleSignIn('M13_EINSTELLUNGEN');
+                          if (isNativeAndroid) {
+                            setNativeGmailConfig(getNativeGmailConfig());
+                          }
+                          setGmailAuthInfo('Google-Konto erfolgreich für Rechnungsversand verbunden.');
+                        } catch (err: unknown) {
+                          setGmailAuthError(
+                            err instanceof Error ? err.message : 'Google-Anmeldung fehlgeschlagen.'
+                          );
+                        } finally {
+                          setGmailConnecting(false);
+                        }
+                      }}
+                      disabled={gmailConnecting}
+                      label={gmailConnecting ? 'Verbinde...' : 'Sign in with Google'}
+                    />
+                  </div>
+                )}
+
+                {isNativeAndroid && (
+                  <div className="pt-2 border-t border-slate-100 space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-semibold text-slate-600 flex items-center gap-1">
+                        <KeyRound size={11} className="text-slate-500" />
+                        <span>
+                          Optional: 16-stelliges Google App-Passwort (läuft im Hintergrund nie ab)
+                        </span>
+                      </span>
+                      {hasNativeAppPwd && (
+                        <span className="text-[10px] font-bold text-[#2C7738]">
+                          Hinterlegt ✓
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="password"
+                        value={appPasswordInput}
+                        onChange={(e) => setAppPasswordInput(e.target.value)}
+                        placeholder={
+                          hasNativeAppPwd
+                            ? 'App-Passwort aktiv (neu eingeben zum Ändern)'
+                            : '16-stelliges App-Passwort (z. B. abcd efgh ijkl mnop)'
+                        }
+                        className="flex-1 min-w-0 h-8 px-2.5 bg-slate-50 border border-slate-200 rounded-lg text-[11px] text-slate-800 placeholder:text-slate-400 focus:outline-none focus:border-[#3138A0]"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setGmailAuthError(null);
+                          setGmailAuthInfo(null);
+                          const updated = pasteNativeGmailAppPasswordFromClipboard(OWNER_EMAIL);
+                          if (updated) {
+                            setNativeGmailConfig(updated);
+                            if (updated.hasAppPassword) {
+                              setAppPasswordInput('');
+                              setGmailAuthInfo(
+                                'App-Passwort aus Zwischenablage gespeichert (24/7 MCP-Versand bereit).'
+                              );
+                            } else {
+                              setGmailAuthError(
+                                'Kein 16-stelliges Google App-Passwort in der Zwischenablage gefunden.'
+                              );
+                            }
+                          }
+                        }}
+                        className="h-8 px-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-[10px] rounded-lg flex items-center gap-1 shrink-0"
+                        title="App-Passwort aus Zwischenablage einfügen"
+                      >
+                        <ClipboardPaste size={12} />
+                        <span>Einfügen</span>
+                      </button>
+                      <button
+                        type="button"
+                        disabled={appPasswordInput.replace(/\s+/g, '').length < 8}
+                        onClick={() => {
+                          setGmailAuthError(null);
+                          setGmailAuthInfo(null);
+                          const clean = appPasswordInput.replace(/\s+/g, '');
+                          if (clean.length < 8) {
+                            setGmailAuthError('Bitte mindestens 8 Zeichen eingeben.');
+                            return;
+                          }
+                          const updated = saveNativeGmailAppPassword(OWNER_EMAIL, clean);
+                          if (updated) {
+                            setNativeGmailConfig(updated);
+                            setAppPasswordInput('');
+                            setGmailAuthInfo(
+                              'Google App-Passwort dauerhaft gespeichert (24/7 MCP-Versand bereit).'
+                            );
+                          }
+                        }}
+                        className="h-8 px-2.5 bg-[#3138A0] disabled:bg-slate-200 text-white disabled:text-slate-400 font-bold text-[10px] rounded-lg shrink-0"
+                      >
+                        Speichern
+                      </button>
+                    </div>
+                  </div>
+                )}
+
                 {gmailAuthError && (
                   <p className="text-[10px] text-[#B42318] font-medium leading-snug">
                     {gmailAuthError}
                   </p>
                 )}
+                {gmailAuthInfo && (
+                  <p className="text-[10px] text-[#2C7738] font-medium leading-snug">
+                    {gmailAuthInfo}
+                  </p>
+                )}
               </div>
-            )}
-          </div>
+            );
+          })()}
 
           {/* Google Kalender */}
           <div className="p-2.5 bg-white border border-slate-200 rounded-xl flex items-center justify-between">

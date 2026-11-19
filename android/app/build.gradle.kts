@@ -13,8 +13,8 @@ android {
         applicationId = "at.hafner.gruenraum"
         minSdk = 31
         targetSdk = 35
-        versionCode = 40
-        versionName = "1.3.9"
+        versionCode = 41
+        versionName = "1.4.0"
 
         val envGmailAppPwd = System.getenv("GMAIL_APP_PASSWORD")?.trim()?.replace("\"", "").orEmpty()
 

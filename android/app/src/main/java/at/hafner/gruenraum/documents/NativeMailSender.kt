@@ -368,4 +368,57 @@ class NativeMailSender(private val context: Context) {
         } catch (_: Exception) {
         }
     }
+
+    /**
+     * Zeigt eine sofortige Heads-Up-Benachrichtigung auf dem Pixel 10 Pro, falls ChatGPT
+     * im Hintergrund einen Rechnungsversand anstößt, aber noch keine Google-Anmeldung vorliegt.
+     * Ein Tipp öffnet direkt die Google-Kontoauswahl und schließt den laufenden MCP-Versand ab.
+     */
+    fun showGmailSignInRequiredNotification(invoiceLabel: String) {
+        try {
+            if (
+                Build.VERSION.SDK_INT >= 33 &&
+                ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+                    PackageManager.PERMISSION_GRANTED
+            ) {
+                return
+            }
+
+            val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return
+            val channelId = "hafner_invoice_mail_auth"
+            val channel = NotificationChannel(
+                channelId,
+                "Gmail-Freigabe für Rechnungsversand",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Einmalige Google-Anmeldung für den MCP-Rechnungsversand"
+            }
+            nm.createNotificationChannel(channel)
+
+            val openIntent = Intent(context, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                putExtra(MainActivity.EXTRA_AUTO_GMAIL_SIGNIN, true)
+            }
+            val pendingOpen = PendingIntent.getActivity(
+                context,
+                9202,
+                openIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+
+            val cleanInv = invoiceLabel.trim().ifBlank { "Rechnung" }
+            val notification = Notification.Builder(context, channelId)
+                .setSmallIcon(android.R.drawable.ic_dialog_email)
+                .setContentTitle("Gmail für $cleanInv freigeben")
+                .setContentText("Hier tippen, um mihalhafner@gmail.com für den Versand zu bestätigen")
+                .setContentIntent(pendingOpen)
+                .setAutoCancel(true)
+                .setTimeoutAfter(25000L)
+                .build()
+
+            nm.notify(9202, notification)
+        } catch (_: Exception) {
+        }
+    }
 }
+

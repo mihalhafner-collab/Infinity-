@@ -57,6 +57,8 @@ interface HafnerNativeInterface {
   getGmailConfigJson?: () => string;
   signInWithGoogle?: (requestId: string) => void;
   disconnectGmail?: () => string;
+  saveGmailAppPassword?: (senderEmail: string, appPassword: string) => string;
+  pasteGmailAppPasswordFromClipboard?: (senderEmail: string) => string;
   readDeviceCalendar: (requestId: string, startDateIso: string, endDateIso: string) => void;
   upsertDeviceCalendarEvent?: (requestId: string, payloadJson: string) => void;
   deleteDeviceCalendarEvent?: (requestId: string, googleEventId: string) => void;
@@ -367,6 +369,37 @@ export function disconnectNativeGmail(): NativeGmailConfig | null {
   }
   try {
     const raw = window.HafnerNative.disconnectGmail();
+    if (!raw) return null;
+    return JSON.parse(raw) as NativeGmailConfig;
+  } catch {
+    return null;
+  }
+}
+
+export function saveNativeGmailAppPassword(
+  senderEmail: string,
+  appPassword: string
+): NativeGmailConfig | null {
+  if (!isNativeAndroidApp() || !window.HafnerNative?.saveGmailAppPassword) {
+    return null;
+  }
+  try {
+    const raw = window.HafnerNative.saveGmailAppPassword(senderEmail, appPassword);
+    if (!raw) return null;
+    return JSON.parse(raw) as NativeGmailConfig;
+  } catch {
+    return null;
+  }
+}
+
+export function pasteNativeGmailAppPasswordFromClipboard(
+  senderEmail: string
+): NativeGmailConfig | null {
+  if (!isNativeAndroidApp() || !window.HafnerNative?.pasteGmailAppPasswordFromClipboard) {
+    return null;
+  }
+  try {
+    const raw = window.HafnerNative.pasteGmailAppPasswordFromClipboard(senderEmail);
     if (!raw) return null;
     return JSON.parse(raw) as NativeGmailConfig;
   } catch {
