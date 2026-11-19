@@ -590,6 +590,18 @@ class MainActivity : AppCompatActivity() {
         return json
     }
 
+    private fun buildCleanChromeUserAgent(defaultUa: String?): String {
+        val raw = defaultUa.orEmpty()
+        val cleaned = raw
+            .replace("; wv)", ")")
+            .replace(" wv ", " ")
+            .replace(Regex("Version/\\d+\\.\\d+\\s*"), "")
+            .trim()
+        return cleaned.ifBlank {
+            "Mozilla/5.0 (Linux; Android 16; Pixel 10 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36"
+        }
+    }
+
     private fun extractOAuthParam(fragmentOrQuery: String, key: String): String {
         val cleaned = fragmentOrQuery.trim().trimStart('#', '?')
         if (cleaned.isEmpty()) return ""
