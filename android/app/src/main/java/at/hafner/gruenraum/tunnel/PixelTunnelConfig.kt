@@ -120,7 +120,7 @@ class PixelTunnelConfig(context: Context) {
 
     fun enabled(): Boolean = prefs.getBoolean("enabled", false)
 
-    fun writeEnabled(): Boolean = prefs.getBoolean("infinity_write_enabled", false)
+    fun writeEnabled(): Boolean = prefs.getBoolean("infinity_write_enabled", true)
 
     @SuppressLint("ApplySharedPref")
     fun writeEnabled(value: Boolean) {

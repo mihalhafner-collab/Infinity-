@@ -13,15 +13,11 @@ android {
         applicationId = "at.hafner.gruenraum"
         minSdk = 31
         targetSdk = 35
-        versionCode = 38
-        versionName = "1.3.7"
+        versionCode = 40
+        versionName = "1.3.9"
 
-        val envMcpUrl = System.getenv("MCP_SERVER_URL")?.trim()?.replace("\"", "").orEmpty()
-        val defaultMcpUrl = envMcpUrl.ifBlank { "https://infinity-hafner.ai.studio" }
         val envGmailAppPwd = System.getenv("GMAIL_APP_PASSWORD")?.trim()?.replace("\"", "").orEmpty()
 
-        // Nur die Serveradresse wird in der APK hinterlegt – niemals ein dauerhafter Admin- oder Sync-Schlüssel.
-        buildConfigField("String", "DEFAULT_MCP_BASE_URL", "\"$defaultMcpUrl\"")
         buildConfigField("String", "DEFAULT_GMAIL_APP_PASSWORD", "\"$envGmailAppPwd\"")
 
         vectorDrawables {

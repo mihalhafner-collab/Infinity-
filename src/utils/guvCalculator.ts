@@ -19,8 +19,8 @@ import {
 export const KU_REVENUE_LIMIT = 55000; // § 6 Abs. 1 Z 27 UStG & § 17 Abs. 3a EStG
 export const KU_TOLERANCE_LIMIT = 60500; // +10 % Toleranzgrenze
 export const GWG_LIMIT_EUR = 1000; // § 13 EStG (Brutto für USt-Kleinunternehmer)
-export const GRUNDFREIBETRAG_BASE_CAP = 33000; // § 10 EStG (15 % bis 33.000 € = max. 4.950 €)
-export const GRUNDFREIBETRAG_RATE = 0.15;
+const GRUNDFREIBETRAG_BASE_CAP = 33000; // § 10 EStG (15 % bis 33.000 € = max. 4.950 €)
+const GRUNDFREIBETRAG_RATE = 0.15;
 
 export const EXPENSE_CATEGORY_LABELS: Record<ExpenseCategory, string> = {
   wareneinsatz: 'Material & Wareneinsatz',
@@ -90,7 +90,7 @@ function round2(n: number): number {
  * Österreichischer Einkommensteuertarif 2026 (§ 33 Abs. 1 EStG)
  * Orientierungsberechnung ohne persönliche Absetzbeträge (Familienbonus etc.)
  */
-export function estimateAustrianIncomeTax2026(taxableIncome: number): number {
+function estimateAustrianIncomeTax2026(taxableIncome: number): number {
   if (taxableIncome <= 13539) return 0;
 
   const brackets: Array<{ from: number; to: number; rate: number }> = [

@@ -167,7 +167,7 @@ export function getFunctionalGroupInfo(
   return { id: `cat:${label}`, title: label, order: 10 };
 }
 
-export function getSpecFieldLabel(key: string, _categoryId?: string): string {
+function getSpecFieldLabel(key: string, _categoryId?: string): string {
   const trimmed = key.trim();
   if (!trimmed) return '';
   const normalizedKey = trimmed
@@ -214,7 +214,7 @@ const IGNORED_SPEC_META_KEYS = new Set([
   'remove_photo'
 ]);
 
-export function normalizeFieldKey(labelOrKey: string): string {
+function normalizeFieldKey(labelOrKey: string): string {
   return labelOrKey
     .trim()
     .toLowerCase()

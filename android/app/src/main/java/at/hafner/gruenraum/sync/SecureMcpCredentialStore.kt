@@ -13,41 +13,18 @@ import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
 data class McpCredentials(
-    val baseUrl: String,
-    val token: String,
-    val adminToken: String = "",
     val gmailSenderEmail: String = SecureMcpCredentialStore.DEFAULT_GMAIL_SENDER,
     val gmailAppPassword: String = "",
     val gmailOAuthToken: String = ""
 ) {
-    val isConfigured: Boolean
-        get() = (baseUrl.startsWith("https://") || baseUrl.startsWith("http://localhost") || baseUrl.startsWith("http://127.0.0.1")) &&
-            token.length >= 16
-
-    val effectiveMcpToken: String
-        get() = adminToken.trim().ifBlank { token.trim() }
-
     val effectiveGmailAppPassword: String
         get() = gmailAppPassword.replace("\\s+".toRegex(), "").ifBlank {
             BuildConfig.DEFAULT_GMAIL_APP_PASSWORD.replace("\\s+".toRegex(), "")
         }
-
-    val maskedToken: String
-        get() {
-            val source = effectiveMcpToken
-            return if (source.length < 14) {
-                ""
-            } else {
-                "${source.take(8)}••••••••••••${source.takeLast(4)}"
-            }
-        }
 }
 
 /**
- * Hardware-geschützte Speicherung der MCP-Zugangsdaten im Android Keystore (Titan M2 auf Pixel 10 Pro).
- * - Die Serveradresse wird automatisch aus BuildConfig.DEFAULT_MCP_BASE_URL vorbelegt.
- * - In der APK selbst ist KEIN dauerhaft gültiger Admin- oder Synchronisationsschlüssel enthalten;
- *   der Geräteschlüssel entsteht erst nach der automatischen Kopplung (/api/pair/exchange).
+ * Hardware-geschützte Speicherung der Gmail-Versandzugangsdaten im Android Keystore (Titan M2 auf Pixel 10 Pro).
  */
 class SecureMcpCredentialStore(private val context: Context) {
 
@@ -64,55 +41,29 @@ class SecureMcpCredentialStore(private val context: Context) {
                 cipher.init(Cipher.DECRYPT_MODE, getOrCreateSecretKey(), GCMParameterSpec(GCM_TAG_BITS, iv))
                 val jsonStr = cipher.doFinal(ciphertext).toString(Charsets.UTF_8)
                 val obj = JSONObject(jsonStr)
-                val storedUrl = sanitizeBaseUrl(obj.optString("baseUrl", ""))
-                val storedToken = obj.optString("token", "").trim()
-                val storedAdminToken = obj.optString("adminToken", "").trim()
                 val storedGmailSender = obj.optString("gmailSenderEmail", "").trim().ifBlank { DEFAULT_GMAIL_SENDER }
                 val storedGmailAppPwd = obj.optString("gmailAppPassword", "").trim()
                 val storedGmailOAuth = obj.optString("gmailOAuthToken", "").trim()
                 return McpCredentials(
-                    baseUrl = storedUrl.ifBlank { defaultBaseUrl() },
-                    token = storedToken.ifBlank { DEFAULT_PIXEL10_DEVICE_TOKEN },
-                    adminToken = storedAdminToken,
                     gmailSenderEmail = storedGmailSender,
                     gmailAppPassword = storedGmailAppPwd,
                     gmailOAuthToken = storedGmailOAuth
                 )
             } catch (_: Exception) {
-                // Bei Keystore-Rotation auf Standard-URL mit Pixel-Gerätetoken zurückfallen
+                // Fallback auf Standard-Absender bei Keystore-Rotation
             }
         }
-        return McpCredentials(
-            baseUrl = defaultBaseUrl(),
-            token = DEFAULT_PIXEL10_DEVICE_TOKEN,
-            adminToken = "",
-            gmailSenderEmail = DEFAULT_GMAIL_SENDER,
-            gmailAppPassword = "",
-            gmailOAuthToken = ""
-        )
+        return McpCredentials()
     }
 
     @Synchronized
-    fun saveCredentials(
-        baseUrl: String,
-        token: String,
-        adminToken: String? = null,
-        gmailSenderEmail: String? = null,
-        gmailAppPassword: String? = null,
-        gmailOAuthToken: String? = null
-    ): McpCredentials {
+    fun saveGmailConfig(senderEmail: String?, appPassword: String?, oauthToken: String? = null): McpCredentials {
         val current = loadCredentials()
-        val cleanUrl = sanitizeBaseUrl(baseUrl).ifBlank { defaultBaseUrl() }
-        val cleanToken = token.trim().ifBlank { current.token.ifBlank { DEFAULT_PIXEL10_DEVICE_TOKEN } }
-        val cleanAdminToken = adminToken?.trim() ?: current.adminToken
-        val cleanGmailSender = gmailSenderEmail?.trim()?.ifBlank { DEFAULT_GMAIL_SENDER } ?: current.gmailSenderEmail
-        val cleanGmailAppPwd = gmailAppPassword?.replace("\\s+".toRegex(), "") ?: current.gmailAppPassword
-        val cleanGmailOAuth = gmailOAuthToken?.trim() ?: current.gmailOAuthToken
+        val cleanGmailSender = senderEmail?.trim()?.ifBlank { DEFAULT_GMAIL_SENDER } ?: current.gmailSenderEmail
+        val cleanGmailAppPwd = appPassword?.replace("\\s+".toRegex(), "") ?: current.gmailAppPassword
+        val cleanGmailOAuth = oauthToken?.trim() ?: current.gmailOAuthToken
 
         val payload = JSONObject().apply {
-            put("baseUrl", cleanUrl)
-            put("token", cleanToken)
-            put("adminToken", cleanAdminToken)
             put("gmailSenderEmail", cleanGmailSender)
             put("gmailAppPassword", cleanGmailAppPwd)
             put("gmailOAuthToken", cleanGmailOAuth)
@@ -135,62 +86,10 @@ class SecureMcpCredentialStore(private val context: Context) {
         }
 
         return McpCredentials(
-            baseUrl = cleanUrl,
-            token = cleanToken,
-            adminToken = cleanAdminToken,
             gmailSenderEmail = cleanGmailSender,
             gmailAppPassword = cleanGmailAppPwd,
             gmailOAuthToken = cleanGmailOAuth
         )
-    }
-
-    @Synchronized
-    fun saveGmailConfig(senderEmail: String?, appPassword: String?, oauthToken: String? = null): McpCredentials {
-        val current = loadCredentials()
-        return saveCredentials(
-            baseUrl = current.baseUrl,
-            token = current.token,
-            adminToken = current.adminToken,
-            gmailSenderEmail = senderEmail ?: current.gmailSenderEmail,
-            gmailAppPassword = appPassword ?: current.gmailAppPassword,
-            gmailOAuthToken = oauthToken ?: current.gmailOAuthToken
-        )
-    }
-
-    @Synchronized
-    fun updateAdminTokenOnly(adminToken: String): McpCredentials {
-        val current = loadCredentials()
-        return saveCredentials(current.baseUrl, current.token, adminToken.trim())
-    }
-
-    @Synchronized
-    fun updateBaseUrlOnly(baseUrl: String): McpCredentials {
-        val current = loadCredentials()
-        return saveCredentials(baseUrl, current.token, current.adminToken)
-    }
-
-    @Synchronized
-    fun clearTokenKeepUrl(): McpCredentials {
-        val current = loadCredentials()
-        return saveCredentials(current.baseUrl, DEFAULT_PIXEL10_DEVICE_TOKEN, "")
-    }
-
-    @Synchronized
-    fun clearCredentials(): McpCredentials {
-        val current = loadCredentials()
-        return saveCredentials(
-            baseUrl = defaultBaseUrl(),
-            token = DEFAULT_PIXEL10_DEVICE_TOKEN,
-            adminToken = "",
-            gmailSenderEmail = current.gmailSenderEmail,
-            gmailAppPassword = current.gmailAppPassword,
-            gmailOAuthToken = current.gmailOAuthToken
-        )
-    }
-
-    private fun defaultBaseUrl(): String {
-        return sanitizeBaseUrl(BuildConfig.DEFAULT_MCP_BASE_URL)
-            .ifBlank { PRIMARY_CLOUD_RUN_URL }
     }
 
     private fun getOrCreateSecretKey(): SecretKey {
@@ -222,26 +121,6 @@ class SecureMcpCredentialStore(private val context: Context) {
         private const val TRANSFORMATION = "AES/GCM/NoPadding"
         private const val IV_LENGTH_BYTES = 12
         private const val GCM_TAG_BITS = 128
-        const val PRIMARY_CLOUD_RUN_URL = "https://infinity-hafner.ai.studio"
-        const val DEFAULT_PIXEL10_DEVICE_TOKEN = "hgh_px10_pixel10pro_primary_sync_token_2026"
         const val DEFAULT_GMAIL_SENDER = "mihalhafner@gmail.com"
-
-        fun sanitizeBaseUrl(raw: String): String {
-            var cleaned = raw.trim()
-            if (cleaned.isEmpty()) return ""
-            cleaned = cleaned.replace(Regex("/mcp.*$", RegexOption.IGNORE_CASE), "")
-            cleaned = cleaned.trimEnd('/')
-            if (cleaned.startsWith("http://") && !cleaned.contains("localhost") && !cleaned.contains("127.0.0.1")) {
-                cleaned = "https://" + cleaned.removePrefix("http://")
-            }
-            if (
-                cleaned.contains("523881801839.europe-west1.run.app", ignoreCase = true) ||
-                cleaned.contains("hafner-gruenraum.ai.studio", ignoreCase = true) ||
-                cleaned.contains("infinity-hafner.ai.studio", ignoreCase = true)
-            ) {
-                cleaned = PRIMARY_CLOUD_RUN_URL
-            }
-            return cleaned
-        }
     }
 }

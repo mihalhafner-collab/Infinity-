@@ -15,7 +15,6 @@ import {
 } from 'lucide-react';
 import { ScreenId } from '../../types/index.ts';
 import { isNativeAndroidApp } from '../../services/nativeBridge.ts';
-import { PWAInstallCard } from './PWAInstallCard.tsx';
 
 export const ThreeDotsMenuModal: React.FC = () => {
   const { isThreeDotsMenuOpen, setIsThreeDotsMenuOpen, navigate } = useApp();
@@ -202,8 +201,6 @@ export const ThreeDotsMenuModal: React.FC = () => {
                 </div>
                 <ChevronRight size={18} className="text-slate-400 shrink-0" />
               </button>
-
-              <PWAInstallCard compact />
             </div>
           </div>
         </div>

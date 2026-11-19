@@ -54,14 +54,19 @@ export function ensureHafnerLogoLoaded(): Promise<string | null> {
   }
   if (!logoLoadPromise) {
     if (typeof window !== 'undefined') {
-      logoLoadPromise = fetch(HAFNER_LOGO_URL)
+      const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      const timer = controller ? window.setTimeout(() => controller.abort(), 3500) : null;
+      logoLoadPromise = fetch(HAFNER_LOGO_URL, controller ? { signal: controller.signal } : undefined)
         .then((res) => (res.ok ? res.blob() : null))
         .then((blob) => (blob ? blobToDataUrl(blob) : null))
         .then((dataUrl) => {
           cachedLogoDataUrl = dataUrl;
           return dataUrl;
         })
-        .catch(() => null);
+        .catch(() => null)
+        .finally(() => {
+          if (timer !== null) window.clearTimeout(timer);
+        });
     } else {
       logoLoadPromise = (async () => {
         try {
@@ -92,10 +97,10 @@ if (typeof window !== 'undefined') {
   void ensureHafnerLogoLoaded();
 }
 
-export const DEFAULT_INVOICE_INTRO_BODY =
+const DEFAULT_INVOICE_INTRO_BODY =
   'vielen Dank für Ihren Auftrag und das damit verbundene Vertrauen!\nHiermit stelle ich Ihnen die folgenden Leistungen in Rechnung:';
 
-export const DEFAULT_PAUSCHAL_INTRO_BODY =
+const DEFAULT_PAUSCHAL_INTRO_BODY =
   'vielen Dank für Ihren Auftrag und das damit verbundene Vertrauen!\nVereinbarungsgemäß stelle ich Ihnen für die durchgeführten Arbeiten folgende Pauschale in Rechnung:';
 
 export const DEFAULT_INVOICE_INTRO_TEXT = `Sehr geehrte Damen und Herren,\n${DEFAULT_INVOICE_INTRO_BODY}`;
@@ -748,21 +753,24 @@ export function buildPaymentTermsClause(dueDays: number, isPaidInCash = false): 
 }
 
 export function formatEuro(amount: number): string {
-  return `${amount.toLocaleString('de-DE', {
+  const safe = typeof amount === 'number' && Number.isFinite(amount) ? amount : 0;
+  return `${safe.toLocaleString('de-DE', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2
   })} EUR`;
 }
 
 export function formatQtyTwoDecimals(val: number): string {
-  return val.toLocaleString('de-DE', {
+  const safe = typeof val === 'number' && Number.isFinite(val) ? val : 0;
+  return safe.toLocaleString('de-DE', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2
   });
 }
 
 export function formatQtyNumber(val: number): string {
-  return val.toLocaleString('de-DE', {
+  const safe = typeof val === 'number' && Number.isFinite(val) ? val : 0;
+  return safe.toLocaleString('de-DE', {
     minimumFractionDigits: 0,
     maximumFractionDigits: 2
   });
@@ -861,10 +869,10 @@ export function buildLineItemsFromRecords(
   const sortedRecords = [...records].sort((a, b) => a.work_date.localeCompare(b.work_date));
 
   for (const rec of sortedRecords) {
-    const workAmount =
-      rec.hourly_rate !== null
-        ? Math.round(rec.hours * rec.hourly_rate * 100) / 100
-        : rec.accounting_amount || 0;
+    const hasHourlyRate = typeof rec.hourly_rate === 'number' && Number.isFinite(rec.hourly_rate);
+    const workAmount = hasHourlyRate
+      ? Math.round((rec.hours || 0) * (rec.hourly_rate as number) * 100) / 100
+      : rec.accounting_amount || 0;
 
     let itemDescription = rec.title;
     const isSubRecord =
@@ -887,24 +895,24 @@ export function buildLineItemsFromRecords(
       id: `li-${rec.id}`,
       description: itemDescription,
       quantity_label: `${formatQtyTwoDecimals(rec.hours)} Std`,
-      unit_price_label: rec.hourly_rate !== null ? formatEuro(rec.hourly_rate) : 'Pauschal',
+      unit_price_label: hasHourlyRate ? formatEuro(rec.hourly_rate as number) : 'Pauschal',
       amount: workAmount
     });
 
     if (rec.materials && rec.materials.length > 0) {
       for (const mat of rec.materials) {
-        const matTotal =
-          mat.total !== null
-            ? mat.total
-            : mat.price_per_unit !== null
-              ? Math.round(mat.quantity * mat.price_per_unit * 100) / 100
-              : 0;
+        const hasMatTotal = typeof mat.total === 'number' && Number.isFinite(mat.total);
+        const hasMatPrice = typeof mat.price_per_unit === 'number' && Number.isFinite(mat.price_per_unit);
+        const matTotal = hasMatTotal
+          ? (mat.total as number)
+          : hasMatPrice
+            ? Math.round((mat.quantity || 0) * (mat.price_per_unit as number) * 100) / 100
+            : 0;
         items.push({
           id: `li-mat-${rec.id}-${mat.material_id}`,
           description: mat.name,
           quantity_label: `${formatQtyTwoDecimals(mat.quantity)} ${mat.unit}`,
-          unit_price_label:
-            mat.price_per_unit !== null ? formatEuro(mat.price_per_unit) : 'inkl.',
+          unit_price_label: hasMatPrice ? formatEuro(mat.price_per_unit as number) : 'inkl.',
           amount: matTotal
         });
       }
@@ -1067,7 +1075,7 @@ function drawDinMarksAndFooter(
   doc.setTextColor(0, 0, 0);
 }
 
-export function generateInvoicePdf(
+function generateInvoicePdf(
   data: ResolvedInvoiceData,
   explicitLogoDataUrl?: string | null
 ): {
@@ -1481,7 +1489,7 @@ export function buildDefaultWorkRecordEmailPayload(
     const prop = rec.property_id ? properties.find((p) => p.id === rec.property_id) : undefined;
     const propSuffix = prop && prop.name ? ` (${prop.name})` : '';
     const hrs = Number(rec.hours || 0);
-    const rate = rec.hourly_rate !== null ? Number(rec.hourly_rate) : null;
+    const rate = typeof rec.hourly_rate === 'number' && Number.isFinite(rec.hourly_rate) ? Number(rec.hourly_rate) : null;
     const workAmt =
       rec.accounting_amount !== null && rec.accounting_amount !== undefined
         ? Number(rec.accounting_amount)
@@ -1498,10 +1506,10 @@ export function buildDefaultWorkRecordEmailPayload(
     if (rec.materials && rec.materials.length > 0) {
       for (const m of rec.materials) {
         const mTot =
-          m.total !== null
+          typeof m.total === 'number' && Number.isFinite(m.total)
             ? m.total
-            : m.price_per_unit !== null
-              ? Math.round(m.quantity * m.price_per_unit * 100) / 100
+            : typeof m.price_per_unit === 'number' && Number.isFinite(m.price_per_unit)
+              ? Math.round((m.quantity || 0) * m.price_per_unit * 100) / 100
               : 0;
         lines.push(
           `   • Material: ${m.name} (${formatQtyNumber(m.quantity)} ${m.unit}${mTot > 0 ? ` = ${formatEuro(mTot)}` : ''})`
@@ -1625,7 +1633,7 @@ function asciiToBase64UrlMime(ascii: string): string {
   return btoa(ascii).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
-export function sanitizePdfAttachmentFilename(filename: string): string {
+function sanitizePdfAttachmentFilename(filename: string): string {
   const safe = filename
     .replace(/ä/g, 'ae')
     .replace(/ö/g, 'oe')

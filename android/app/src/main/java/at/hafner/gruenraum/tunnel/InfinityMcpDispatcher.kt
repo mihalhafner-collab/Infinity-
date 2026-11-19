@@ -306,6 +306,14 @@ class InfinityMcpDispatcher(
                 if (!hasBatch && opLabel == "delivery_status") {
                     return getDeliveryStatusInState(storeManager.loadOrInitStateObject(), normalizedArgs)
                 }
+                if (!hasBatch && normalizedArgs.optBoolean("dry_run", false)) {
+                    if (opLabel == "send_invoice") {
+                        return sendInvoiceInState(storeManager.loadOrInitStateObject(), normalizedArgs)
+                    }
+                    if (opLabel == "send_work_record") {
+                        return sendWorkRecordInState(storeManager.loadOrInitStateObject(), normalizedArgs)
+                    }
+                }
                 assertWritePermitted()
                 val effectiveReqId = normalizedArgs.optString("request_id", "").trim()
                     .ifEmpty { tunnelRequestId }
@@ -337,6 +345,14 @@ class InfinityMcpDispatcher(
                 }
                 if (actLabel == "delivery_status") {
                     return getDeliveryStatusInState(storeManager.loadOrInitStateObject(), normalizedArgs)
+                }
+                if (normalizedArgs.optBoolean("dry_run", false)) {
+                    if (actLabel == "send_invoice") {
+                        return sendInvoiceInState(storeManager.loadOrInitStateObject(), normalizedArgs)
+                    }
+                    if (actLabel == "send_work_record") {
+                        return sendWorkRecordInState(storeManager.loadOrInitStateObject(), normalizedArgs)
+                    }
                 }
                 assertWritePermitted()
                 val effectiveReqId = normalizedArgs.optString("request_id", "").trim()
@@ -3164,26 +3180,67 @@ class InfinityMcpDispatcher(
         }
 
         if (args.optBoolean("dry_run", false)) {
-            val dryOut = JSONObject()
-                .put("ok", true)
+            val pdfResult = runCatching {
+                MainActivity.buildInvoicePdfViaExistingEngineBlocking(context, inv, customers, workRecords)
+            }
+            val pdfPayload = pdfResult.getOrNull()
+            val base64Pdf = pdfPayload?.optString("base64Pdf", "").orEmpty()
+            val pdfSizeBytes = pdfPayload?.optInt("pdfSizeBytes", 0) ?: 0
+            val pdfOk = pdfPayload != null &&
+                pdfPayload.optBoolean("ok", false) &&
+                base64Pdf.isNotEmpty() &&
+                pdfSizeBytes > 0
+            val pdfError = if (!pdfOk) {
+                pdfResult.exceptionOrNull()?.message
+                    ?: pdfPayload?.optString("error", "")?.takeIf { it.isNotEmpty() }
+                    ?: "Original-Rechnungs-PDF konnte nicht erzeugt werden."
+            } else null
+
+            val mailReadiness = MainActivity.checkMailDeliveryReadiness(context)
+            val mailReady = mailReadiness.optBoolean("ready", false)
+            val mailError = mailReadiness.optString("error", "").takeIf { it.isNotEmpty() }
+
+            val readyToSend = pdfOk && mailReady
+            val blockingErrors = JSONArray().apply {
+                if (pdfError != null) put("PDF-Erzeugung: $pdfError")
+                if (mailError != null) put("Mail-Zugang: $mailError")
+            }
+
+            return JSONObject()
+                .put("ok", readyToSend)
                 .put("action", "send_invoice")
                 .put("dry_run", true)
                 .put("sent", false)
-                .put("ready_to_send", true)
+                .put("ready_to_send", readyToSend)
+                .put("pdf_ready", pdfOk)
+                .put("mail_provider_ready", mailReady)
+                .put("mail_provider", mailReadiness.optString("provider", "none"))
+                .put("sender_email", mailReadiness.optString("sender_email", "mihalhafner@gmail.com"))
                 .put("requires_user_confirmed", true)
                 .put("invoice_id", inv.optString("id"))
                 .put("invoice_number", invNum)
                 .put("recipient_name", recipientName)
                 .put("recipient_email", recipientEmail)
                 .put("total_amount", inv.optDouble("total_amount", 0.0))
-            runCatching {
-                MainActivity.buildInvoicePdfViaExistingEngineBlocking(inv, customers, workRecords)
-            }.onSuccess { pdfPayload ->
-                dryOut.put("filename", pdfPayload.optString("filename", "Rechnung.pdf"))
-                dryOut.put("pdf_size_bytes", pdfPayload.optInt("pdfSizeBytes", 0))
-                dryOut.put("subject", pdfPayload.optString("subject", ""))
-            }
-            return dryOut
+                .put("filename", pdfPayload?.optString("filename", "Rechnung.pdf") ?: "Rechnung.pdf")
+                .put("pdf_size_bytes", pdfSizeBytes)
+                .put("pdf_engine", pdfPayload?.optString("engine", "native_android_pdf") ?: "none")
+                .put("subject", pdfPayload?.optString("subject", "") ?: "")
+                .apply {
+                    val engineNote = pdfPayload?.optString("engineNote", "").orEmpty()
+                    if (engineNote.isNotEmpty()) {
+                        put("pdf_engine_note", engineNote)
+                    }
+                    if (!readyToSend) {
+                        put("blocking_errors", blockingErrors)
+                        put(
+                            "error",
+                            "Trockenlauf fehlgeschlagen: ${
+                                (0 until blockingErrors.length()).joinToString(" | ") { blockingErrors.optString(it) }
+                            }"
+                        )
+                    }
+                }
         }
 
         // Versand nur nach ausdrücklicher Freigabe durch den Nutzer
@@ -3223,6 +3280,8 @@ class InfinityMcpDispatcher(
             .put("sent_at", sentDateIso)
             .put("recipient_email", recipientEmail)
             .put("filename", filename)
+            .put("pdf_size_bytes", sendResult.optInt("pdfSizeBytes", 0))
+            .put("pdf_engine", sendResult.optString("pdfEngine", "native_android_pdf"))
 
         return JSONObject()
             .put("ok", true)
@@ -3268,11 +3327,15 @@ class InfinityMcpDispatcher(
 
         val customers = state.optJSONArray("customers") ?: JSONArray()
         val workRecords = state.optJSONArray("workRecords") ?: JSONArray()
-        val pdfPayload = MainActivity.buildInvoicePdfViaExistingEngineBlocking(inv, customers, workRecords)
+        val pdfPayload = MainActivity.buildInvoicePdfViaExistingEngineBlocking(context, inv, customers, workRecords)
 
         val base64Pdf = pdfPayload.optString("base64Pdf", "")
         val filename = pdfPayload.optString("filename", "Rechnung.pdf")
         val pdfSizeBytes = pdfPayload.optInt("pdfSizeBytes", (base64Pdf.length * 3) / 4)
+        if (!pdfPayload.optBoolean("ok", false) || base64Pdf.isEmpty() || pdfSizeBytes <= 0) {
+            val errDetail = pdfPayload.optString("error", "PDF-Erzeugung lieferte keine gültigen Daten.")
+            throw IllegalStateException("Original-Rechnungs-PDF für ${inv.optString("invoice_number", invRef)} konnte nicht erzeugt werden: $errDetail")
+        }
         val includeBase64 = if (args.has("include_base64")) args.optBoolean("include_base64", true) else true
 
         val sentStatus = optNullableString(inv, "sent_status")
@@ -3300,11 +3363,16 @@ class InfinityMcpDispatcher(
             .put("filename", filename)
             .put("mime_type", "application/pdf")
             .put("pdf_size_bytes", pdfSizeBytes)
+            .put("pdf_engine", pdfPayload.optString("engine", "native_android_pdf"))
             .put("subject", pdfPayload.optString("subject", ""))
             .put("body_text", pdfPayload.optString("bodyText", ""))
             .put("total_amount", inv.optDouble("total_amount", 0.0))
             .put("delivery_status", deliveryStatus)
 
+        val engineNote = pdfPayload.optString("engineNote", "")
+        if (engineNote.isNotEmpty()) {
+            out.put("pdf_engine_note", engineNote)
+        }
         if (includeBase64) {
             out.put("pdf_base64", base64Pdf)
             out.put("data_url", "data:application/pdf;base64,$base64Pdf")
@@ -3526,12 +3594,18 @@ class InfinityMcpDispatcher(
         for (r in targetRecords) outIdsArr.put(r.optString("id"))
 
         if (args.optBoolean("dry_run", false)) {
+            val mailReadiness = MainActivity.checkMailDeliveryReadiness(context)
+            val mailReady = mailReadiness.optBoolean("ready", false)
+            val mailError = mailReadiness.optString("error", "").takeIf { it.isNotEmpty() }
             return JSONObject()
-                .put("ok", true)
+                .put("ok", mailReady)
                 .put("action", "send_work_record")
                 .put("dry_run", true)
                 .put("sent", false)
-                .put("ready_to_send", true)
+                .put("ready_to_send", mailReady)
+                .put("mail_provider_ready", mailReady)
+                .put("mail_provider", mailReadiness.optString("provider", "none"))
+                .put("sender_email", mailReadiness.optString("sender_email", "mihalhafner@gmail.com"))
                 .put("requires_user_confirmed", true)
                 .put("work_record_ids", outIdsArr)
                 .put("count", targetRecords.size)
@@ -3541,6 +3615,12 @@ class InfinityMcpDispatcher(
                 .put("body_text", bodyText)
                 .put("total_hours", totalHours)
                 .put("total_amount", totalAmount)
+                .apply {
+                    if (!mailReady && mailError != null) {
+                        put("blocking_errors", JSONArray().put("Mail-Zugang: $mailError"))
+                        put("error", "Trockenlauf fehlgeschlagen: Mail-Zugang: $mailError")
+                    }
+                }
         }
 
         val userConfirmed = args.optBoolean("user_confirmed", false) || args.optBoolean("confirmed", false)
@@ -3970,7 +4050,7 @@ class InfinityMcpDispatcher(
                     JSONObject()
                         .put("title", "Infinity Daten anlegen, ändern, löschen & versenden")
                         .put("readOnlyHint", false)
-                        .put("destructiveHint", true)
+                        .put("destructiveHint", false)
                         .put("idempotentHint", true)
                         .put("openWorldHint", false)
                 )

@@ -1,20 +1,15 @@
 package at.hafner.gruenraum.bridge
 
-import android.content.ClipData
-import android.content.ClipboardManager
-import android.content.Context
 import android.webkit.JavascriptInterface
 import at.hafner.gruenraum.MainActivity
 import at.hafner.gruenraum.documents.NativeDocumentManager
 import at.hafner.gruenraum.storage.NativeStoreManager
-import at.hafner.gruenraum.sync.NativeMcpSyncManager
 import at.hafner.gruenraum.tunnel.PixelTunnelService
 
 class PixelNativeBridge(
     private val activity: MainActivity,
     private val storeManager: NativeStoreManager,
-    private val documentManager: NativeDocumentManager,
-    private val mcpSyncManager: NativeMcpSyncManager
+    private val documentManager: NativeDocumentManager
 ) {
 
     @JavascriptInterface
@@ -36,11 +31,6 @@ class PixelNativeBridge(
     @JavascriptInterface
     fun getBackupMetaJson(): String {
         return storeManager.getBackupMetaJson()
-    }
-
-    @JavascriptInterface
-    fun getMcpSyncStatusJson(): String {
-        return mcpSyncManager.getStatusJson()
     }
 
     @JavascriptInterface
@@ -90,57 +80,6 @@ class PixelNativeBridge(
         } catch (_: InterruptedException) {
         }
         return result
-    }
-
-    @JavascriptInterface
-    fun getRevealedMcpToken(): String {
-        return mcpSyncManager.getRevealedMcpToken()
-    }
-
-    @JavascriptInterface
-    fun copyToClipboard(label: String, text: String): Boolean {
-        if (text.isBlank()) return false
-        val latch = java.util.concurrent.CountDownLatch(1)
-        var copied = false
-        activity.runOnUiThread {
-            try {
-                val cm = activity.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                if (cm != null) {
-                    val clip = ClipData.newPlainText(label.ifBlank { "MCP-Schlüssel" }, text)
-                    cm.setPrimaryClip(clip)
-                    copied = true
-                }
-            } catch (_: Exception) {
-            } finally {
-                latch.countDown()
-            }
-        }
-        try {
-            latch.await(1, java.util.concurrent.TimeUnit.SECONDS)
-        } catch (_: InterruptedException) {
-        }
-        return copied
-    }
-
-    @JavascriptInterface
-    fun configureMcpSync(baseUrl: String, token: String): String {
-        return mcpSyncManager.configureAndConnect(baseUrl, token)
-    }
-
-    @JavascriptInterface
-    fun pairMcpWithCode(baseUrl: String, code: String): String {
-        return mcpSyncManager.pairWithOneTimeCode(baseUrl, code)
-    }
-
-    @JavascriptInterface
-    fun triggerMcpSyncNow(): Boolean {
-        mcpSyncManager.triggerManualSyncNow()
-        return true
-    }
-
-    @JavascriptInterface
-    fun disconnectMcpSync(): String {
-        return mcpSyncManager.disconnectAndClearToken()
     }
 
     @JavascriptInterface

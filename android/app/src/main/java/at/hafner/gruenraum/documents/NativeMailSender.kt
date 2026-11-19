@@ -309,69 +309,7 @@ class NativeMailSender(private val context: Context) {
         }
     }
 
-    /**
-     * Sendet die E-Mail inkl. PDF über das gekoppelte Infinity Cloud-Backend (/api/internal/send-invoice-mail).
-     */
-    fun sendViaBackendRelay(
-        baseUrl: String,
-        deviceToken: String,
-        recipientEmail: String,
-        subject: String,
-        bodyText: String,
-        filename: String,
-        base64Pdf: String
-    ): MailSendOutcome {
-        val cleanBase = baseUrl.trim().trimEnd('/')
-        if (!cleanBase.startsWith("https://")) {
-            return MailSendOutcome(false, "backend_relay", "Keine gültige Backend-URL.")
-        }
 
-        return try {
-            val payload = JSONObject().apply {
-                put("to", recipientEmail.trim())
-                put("subject", subject)
-                put("bodyText", bodyText)
-                put("filename", sanitizeAttachmentFilename(filename))
-                put("base64Pdf", base64Pdf.substringAfter("base64,", base64Pdf).trim())
-            }.toString().toByteArray(Charsets.UTF_8)
-
-            val url = URL("$cleanBase/api/internal/send-invoice-mail")
-            val conn = (url.openConnection() as HttpURLConnection).apply {
-                requestMethod = "POST"
-                connectTimeout = 15000
-                readTimeout = 20000
-                doOutput = true
-                setRequestProperty("Content-Type", "application/json; charset=UTF-8")
-                setRequestProperty("X-Device-Model", "Google Pixel 10 Pro")
-                if (deviceToken.isNotBlank()) {
-                    setRequestProperty("Authorization", "Bearer ${deviceToken.trim()}")
-                }
-            }
-
-            conn.outputStream.use { out ->
-                out.write(payload)
-                out.flush()
-            }
-
-            val code = conn.responseCode
-            if (code in 200..299) {
-                val respBody = runCatching {
-                    conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
-                }.getOrDefault("")
-                val relayMsgId = runCatching {
-                    JSONObject(respBody).optString("id", "").trim()
-                }.getOrDefault("").ifEmpty { "relay-${System.currentTimeMillis()}" }
-                MailSendOutcome(true, "backend_relay", null, relayMsgId)
-            } else {
-                val errBody = runCatching {
-                    conn.errorStream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
-                }.getOrDefault("")
-                MailSendOutcome(false, "backend_relay", "HTTP $code: $errBody")
-            }
-        } catch (e: Exception) {
-            MailSendOutcome(false, "backend_relay", e.message ?: "Backend nicht erreichbar.")
-        }
-    }
 
     /**
      * Zeigt auf dem Google Pixel 10 Pro eine kurze, klare Erfolgs-Benachrichtigung
