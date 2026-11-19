@@ -110,13 +110,61 @@ class NativeStoreManager(context: Context) {
         }
     }
 
+    /**
+     * Liefert einen von schweren Base64-Medien (Fotos/Dokument-Blobs) befreiten Lese-Snapshot aus dem RAM-Cache.
+     * Vermeidet das wiederholte Parsen mehrerer Megabyte an Base64-Strings bei MCP-Leseabfragen (< 1 ms statt ~150 ms).
+     */
+    fun loadOrInitLightStateObject(): JSONObject {
+        synchronized(STORE_LOCK) {
+            cachedLightStateJson?.let { lightRaw ->
+                try {
+                    return ensureAllCollections(JSONObject(lightRaw))
+                } catch (_: Exception) {
+                    cachedLightStateJson = null
+                }
+            }
+            val fullObj = loadOrInitStateObject()
+            val lightObj = buildLightStateObject(fullObj)
+            cachedLightStateJson = lightObj.toString()
+            return lightObj
+        }
+    }
+
+    private fun buildLightStateObject(fullState: JSONObject): JSONObject {
+        val light = JSONObject()
+        for (col in COLLECTION_KEYS) {
+            val srcArr = fullState.optJSONArray(col) ?: JSONArray()
+            val dstArr = JSONArray()
+            for (i in 0 until srcArr.length()) {
+                val item = srcArr.optJSONObject(i) ?: continue
+                dstArr.put(stripHeavyMediaFromRecordFast(item, includePhotos = false))
+            }
+            light.put(col, dstArr)
+        }
+        fullState.optJSONObject("taxSettings")?.let {
+            light.put("taxSettings", JSONObject(it.toString()))
+        }
+        fullState.optJSONObject("deletedIds")?.let {
+            light.put("deletedIds", JSONObject(it.toString()))
+        }
+        return ensureAllCollections(light)
+    }
+
     private fun loadRawStringLocked(): String? {
+        cachedRawStateJson?.let { cached ->
+            if (cached.length > 2) return cached
+        }
         return try {
-            when {
+            val diskRaw = when {
                 storeFile.exists() && storeFile.length() > 2 -> storeFile.readText(Charsets.UTF_8)
                 storeBackupFile.exists() && storeBackupFile.length() > 2 -> storeBackupFile.readText(Charsets.UTF_8)
                 else -> null
             }
+            if (!diskRaw.isNullOrBlank()) {
+                cachedRawStateJson = diskRaw
+                cachedLightStateJson = null
+            }
+            diskRaw
         } catch (_: Exception) {
             null
         }
@@ -321,10 +369,17 @@ class NativeStoreManager(context: Context) {
     }
 
     private fun loadReceiptsLocked(): JSONObject {
+        cachedReceiptsJson?.let { cached ->
+            return runCatching { JSONObject(cached) }.getOrElse { JSONObject() }
+        }
         return try {
             if (receiptsFile.exists() && receiptsFile.length() > 2) {
-                JSONObject(receiptsFile.readText(Charsets.UTF_8))
+                val raw = receiptsFile.readText(Charsets.UTF_8)
+                val parsed = JSONObject(raw)
+                cachedReceiptsJson = raw
+                parsed
             } else {
+                cachedReceiptsJson = "{}"
                 JSONObject()
             }
         } catch (_: Exception) {
@@ -347,6 +402,7 @@ class NativeStoreManager(context: Context) {
             }
             val tmp = File(appContext.filesDir, "infinity_tunnel_receipts.json.tmp")
             val text = receipts.toString()
+            cachedReceiptsJson = text
             tmp.writeText(text, Charsets.UTF_8)
             if (!tmp.renameTo(receiptsFile)) {
                 tmp.copyTo(receiptsFile, overwrite = true)
@@ -372,7 +428,12 @@ class NativeStoreManager(context: Context) {
             // Mandatory read-back verification
             val readBack = storeFile.readText(Charsets.UTF_8)
             val actualHash = sha256Hex(readBack.toByteArray(Charsets.UTF_8))
-            expectedHash == actualHash
+            val verified = expectedHash == actualHash
+            if (verified) {
+                cachedRawStateJson = readBack
+                cachedLightStateJson = null
+            }
+            verified
         } catch (_: Exception) {
             false
         }
@@ -726,6 +787,95 @@ class NativeStoreManager(context: Context) {
 
         @Volatile
         private var lastWebViewLoadedRevision: Int = 0
+
+        @Volatile
+        private var cachedRawStateJson: String? = null
+
+        @Volatile
+        private var cachedLightStateJson: String? = null
+
+        @Volatile
+        private var cachedReceiptsJson: String? = null
+
+        /**
+         * Zero-Copy-Feldprojektion ohne Serialisierung von Base64-Medienstrings.
+         */
+        fun stripHeavyMediaFromRecordFast(item: JSONObject, includePhotos: Boolean): JSONObject {
+            if (includePhotos) return JSONObject(item.toString())
+            val out = JSONObject()
+            val keys = item.keys()
+            while (keys.hasNext()) {
+                val key = keys.next()
+                when (key) {
+                    "photos" -> {
+                        val arr = item.optJSONArray("photos")
+                        out.put("photo_count", arr?.length() ?: 0)
+                    }
+                    "photo" -> {
+                        val singlePhoto = item.optString("photo", "")
+                        if (singlePhoto.startsWith("data:")) {
+                            out.put("has_photo", true)
+                        } else if (!item.isNull("photo") && singlePhoto.isNotEmpty()) {
+                            out.put("photo", singlePhoto)
+                        }
+                    }
+                    "images" -> {
+                        val imagesArr = item.optJSONArray("images")
+                        if (imagesArr != null) {
+                            out.put("image_count", imagesArr.length())
+                            val strippedImages = JSONArray()
+                            for (i in 0 until imagesArr.length()) {
+                                val imgObj = imagesArr.optJSONObject(i)
+                                if (imgObj == null) {
+                                    strippedImages.put(imagesArr.opt(i))
+                                    continue
+                                }
+                                val imgCopy = JSONObject()
+                                val imgKeys = imgObj.keys()
+                                while (imgKeys.hasNext()) {
+                                    val ik = imgKeys.next()
+                                    if (ik == "url" && imgObj.optString("url", "").startsWith("data:")) {
+                                        imgCopy.put("has_data_url", true)
+                                    } else {
+                                        imgCopy.put(ik, imgObj.opt(ik))
+                                    }
+                                }
+                                strippedImages.put(imgCopy)
+                            }
+                            out.put("images", strippedImages)
+                        }
+                    }
+                    "documents" -> {
+                        val docsArr = item.optJSONArray("documents")
+                        if (docsArr != null) {
+                            out.put("document_count", docsArr.length())
+                            val strippedDocs = JSONArray()
+                            for (i in 0 until docsArr.length()) {
+                                val docObj = docsArr.optJSONObject(i)
+                                if (docObj == null) {
+                                    strippedDocs.put(docsArr.opt(i))
+                                    continue
+                                }
+                                val docCopy = JSONObject()
+                                val docKeys = docObj.keys()
+                                while (docKeys.hasNext()) {
+                                    val dk = docKeys.next()
+                                    if (dk == "url" && docObj.optString("url", "").startsWith("data:")) {
+                                        docCopy.put("has_data_url", true)
+                                    } else {
+                                        docCopy.put(dk, docObj.opt(dk))
+                                    }
+                                }
+                                strippedDocs.put(docCopy)
+                            }
+                            out.put("documents", strippedDocs)
+                        }
+                    }
+                    else -> out.put(key, item.opt(key))
+                }
+            }
+            return out
+        }
 
         private val tunnelMutationListeners =
             CopyOnWriteArraySet<(stateJson: String, revision: Int, summary: String) -> Unit>()

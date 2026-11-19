@@ -31,6 +31,12 @@ class PixelTunnelService : Service() {
     private var callback: ConnectivityManager.NetworkCallback? = null
     @Volatile
     private var activeBinding = ""
+    @Volatile
+    private var lastNotifiedState = ""
+    @Volatile
+    private var lastNotifiedDetail = ""
+    @Volatile
+    private var lastUiBroadcastAt = 0L
     private val control =
         Executors.newSingleThreadExecutor { task ->
             Thread(task, "infinity-tunnel-control").apply { isDaemon = true }
@@ -157,7 +163,9 @@ class PixelTunnelService : Service() {
                 )
                 while (!closing.get() && config.enabled() && config.bindingHash() == binding) {
                     if (config.writeEnabled() != initialWriteState) break
+                    val cycleStartMs = System.currentTimeMillis()
                     val delivered = tunnel.cycle()
+                    val elapsedMs = System.currentTimeMillis() - cycleStartMs
                     updateStatus(
                         "ready",
                         if (delivered > 0) "Anfrageantwort an den Tunnel übergeben."
@@ -165,8 +173,10 @@ class PixelTunnelService : Service() {
                         contact = true,
                         response = delivered > 0
                     )
-                    if (delivered == 0 && !closing.get()) {
-                        Thread.sleep(1500L)
+                    // Keine starre 1,5s-Pause nach einem regulären Long-Poll:
+                    // Nur wenn der Server sofort (< 250ms) leer (204) geantwortet hat, kurz 120ms dämpfen.
+                    if (delivered == 0 && elapsedMs < 250L && !closing.get()) {
+                        Thread.sleep(120L)
                     }
                 }
             } catch (limited: PixelTunnelWire.RateLimit) {
@@ -250,14 +260,23 @@ class PixelTunnelService : Service() {
         if (contact) edit.putLong("last_contact_at", now)
         if (response) edit.putLong("last_response_at", now)
         edit.apply()
-        try {
-            (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).notify(
-                NOTICE,
-                notice(detail)
-            )
-        } catch (_: Exception) {
+
+        val stateOrDetailChanged = state != lastNotifiedState || detail != lastNotifiedDetail
+        if (stateOrDetailChanged) {
+            lastNotifiedState = state
+            lastNotifiedDetail = detail
+            try {
+                (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).notify(
+                    NOTICE,
+                    notice(detail)
+                )
+            } catch (_: Exception) {
+            }
         }
-        notifyStatusListeners(this)
+        if (stateOrDetailChanged || response || (now - lastUiBroadcastAt >= 15000L)) {
+            lastUiBroadcastAt = now
+            notifyStatusListeners(this)
+        }
     }
 
     override fun onDestroy() {

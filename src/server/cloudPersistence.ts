@@ -221,25 +221,29 @@ async function writeToCloudFirestore(storeKey: string, serializedJson: string): 
   };
 
   try {
-    // 1. Write chunks first so readers never observe incomplete chunk references
-    for (let idx = 0; idx < chunks.length; idx++) {
-      const chunkId = `${storeKey}_${idx}`;
-      const chunkRes = await fetch(
-        `${baseUrl}/_mcp_server_chunks/${encodeURIComponent(chunkId)}`,
-        {
-          method: 'PATCH',
-          headers,
-          signal: AbortSignal.timeout(2200),
-          body: JSON.stringify({
-            fields: {
-              storeKey: { stringValue: storeKey },
-              index: { integerValue: String(idx) },
-              payload: { stringValue: chunks[idx] },
-              updatedAt: { stringValue: nowIso }
-            }
-          })
-        }
-      );
+    // 1. Write chunks in parallel so multi-chunk snapshots complete in a single round-trip
+    const chunkResults = await Promise.all(
+      chunks.map(async (chunkPayload, idx) => {
+        const chunkId = `${storeKey}_${idx}`;
+        return fetch(
+          `${baseUrl}/_mcp_server_chunks/${encodeURIComponent(chunkId)}`,
+          {
+            method: 'PATCH',
+            headers,
+            signal: AbortSignal.timeout(2200),
+            body: JSON.stringify({
+              fields: {
+                storeKey: { stringValue: storeKey },
+                index: { integerValue: String(idx) },
+                payload: { stringValue: chunkPayload },
+                updatedAt: { stringValue: nowIso }
+              }
+            })
+          }
+        );
+      })
+    );
+    for (const chunkRes of chunkResults) {
       if (chunkRes.status === 401 || chunkRes.status === 403) {
         firestoreCloudActive = false;
         firestoreRetryAfterMs = Date.now() + 5 * 60_000;
