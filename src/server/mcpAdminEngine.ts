@@ -39,8 +39,10 @@ import {
 import {
   addDaysIso,
   buildDefaultInvoiceEmailPayload,
+  buildDefaultWorkRecordEmailPayload,
   buildLineItemsFromRecords,
   buildPaymentTermsClause,
+  bytesToBase64Mime,
   computeNextInvoiceNumber,
   computeServicePeriod,
   formatEuro,
@@ -49,7 +51,8 @@ import {
   getTodayLocalIso,
   resolveCustomerNumber,
   resolveInvoiceDisplayData,
-  sendInvoicePdfViaGmail
+  sendInvoicePdfViaGmail,
+  sendPlainEmailViaGmail
 } from '../utils/invoicePdf.ts';
 import { calculateGuvSummary } from '../utils/guvCalculator.ts';
 import {
@@ -645,7 +648,9 @@ export function queryCollection(params: {
   item_type?: string;
   parent_equipment_id?: string;
   is_lcr?: boolean;
+  billable?: boolean;
   unbilled_only?: boolean;
+  include_pdf?: boolean;
   date_from?: string;
   date_to?: string;
   search?: string;
@@ -755,8 +760,16 @@ export function queryCollection(params: {
   if (typeof params.is_lcr === 'boolean' && params.collection === 'workRecords') {
     items = items.filter((item) => Boolean(item.is_lcr) === params.is_lcr);
   }
+  if (typeof params.billable === 'boolean' && params.collection === 'workRecords') {
+    items = items.filter((item) => (item.billable !== false) === params.billable);
+  }
   if (params.unbilled_only && params.collection === 'workRecords') {
-    items = items.filter((item) => !item.settlement_id);
+    items = items.filter((item) => {
+      if (item.settlement_id) return false;
+      if (typeof params.billable !== 'boolean' && item.billable === false) return false;
+      if (typeof params.is_lcr !== 'boolean' && Boolean(item.is_lcr)) return false;
+      return true;
+    });
   }
   if (params.date_from || params.date_to) {
     items = items.filter((item) => {
@@ -793,6 +806,8 @@ export function queryCollection(params: {
     let billedCount = 0;
     let billedHours = 0;
     let billedAmountEur = 0;
+    let nonBillableCount = 0;
+    let nonBillableHours = 0;
 
     for (const raw of items) {
       const w = raw as unknown as WorkRecord;
@@ -806,10 +821,13 @@ export function queryCollection(params: {
         lcrCount++;
         lcrHours += hrs;
         lcrAmountEur += amt;
-      } else if (w.billable) {
+      } else if (w.billable !== false) {
         openBillableCount++;
         openBillableHours += hrs;
         openBillableAmountEur += amt;
+      } else {
+        nonBillableCount++;
+        nonBillableHours += hrs;
       }
     }
     workSummary = {
@@ -821,7 +839,9 @@ export function queryCollection(params: {
       lcrAmountEur: round2(lcrAmountEur),
       billedCount,
       billedHours: round2(billedHours),
-      billedAmountEur: round2(billedAmountEur)
+      billedAmountEur: round2(billedAmountEur),
+      nonBillableCount,
+      nonBillableHours: round2(nonBillableHours)
     };
   }
 
@@ -846,15 +866,27 @@ export function queryCollection(params: {
     }));
   }
 
-  // Enrich single invoice read with exact App PDF display resolution
+  // Enrich single invoice read with exact App PDF display resolution & delivery status
   if (params.collection === 'invoices' && params.id && items.length === 1) {
     const inv = items[0] as unknown as Invoice;
+    const customer = data.customers.find((c) => c.id === inv.customer_id);
+    const resolvedDisplay = resolveInvoiceDisplayData(inv, data.customers, data.workRecords);
+    const emailDefaults = buildDefaultInvoiceEmailPayload(inv, resolvedDisplay, customer);
     return {
       revision,
       collection: 'invoices',
       totalMatched: 1,
       items,
-      resolvedDisplay: resolveInvoiceDisplayData(inv, data.customers, data.workRecords)
+      resolvedDisplay,
+      deliveryStatus: {
+        sent: inv.sent_status === 'sent' || Boolean(inv.sent_at),
+        sent_status: inv.sent_status || (inv.sent_at ? 'sent' : 'unsent'),
+        sent_at: inv.sent_at || null,
+        sent_to: inv.sent_to || emailDefaults.recipientEmail || null,
+        sent_via: inv.sent_via || null,
+        sent_message_id: inv.sent_message_id || null,
+        filename: emailDefaults.filename
+      }
     };
   }
 
@@ -3347,11 +3379,336 @@ export async function sendInvoiceAdminAction(
       sent_message_id: messageId,
       sent_via: sentViaLabel,
       filename: pdfArtifact.filename,
+      delivery_confirmation: {
+        confirmed: true,
+        delivered_to_provider: 'gmail_api',
+        sent_status: 'sent',
+        sent_at: sentDateIso,
+        sent_to: recipientEmail,
+        sent_via: sentViaLabel,
+        sent_message_id: messageId,
+        filename: pdfArtifact.filename
+      },
       invoice: next.invoices[targetIdx]
     };
   } finally {
     inFlightInvoiceSends.delete(inv.id);
   }
+}
+
+export async function getInvoicePdfAdminAction(params: {
+  invoice_id: string;
+  include_base64?: boolean;
+}) {
+  const rawRef = String(params.invoice_id || '').trim();
+  if (!rawRef) {
+    throw new Error(
+      'Parameter "invoice_id" (ID oder Rechnungsnummer, z.B. RE-75/2026) ist erforderlich.'
+    );
+  }
+  const store = getStore();
+  const inv = store.data.invoices.find(
+    (i) =>
+      i.id === rawRef ||
+      i.invoice_number === rawRef ||
+      i.id.toLowerCase() === rawRef.toLowerCase() ||
+      i.invoice_number.toLowerCase() === rawRef.toLowerCase()
+  );
+  if (!inv) {
+    throw new Error(`Rechnung "${rawRef}" nicht gefunden.`);
+  }
+
+  const customer = store.data.customers.find((c) => c.id === inv.customer_id);
+  const resolvedData = resolveInvoiceDisplayData(inv, store.data.customers, store.data.workRecords);
+  const emailDefaults = buildDefaultInvoiceEmailPayload(inv, resolvedData, customer);
+  const pdfArtifact = await generateInvoicePdfAsync(resolvedData);
+  const buf = await pdfArtifact.blob.arrayBuffer();
+  const base64Pdf =
+    params.include_base64 === false ? undefined : bytesToBase64Mime(new Uint8Array(buf));
+
+  return {
+    ok: true,
+    action: 'get_invoice_pdf',
+    revision: store.revision,
+    invoice_id: inv.id,
+    invoice_number: inv.invoice_number,
+    filename: pdfArtifact.filename,
+    mime_type: 'application/pdf',
+    pdf_size_bytes: buf.byteLength,
+    ...(base64Pdf
+      ? {
+          pdf_base64: base64Pdf,
+          data_url: `data:application/pdf;base64,${base64Pdf}`
+        }
+      : {}),
+    recipient_name: resolvedData.recipientName,
+    recipient_email: emailDefaults.recipientEmail,
+    recipient_phone: emailDefaults.recipientPhone,
+    subject: emailDefaults.subject,
+    body_text: emailDefaults.bodyText,
+    total_amount: resolvedData.totalAmount,
+    issue_date: resolvedData.issueDateIso,
+    due_date: resolvedData.dueDateIso,
+    delivery_status: {
+      sent: inv.sent_status === 'sent' || Boolean(inv.sent_at),
+      sent_status: inv.sent_status || (inv.sent_at ? 'sent' : 'unsent'),
+      sent_at: inv.sent_at || null,
+      sent_to: inv.sent_to || emailDefaults.recipientEmail || null,
+      sent_via: inv.sent_via || null,
+      sent_message_id: inv.sent_message_id || null
+    }
+  };
+}
+
+export function getDeliveryStatusAdminAction(params: {
+  invoice_id?: string;
+  work_record_id?: string;
+  id?: string;
+}) {
+  const store = getStore();
+  const invRef = String(params.invoice_id || params.id || '').trim();
+  const wrRef = String(params.work_record_id || (!params.invoice_id ? params.id || '' : '')).trim();
+
+  if (invRef) {
+    const inv = store.data.invoices.find(
+      (i) =>
+        i.id === invRef ||
+        i.invoice_number === invRef ||
+        i.id.toLowerCase() === invRef.toLowerCase() ||
+        i.invoice_number.toLowerCase() === invRef.toLowerCase()
+    );
+    if (inv) {
+      const customer = store.data.customers.find((c) => c.id === inv.customer_id);
+      const resolved = resolveInvoiceDisplayData(inv, store.data.customers, store.data.workRecords);
+      const emailDefaults = buildDefaultInvoiceEmailPayload(inv, resolved, customer);
+      const isSent = inv.sent_status === 'sent' || Boolean(inv.sent_at);
+      return {
+        ok: true,
+        action: 'delivery_status',
+        record_type: 'invoice',
+        revision: store.revision,
+        id: inv.id,
+        invoice_id: inv.id,
+        invoice_number: inv.invoice_number,
+        recipient_name: resolved.recipientName,
+        recipient_email: inv.sent_to || emailDefaults.recipientEmail || null,
+        sent: isSent,
+        delivered_to_provider: isSent,
+        sent_status: inv.sent_status || (isSent ? 'sent' : 'unsent'),
+        sent_at: inv.sent_at || null,
+        sent_to: inv.sent_to || null,
+        sent_via: inv.sent_via || null,
+        sent_message_id: inv.sent_message_id || null,
+        filename: emailDefaults.filename
+      };
+    }
+  }
+
+  if (wrRef) {
+    const wr = store.data.workRecords.find(
+      (w) => w.id === wrRef || w.id.toLowerCase() === wrRef.toLowerCase()
+    );
+    if (wr) {
+      const customer = store.data.customers.find((c) => c.id === wr.customer_id);
+      const isSent = wr.sent_status === 'sent' || Boolean(wr.sent_at);
+      return {
+        ok: true,
+        action: 'delivery_status',
+        record_type: 'workRecord',
+        revision: store.revision,
+        id: wr.id,
+        work_record_id: wr.id,
+        title: wr.title,
+        work_date: wr.work_date,
+        recipient_name: customer?.name || 'Kunde',
+        recipient_email: wr.sent_to || customer?.email || null,
+        sent: isSent,
+        delivered_to_provider: isSent,
+        sent_status: wr.sent_status || (isSent ? 'sent' : 'unsent'),
+        sent_at: wr.sent_at || null,
+        sent_to: wr.sent_to || null,
+        sent_via: wr.sent_via || null,
+        sent_message_id: wr.sent_message_id || null
+      };
+    }
+  }
+
+  throw new Error(
+    `Kein Beleg oder keine Arbeitsaufzeichnung für "${invRef || wrRef || 'leer'}" gefunden.`
+  );
+}
+
+export async function sendWorkRecordAdminAction(
+  params: {
+    work_record_id?: string;
+    work_record_ids?: string[];
+    customer_id?: string;
+    user_confirmed?: boolean;
+    confirmed?: boolean;
+    dry_run?: boolean;
+    recipient_email?: string;
+  },
+  actor: PersistedAppStore['lastActor'] = 'mcp'
+) {
+  const store = getStore();
+  const requestedIds: string[] = [];
+  if (typeof params.work_record_id === 'string' && params.work_record_id.trim()) {
+    requestedIds.push(params.work_record_id.trim());
+  }
+  if (Array.isArray(params.work_record_ids)) {
+    for (const id of params.work_record_ids) {
+      const clean = String(id || '').trim();
+      if (clean && !requestedIds.includes(clean)) requestedIds.push(clean);
+    }
+  }
+
+  let targetRecords: WorkRecord[] = [];
+  if (requestedIds.length > 0) {
+    for (const wid of requestedIds) {
+      const found = store.data.workRecords.find(
+        (w) => w.id === wid || w.id.toLowerCase() === wid.toLowerCase()
+      );
+      if (!found) {
+        throw new Error(`Arbeitsaufzeichnung "${wid}" nicht gefunden.`);
+      }
+      targetRecords.push(found);
+    }
+  } else if (params.customer_id && params.customer_id.trim()) {
+    const cust = resolveCustomerByIdOrName(params.customer_id, store.data.customers);
+    if (!cust) {
+      throw new Error(`Kunde "${params.customer_id}" nicht gefunden.`);
+    }
+    targetRecords = store.data.workRecords.filter(
+      (w) =>
+        !w.settlement_id &&
+        !w.is_lcr &&
+        w.billable !== false &&
+        (w.customer_id === cust.id ||
+          getEffectiveBillingCustomerId(w, store.data.customers) === cust.id)
+    );
+  }
+
+  if (targetRecords.length === 0) {
+    throw new Error(
+      'Keine Arbeitsaufzeichnungen zum Versenden gefunden. Bitte "work_record_id", "work_record_ids" oder "customer_id" übergeben.'
+    );
+  }
+
+  const primaryCustId = targetRecords[0].customer_id;
+  const customer =
+    (params.customer_id
+      ? resolveCustomerByIdOrName(params.customer_id, store.data.customers)
+      : undefined) ||
+    store.data.customers.find((c) => c.id === primaryCustId);
+
+  if (!customer) {
+    throw new Error(`Zugehöriger Kunde "${primaryCustId}" nicht gefunden.`);
+  }
+
+  const payload = buildDefaultWorkRecordEmailPayload(
+    targetRecords,
+    customer,
+    store.data.properties
+  );
+  const recipientEmail = (params.recipient_email || payload.recipientEmail || '').trim();
+  if (!recipientEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipientEmail)) {
+    throw new Error(
+      `Versand fehlgeschlagen: Für Kunde ${customer.name} ist keine gültige Empfänger-E-Mail-Adresse in Infinity hinterlegt.`
+    );
+  }
+
+  if (params.dry_run === true) {
+    return {
+      ok: true,
+      action: 'send_work_record',
+      dry_run: true,
+      sent: false,
+      ready_to_send: true,
+      requires_user_confirmed: true,
+      revision: store.revision,
+      work_record_ids: targetRecords.map((r) => r.id),
+      customer_id: customer.id,
+      recipient_name: payload.recipientName,
+      recipient_email: recipientEmail,
+      subject: payload.subject,
+      body_text: payload.bodyText,
+      total_hours: payload.totalHours,
+      total_amount_eur: payload.totalAmountEur
+    };
+  }
+
+  if (params.user_confirmed !== true && params.confirmed !== true) {
+    throw new Error(
+      `Freigabe erforderlich: Versand der Arbeitsaufzeichnung(en) (${targetRecords.length} Eintrag/Einträge, ${payload.totalHours} Std, ${formatEuro(payload.totalAmountEur)}) an ${recipientEmail} (${payload.recipientName}) erfordert ausdrückliche Nutzerfreigabe. Bitte mit "user_confirmed": true erneut aufrufen.`
+    );
+  }
+
+  const activeToken = getServerGmailAccessToken();
+  if (!activeToken) {
+    throw new Error(
+      `Gmail-Versand fehlgeschlagen: Kein aktives Gmail-Zugriffstoken für ${recipientEmail} vorhanden. Bitte in Infinity einmalig beim Versand mit Google (mihalhafner@gmail.com) anmelden.`
+    );
+  }
+
+  const sendOutcome = await sendPlainEmailViaGmail({
+    accessToken: activeToken,
+    to: recipientEmail,
+    subject: payload.subject,
+    bodyText: payload.bodyText,
+    onUnauthorized: () => setServerGmailAccessToken(null)
+  });
+
+  const sentDateIso = getTodayLocalIso();
+  const sentViaLabel = `Gmail (${recipientEmail})`;
+  const messageId = sendOutcome.id;
+  const sentIdSet = new Set(targetRecords.map((r) => r.id));
+
+  const latestStore = getStore();
+  const next: AppDataSnapshot = structuredClone(latestStore.data);
+  next.workRecords = next.workRecords.map((w) =>
+    sentIdSet.has(w.id)
+      ? {
+          ...w,
+          sent_at: sentDateIso,
+          sent_to: recipientEmail,
+          sent_status: 'sent',
+          sent_message_id: messageId,
+          sent_via: sentViaLabel,
+          updated_at: new Date().toISOString()
+        }
+      : w
+  );
+
+  const saved = saveStore(
+    next,
+    actor,
+    `Arbeitsaufzeichnung(en) (${targetRecords.length}) per Gmail an ${recipientEmail} versendet (${messageId})`
+  );
+
+  return {
+    ok: true,
+    action: 'send_work_record',
+    revision: saved.revision,
+    work_record_ids: Array.from(sentIdSet),
+    customer_id: customer.id,
+    sent_at: sentDateIso,
+    sent_to: recipientEmail,
+    sent_status: 'sent' as const,
+    sent_message_id: messageId,
+    sent_via: sentViaLabel,
+    subject: payload.subject,
+    total_hours: payload.totalHours,
+    total_amount_eur: payload.totalAmountEur,
+    delivery_confirmation: {
+      confirmed: true,
+      delivered_to_provider: 'gmail_api',
+      sent_status: 'sent',
+      sent_at: sentDateIso,
+      sent_to: recipientEmail,
+      sent_via: sentViaLabel,
+      sent_message_id: messageId
+    }
+  };
 }
 
 export function recordMaintenanceAdminAction(
@@ -3587,9 +3944,9 @@ export const MCP_TOOLS = [
   {
     name: 'pixel_abfrage',
     description:
-      'Gezielter Lese- & Suchzugriff in einem einzigen Aufruf (ersetzt mehrfache Einzelabfragen): Liest wahlweise eine oder mehrere Tabellen gleichzeitig (customers, properties, appointments, workRecords, invoices, inquiries, offers, orders, equipments, materials, expenses, taxSettings), erkennt Vor- und Nachnamen unabhängig von der Reihenfolge, liefert bei workRecords direkt die offenen Stunden/Beträge (workSummary) und gibt gezielt nur die angeforderten Daten zurück.',
+      'Gezielter Lese- & Suchzugriff in einem einzigen Aufruf (ersetzt mehrfache Einzelabfragen): Liest wahlweise eine oder mehrere Tabellen gleichzeitig (customers, properties, appointments, workRecords, invoices, inquiries, offers, orders, equipments, materials, expenses, taxSettings), erkennt Vor- und Nachnamen unabhängig von der Reihenfolge, liefert bei workRecords mit unbilled_only=true exakt nur offene abrechenbare Nicht-L.C.R.-Arbeiten (billable=true, is_lcr=false, settlement_id=null), liefert bei invoices mit include_pdf=true das Original-Rechnungs-PDF (Base64) sowie die Versand-/Zustellbestätigung (deliveryStatus).',
     annotations: {
-      title: 'Gezielte Abfrage (Übersicht, Tabellen & GuV in 1 Aufruf)',
+      title: 'Gezielte Abfrage (Übersicht, Tabellen, Original-PDF & Zustellstatus in 1 Aufruf)',
       readOnlyHint: true,
       destructiveHint: false,
       idempotentHint: true,
@@ -3613,7 +3970,9 @@ export const MCP_TOOLS = [
           enum: [...COLLECTION_NAMES, 'taxSettings', 'all'],
           description: 'Einzelne abzufragende Tabelle oder "all" für globale Suche.'
         },
-        id: { type: 'string', description: 'Optionale exakte Datensatz-ID.' },
+        id: { type: 'string', description: 'Optionale exakte Datensatz-ID oder Rechnungsnummer (z.B. RE-75/2026).' },
+        invoice_id: { type: 'string', description: 'Optionale Rechnungs-ID oder Rechnungsnummer für Original-PDF oder Zustellstatus.' },
+        work_record_id: { type: 'string', description: 'Optionale Arbeitsaufzeichnungs-ID für Zustellstatus.' },
         customer_id: {
           type: 'string',
           description:
@@ -3627,9 +3986,21 @@ export const MCP_TOOLS = [
           type: 'boolean',
           description: 'Bei workRecords: Filtert gezielt auf L.C.R.-Einträge (true) oder Nicht-L.C.R. (false).'
         },
+        billable: {
+          type: 'boolean',
+          description: 'Bei workRecords: Filtert gezielt auf abrechenbare (true) oder nicht abrechenbare (false) Einträge.'
+        },
         unbilled_only: {
           type: 'boolean',
-          description: 'Bei workRecords: Wenn true, nur noch nicht abgerechnete Arbeiten.'
+          description: 'Bei workRecords: Wenn true, werden ausschließlich offene, abrechenbare Nicht-L.C.R.-Arbeiten zurückgegeben (settlement_id=null, billable=true, is_lcr=false).'
+        },
+        include_pdf: {
+          type: 'boolean',
+          description: 'Wenn true (bei collection="invoices" oder invoice_id), wird das Original-Rechnungs-PDF (pdf_base64, filename, delivery_status) mitgeliefert.'
+        },
+        include_delivery_status: {
+          type: 'boolean',
+          description: 'Wenn true, wird die detaillierte Versand- und Zustellbestätigung (sent_status, sent_at, sent_to, sent_message_id) zurückgegeben.'
         },
         date_from: { type: 'string', description: 'Optionales Startdatum YYYY-MM-DD.' },
         date_to: { type: 'string', description: 'Optionales Enddatum YYYY-MM-DD.' },
@@ -3661,9 +4032,9 @@ export const MCP_TOOLS = [
   {
     name: 'pixel_aktion',
     description:
-      'Gemeinsame geprüfte App-Logik zum Anlegen, Ändern und Löschen in einem einzigen Aufruf: Verarbeitet Einzel- oder Stapeländerungen (Kunden, Objekte, Termine inkl. Konfliktprüfung, Arbeitsaufzeichnungen inkl. Betragsberechnung & L.C.R.-Sperre, Anfragen, Angebote, Aufträge, Geräte inkl. Wartung, Material, Ausgaben, Steuereinstellungen) atomar ohne mehrfache Werkzeugaufrufe.',
+      'Gemeinsame geprüfte App-Logik zum Anlegen, Ändern, Löschen und Versenden in einem einzigen Aufruf: Verarbeitet Einzel- oder Stapeländerungen (Kunden, Objekte, Termine inkl. Konfliktprüfung, Arbeitsaufzeichnungen inkl. Betragsberechnung, L.C.R.-Sperre & Direktversand per op="send_work_record", Rechnungen inkl. Direktversand per op="send_invoice", Original-PDF-Abruf per op="get_invoice_pdf", Zustellbestätigung per op="delivery_status", Anfragen, Angebote, Aufträge, Geräte inkl. Wartung, Material, Ausgaben, Steuereinstellungen) atomar.',
     annotations: {
-      title: 'Daten anlegen, ändern & löschen (Einzel oder Stapel in 1 Aufruf)',
+      title: 'Daten anlegen, ändern, löschen & Belege/Arbeiten versenden',
       readOnlyHint: false,
       destructiveHint: true,
       idempotentHint: true,
@@ -3675,24 +4046,44 @@ export const MCP_TOOLS = [
       properties: {
         op: {
           type: 'string',
-          enum: ['upsert', 'update', 'delete', 'toggle_lcr', 'maintenance', 'equipment_media', 'tax_settings', 'send_invoice'],
+          enum: [
+            'upsert',
+            'update',
+            'delete',
+            'toggle_lcr',
+            'maintenance',
+            'equipment_media',
+            'tax_settings',
+            'send_invoice',
+            'send_work_record',
+            'get_invoice_pdf',
+            'delivery_status'
+          ],
           description: 'Art der Einzelaktion (falls nicht "operations" als Liste übergeben wird).'
         },
         invoice_id: {
           type: 'string',
-          description: 'Optional bei op="send_invoice": ID oder Rechnungsnummer (z.B. RE-101/2026).'
+          description: 'Optional bei op="send_invoice", op="get_invoice_pdf" oder op="delivery_status": ID oder Rechnungsnummer (z.B. RE-101/2026).'
+        },
+        work_record_id: {
+          type: 'string',
+          description: 'Optional bei op="send_work_record" oder op="delivery_status": ID der Arbeitsaufzeichnung.'
+        },
+        customer_id: {
+          type: 'string',
+          description: 'Optional bei op="send_work_record": Kunden-ID oder Kundenname.'
         },
         user_confirmed: {
           type: 'boolean',
-          description: 'Bei op="send_invoice" zwingend erforderlich (true): Bestätigt, dass der Nutzer den Rechnungsversand ausdrücklich freigegeben hat.'
+          description: 'Bei op="send_invoice" oder op="send_work_record" zwingend erforderlich (true): Bestätigt, dass der Nutzer den Versand ausdrücklich freigegeben hat.'
         },
         dry_run: {
           type: 'boolean',
-          description: 'Optional bei op="send_invoice": Wenn true, Trockenlauf ohne echten E-Mail-Versand.'
+          description: 'Optional bei op="send_invoice" oder op="send_work_record": Wenn true, Trockenlauf ohne echten E-Mail-Versand.'
         },
         recipient_email: {
           type: 'string',
-          description: 'Optional bei op="send_invoice": Empfänger-E-Mail-Adresse (Standard: Kunden-E-Mail aus Infinity).'
+          description: 'Optional bei op="send_invoice" oder op="send_work_record": Empfänger-E-Mail-Adresse (Standard: Kunden-E-Mail aus Infinity).'
         },
         collection: {
           type: 'string',
@@ -3713,7 +4104,7 @@ export const MCP_TOOLS = [
         work_record_ids: {
           type: 'array',
           items: { type: 'string' },
-          description: 'Arbeits-IDs bei op="toggle_lcr".'
+          description: 'Arbeits-IDs bei op="toggle_lcr" oder op="send_work_record".'
         },
         is_lcr: {
           type: 'boolean',
@@ -3767,9 +4158,9 @@ export const MCP_TOOLS = [
   {
     name: 'pixel_abrechnung',
     description:
-      'Gemeinsame geprüfte Abrechnungs-Logik in einem einzigen Aufruf: Erstellt Rechnungen (Format RE-75/2026, § 6 Abs. 1 Z 27 UStG Kleinunternehmerregelung, inkl. Sub-Abrechnung & Sperre abgerechneter Arbeiten), versendet bestehende Original-Rechnungs-PDFs nach ausdrücklicher Nutzerfreigabe (action="send_invoice", user_confirmed=true), bucht Zahlungen/Teilzahlungen/Korrekturen oder erstellt buchhalterisch korrekte Stornobelege (RE-S01/2026).',
+      'Gemeinsame geprüfte Abrechnungs- & Versand-Logik in einem einzigen Aufruf: Erstellt Rechnungen (Format RE-75/2026, § 6 Abs. 1 Z 27 UStG Kleinunternehmerregelung, inkl. Sub-Abrechnung & Sperre abgerechneter Arbeiten), ruft das Original-Rechnungs-PDF als Base64 ab (action="get_invoice_pdf"), versendet Original-Rechnungs-PDFs direkt an den Versanddienst (action="send_invoice", user_confirmed=true), versendet Arbeitsaufzeichnungen direkt per E-Mail (action="send_work_record", user_confirmed=true), ruft Versand- und Zustellbestätigungen ab (action="delivery_status"), bucht Zahlungen/Teilzahlungen/Korrekturen oder erstellt buchhalterisch korrekte Stornobelege (RE-S01/2026).',
     annotations: {
-      title: 'Rechnung erstellen, versenden, Zahlung buchen oder stornieren',
+      title: 'Rechnung erstellen, Original-PDF abrufen, versenden, Zustellstatus prüfen oder Zahlung/Storno buchen',
       readOnlyHint: false,
       destructiveHint: false,
       idempotentHint: false,
@@ -3785,6 +4176,9 @@ export const MCP_TOOLS = [
           enum: [
             'create_invoice',
             'send_invoice',
+            'send_work_record',
+            'get_invoice_pdf',
+            'delivery_status',
             'pay',
             'update_payment',
             'reverse_payment',
@@ -3793,17 +4187,21 @@ export const MCP_TOOLS = [
             'storno'
           ],
           description:
-            'Aktion: "create_invoice" (neue Rechnung), "send_invoice" (bestehende Original-Rechnung per E-Mail versenden, erfordert user_confirmed=true), "pay" / "update_payment" / "reverse_payment" / "delete_payment" / "refund" (Zahlung) oder "storno" (Stornobeleg).'
+            'Aktion: "create_invoice" (neue Rechnung), "get_invoice_pdf" (Original-Rechnungs-PDF als Base64 + Metadaten abrufen), "send_invoice" (bestehende Original-Rechnung per E-Mail versenden, erfordert user_confirmed=true), "send_work_record" (Arbeitsaufzeichnungen direkt per E-Mail versenden, erfordert user_confirmed=true), "delivery_status" (Versand- und Zustellbestätigung abrufen), "pay" / "update_payment" / "reverse_payment" / "delete_payment" / "refund" (Zahlung) oder "storno" (Stornobeleg).'
         },
         customer_id: {
           type: 'string',
-          description: 'Bei create_invoice: ID des Rechnungsempfängers.'
+          description: 'Bei create_invoice oder send_work_record: ID oder Name des Kunden/Rechnungsempfängers.'
+        },
+        work_record_id: {
+          type: 'string',
+          description: 'Bei send_work_record oder delivery_status: Einzelne Arbeits-ID.'
         },
         work_record_ids: {
           type: 'array',
           items: { type: 'string' },
           description:
-            'Bei create_invoice: Optionale Arbeits-IDs (wenn leer, werden alle offenen abrechenbaren Nicht-L.C.R.-Arbeiten des Kunden abgerechnet).'
+            'Bei create_invoice oder send_work_record: Optionale Arbeits-IDs (wenn leer, werden alle offenen abrechenbaren Nicht-L.C.R.-Arbeiten des Kunden verwendet).'
         },
         extra_items: {
           type: 'array',
@@ -3830,22 +4228,26 @@ export const MCP_TOOLS = [
         },
         invoice_id: {
           type: 'string',
-          description: 'Bei send_invoice, Zahlung oder Storno: ID oder Rechnungsnummer (z.B. RE-75/2026).'
+          description: 'Bei send_invoice, get_invoice_pdf, delivery_status, Zahlung oder Storno: ID oder Rechnungsnummer (z.B. RE-75/2026).'
+        },
+        include_base64: {
+          type: 'boolean',
+          description: 'Optional bei action="get_invoice_pdf": Wenn true (Standard), wird das Original-PDF als Base64 mitgeliefert.'
         },
         user_confirmed: {
           type: 'boolean',
           description:
-            'Bei action="send_invoice" zwingend erforderlich (true): Bestätigt, dass der Nutzer den Rechnungsversand ausdrücklich freigegeben hat.'
+            'Bei action="send_invoice" oder action="send_work_record" zwingend erforderlich (true): Bestätigt, dass der Nutzer den Versand ausdrücklich freigegeben hat.'
         },
         dry_run: {
           type: 'boolean',
           description:
-            'Optional bei action="send_invoice": Wenn true, werden Rechnung, Empfängeradresse und Original-PDF ohne echten E-Mail-Versand geprüft.'
+            'Optional bei action="send_invoice" oder action="send_work_record": Wenn true, werden Beleg, Empfängeradresse und Original-PDF ohne echten E-Mail-Versand geprüft.'
         },
         recipient_email: {
           type: 'string',
           description:
-            'Optional bei action="send_invoice": Falls leer, wird automatisch die in Infinity hinterlegte Kunden-E-Mail-Adresse verwendet.'
+            'Optional bei action="send_invoice" oder action="send_work_record": Falls leer, wird automatisch die in Infinity hinterlegte Kunden-E-Mail-Adresse verwendet.'
         },
         amount: { type: 'number', description: 'Zahlungsbetrag in EUR.' },
         payment_id: { type: 'string', description: 'ID des Zahlungseintrags bei Korrektur/Löschung.' },
@@ -3858,9 +4260,9 @@ export const MCP_TOOLS = [
   {
     name: 'admin_send_invoice',
     description:
-      'Versendet eine bestehende Original-Rechnung (PDF) aus Infinity per E-Mail an die hinterlegte Kundenadresse. Erfordert ausdrückliche Nutzerfreigabe (user_confirmed=true) oder dry_run=true für einen Trockenlauf ohne echten Versand.',
+      'Versendet eine bestehende Original-Rechnung (PDF) aus Infinity direkt über den Gmail-Versanddienst an die hinterlegte Kundenadresse und liefert die Versand- und Zustellbestätigung (sent_message_id, sent_at, sent_to). Erfordert ausdrückliche Nutzerfreigabe (user_confirmed=true) oder dry_run=true für einen Trockenlauf.',
     annotations: {
-      title: 'Bestehende Rechnung per E-Mail versenden',
+      title: 'Bestehende Rechnung (Original-PDF) per E-Mail versenden',
       readOnlyHint: false,
       destructiveHint: false,
       idempotentHint: true,
@@ -3892,10 +4294,139 @@ export const MCP_TOOLS = [
         }
       }
     }
+  },
+  {
+    name: 'admin_send_work_record',
+    description:
+      'Versendet eine oder mehrere Arbeitsaufzeichnungen direkt per E-Mail über den Gmail-Versanddienst an die Kundenadresse und liefert eine Versand- und Zustellbestätigung (sent_message_id, sent_at, sent_to). Erfordert user_confirmed=true oder dry_run=true.',
+    annotations: {
+      title: 'Arbeitsaufzeichnung(en) direkt per E-Mail versenden',
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false
+    },
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        work_record_id: {
+          type: 'string',
+          description: 'Einzelne Arbeitsaufzeichnungs-ID.'
+        },
+        work_record_ids: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Mehrere Arbeitsaufzeichnungs-IDs.'
+        },
+        customer_id: {
+          type: 'string',
+          description: 'Kunden-ID oder Kundenname (versendet alle offenen abrechenbaren Arbeiten des Kunden, falls keine work_record_ids angegeben sind).'
+        },
+        user_confirmed: {
+          type: 'boolean',
+          description: 'Zwingend erforderlich für echten Versand (true): Bestätigt, dass der Nutzer den Versand freigegeben hat.'
+        },
+        dry_run: {
+          type: 'boolean',
+          description: 'Optional: Wenn true, Trockenlauf mit Vorschau ohne echten Versand.'
+        },
+        recipient_email: {
+          type: 'string',
+          description: 'Optionale Empfänger-E-Mail-Adresse (Standard: Kunden-E-Mail aus Infinity).'
+        }
+      }
+    }
+  },
+  {
+    name: 'admin_get_invoice_pdf',
+    description:
+      'Ruft das Original-Rechnungs-PDF einer bestehenden Rechnung (inkl. Base64-PDF-Daten, Dateiname, Betreff, E-Mail-Begleittext, Empfängeradresse und Zustellstatus) direkt aus Infinity ab.',
+    annotations: {
+      title: 'Original-Rechnungs-PDF & Versanddaten abrufen',
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false
+    },
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['invoice_id'],
+      properties: {
+        invoice_id: {
+          type: 'string',
+          description: 'Rechnungs-ID oder Rechnungsnummer (z.B. RE-101/2026).'
+        },
+        include_base64: {
+          type: 'boolean',
+          description: 'Wenn true (Standard), wird das vollständige Original-PDF als Base64 (pdf_base64) zurückgegeben.'
+        }
+      }
+    }
+  },
+  {
+    name: 'admin_get_delivery_status',
+    description:
+      'Ruft die Versand- und Zustellbestätigung (sent_status, sent_at, sent_to, sent_via, sent_message_id) einer Rechnung oder Arbeitsaufzeichnung ab.',
+    annotations: {
+      title: 'Versand- & Zustellbestätigung abrufen',
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false
+    },
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        invoice_id: {
+          type: 'string',
+          description: 'Rechnungs-ID oder Rechnungsnummer (z.B. RE-101/2026).'
+        },
+        work_record_id: {
+          type: 'string',
+          description: 'Arbeitsaufzeichnungs-ID.'
+        },
+        id: {
+          type: 'string',
+          description: 'Allgemeine ID oder Rechnungsnummer.'
+        }
+      }
+    }
   }
 ];
 
-function executeTargetedPixelQuery(args: Record<string, unknown>) {
+async function executeTargetedPixelQuery(args: Record<string, unknown>) {
+  // Direkter Abruf von Original-PDF oder Zustellbestätigung über pixel_abfrage
+  const explicitInvoiceId =
+    typeof args.invoice_id === 'string' && args.invoice_id.trim()
+      ? args.invoice_id.trim()
+      : args.collection === 'invoices' && typeof args.id === 'string' && args.id.trim()
+        ? args.id.trim()
+        : '';
+
+  if (args.include_pdf && explicitInvoiceId) {
+    return getInvoicePdfAdminAction({
+      invoice_id: explicitInvoiceId,
+      include_base64: true
+    });
+  }
+
+  if (
+    args.include_delivery_status &&
+    (explicitInvoiceId ||
+      (typeof args.work_record_id === 'string' && args.work_record_id.trim()) ||
+      (typeof args.id === 'string' && args.id.trim()))
+  ) {
+    return getDeliveryStatusAdminAction({
+      invoice_id: explicitInvoiceId || undefined,
+      work_record_id:
+        typeof args.work_record_id === 'string' ? args.work_record_id : undefined,
+      id: typeof args.id === 'string' ? args.id : undefined
+    });
+  }
+
   const { revision, updatedAt, lastActor } = getStore();
   const requestedCollections: string[] = [];
 
@@ -3916,7 +4447,11 @@ function executeTargetedPixelQuery(args: Record<string, unknown>) {
 
   // Wenn gezielte Filter ohne explizite Collection übergeben wurden, gezielte Tabellen statt Voll-Übersicht abfragen
   if (requestedCollections.length === 0 && !args.include_overview && !args.include_guv) {
-    if (args.unbilled_only || typeof args.is_lcr === 'boolean') {
+    if (
+      args.unbilled_only ||
+      typeof args.is_lcr === 'boolean' ||
+      typeof args.billable === 'boolean'
+    ) {
       requestedCollections.push('workRecords');
     } else if (typeof args.customer_id === 'string' && args.customer_id.trim()) {
       requestedCollections.push('customers', 'workRecords', 'invoices');
@@ -3966,6 +4501,7 @@ function executeTargetedPixelQuery(args: Record<string, unknown>) {
       parent_equipment_id:
         typeof args.parent_equipment_id === 'string' ? args.parent_equipment_id : undefined,
       is_lcr: typeof args.is_lcr === 'boolean' ? args.is_lcr : undefined,
+      billable: typeof args.billable === 'boolean' ? args.billable : undefined,
       unbilled_only: Boolean(args.unbilled_only),
       date_from: typeof args.date_from === 'string' ? args.date_from : undefined,
       date_to: typeof args.date_to === 'string' ? args.date_to : undefined,
@@ -3988,6 +4524,7 @@ function executeTargetedPixelQuery(args: Record<string, unknown>) {
           parent_equipment_id:
             typeof args.parent_equipment_id === 'string' ? args.parent_equipment_id : undefined,
           is_lcr: typeof args.is_lcr === 'boolean' ? args.is_lcr : undefined,
+          billable: typeof args.billable === 'boolean' ? args.billable : undefined,
           unbilled_only: Boolean(args.unbilled_only),
           date_from: typeof args.date_from === 'string' ? args.date_from : undefined,
           date_to: typeof args.date_to === 'string' ? args.date_to : undefined,
@@ -4096,6 +4633,39 @@ function executeUnifiedPixelAction(args: Record<string, unknown>) {
         },
         'mcp'
       );
+    case 'send_work_record':
+      return sendWorkRecordAdminAction(
+        {
+          work_record_id:
+            typeof args.work_record_id === 'string'
+              ? args.work_record_id
+              : typeof args.id === 'string'
+                ? args.id
+                : undefined,
+          work_record_ids: Array.isArray(args.work_record_ids)
+            ? (args.work_record_ids as string[])
+            : undefined,
+          customer_id: typeof args.customer_id === 'string' ? args.customer_id : undefined,
+          user_confirmed: Boolean(args.user_confirmed),
+          confirmed: Boolean(args.confirmed),
+          dry_run: Boolean(args.dry_run),
+          recipient_email:
+            typeof args.recipient_email === 'string' ? args.recipient_email : undefined
+        },
+        'mcp'
+      );
+    case 'get_invoice_pdf':
+      return getInvoicePdfAdminAction({
+        invoice_id: String(args.invoice_id || args.id || ''),
+        include_base64: args.include_base64 !== false
+      });
+    case 'delivery_status':
+      return getDeliveryStatusAdminAction({
+        invoice_id: typeof args.invoice_id === 'string' ? args.invoice_id : undefined,
+        work_record_id:
+          typeof args.work_record_id === 'string' ? args.work_record_id : undefined,
+        id: typeof args.id === 'string' ? args.id : undefined
+      });
     default:
       throw new Error(`Unbekannte Aktion "${op}".`);
   }
@@ -4141,6 +4711,45 @@ async function executeUnifiedPixelBilling(args: Record<string, unknown>) {
       },
       'mcp'
     );
+  }
+
+  if (action === 'send_work_record') {
+    return sendWorkRecordAdminAction(
+      {
+        work_record_id:
+          typeof args.work_record_id === 'string'
+            ? args.work_record_id
+            : typeof args.id === 'string'
+              ? args.id
+              : undefined,
+        work_record_ids: Array.isArray(args.work_record_ids)
+          ? (args.work_record_ids as string[])
+          : undefined,
+        customer_id: typeof args.customer_id === 'string' ? args.customer_id : undefined,
+        user_confirmed: Boolean(args.user_confirmed),
+        confirmed: Boolean(args.confirmed),
+        dry_run: Boolean(args.dry_run),
+        recipient_email:
+          typeof args.recipient_email === 'string' ? args.recipient_email : undefined
+      },
+      'mcp'
+    );
+  }
+
+  if (action === 'get_invoice_pdf') {
+    return getInvoicePdfAdminAction({
+      invoice_id: String(args.invoice_id || args.id || ''),
+      include_base64: args.include_base64 !== false
+    });
+  }
+
+  if (action === 'delivery_status') {
+    return getDeliveryStatusAdminAction({
+      invoice_id: typeof args.invoice_id === 'string' ? args.invoice_id : undefined,
+      work_record_id:
+        typeof args.work_record_id === 'string' ? args.work_record_id : undefined,
+      id: typeof args.id === 'string' ? args.id : undefined
+    });
   }
 
   if (action === 'storno') {
@@ -4227,6 +4836,7 @@ export async function callMcpTool(
         customer_id: typeof args.customer_id === 'string' ? args.customer_id : undefined,
         status: typeof args.status === 'string' ? args.status : undefined,
         is_lcr: typeof args.is_lcr === 'boolean' ? args.is_lcr : undefined,
+        billable: typeof args.billable === 'boolean' ? args.billable : undefined,
         unbilled_only: Boolean(args.unbilled_only),
         date_from: typeof args.date_from === 'string' ? args.date_from : undefined,
         date_to: typeof args.date_to === 'string' ? args.date_to : undefined,
@@ -4330,6 +4940,39 @@ export async function callMcpTool(
         },
         'mcp'
       );
+    case 'admin_send_work_record':
+      return sendWorkRecordAdminAction(
+        {
+          work_record_id:
+            typeof args.work_record_id === 'string'
+              ? args.work_record_id
+              : typeof args.id === 'string'
+                ? args.id
+                : undefined,
+          work_record_ids: Array.isArray(args.work_record_ids)
+            ? (args.work_record_ids as string[])
+            : undefined,
+          customer_id: typeof args.customer_id === 'string' ? args.customer_id : undefined,
+          user_confirmed: Boolean(args.user_confirmed),
+          confirmed: Boolean(args.confirmed),
+          dry_run: Boolean(args.dry_run),
+          recipient_email:
+            typeof args.recipient_email === 'string' ? args.recipient_email : undefined
+        },
+        'mcp'
+      );
+    case 'admin_get_invoice_pdf':
+      return getInvoicePdfAdminAction({
+        invoice_id: String(args.invoice_id || args.id || ''),
+        include_base64: args.include_base64 !== false
+      });
+    case 'admin_get_delivery_status':
+      return getDeliveryStatusAdminAction({
+        invoice_id: typeof args.invoice_id === 'string' ? args.invoice_id : undefined,
+        work_record_id:
+          typeof args.work_record_id === 'string' ? args.work_record_id : undefined,
+        id: typeof args.id === 'string' ? args.id : undefined
+      });
     case 'admin_record_maintenance':
       return recordMaintenanceAdminAction(
         {
@@ -4356,3 +4999,4 @@ export async function callMcpTool(
       throw new Error(`Unbekanntes MCP-Werkzeug "${name}".`);
   }
 }
+
