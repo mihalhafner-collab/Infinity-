@@ -19,16 +19,13 @@ import {
 
 export const OWNER_EMAIL = 'mihalhafner@gmail.com';
 
-export const SCOPES = [
+const SCOPES = [
   'https://www.googleapis.com/auth/gmail.send',
   'https://www.googleapis.com/auth/calendar.events',
   'https://www.googleapis.com/auth/calendar.events.readonly'
 ];
 
 const OAUTH_RETURN_SCREEN_KEY = 'hafner_oauth_return_screen';
-
-const ownerProvider = new GoogleAuthProvider();
-ownerProvider.setCustomParameters({ prompt: 'select_account' });
 
 const provider = new GoogleAuthProvider();
 for (const scope of SCOPES) {
@@ -94,7 +91,7 @@ function formatFirebaseAuthError(err: unknown): string {
   return raw || 'Google-Anmeldung fehlgeschlagen.';
 }
 
-export function rememberOAuthReturnScreen(screenId: string): void {
+function rememberOAuthReturnScreen(screenId: string): void {
   if (typeof window === 'undefined') return;
   try {
     sessionStorage.setItem(OAUTH_RETURN_SCREEN_KEY, screenId);
@@ -128,7 +125,7 @@ export function subscribeOwnerSession(listener: OwnerSessionListener): () => voi
   };
 }
 
-export async function establishOwnerServerSession(user: User): Promise<boolean> {
+async function establishOwnerServerSession(user: User): Promise<boolean> {
   const email = (user.email || '').trim().toLowerCase();
   if (!email || email !== OWNER_EMAIL) {
     await auth.signOut().catch(() => undefined);
@@ -156,19 +153,10 @@ export async function establishOwnerServerSession(user: User): Promise<boolean> 
   return true;
 }
 
-export async function checkOwnerServerSession(): Promise<boolean> {
+async function checkOwnerServerSession(): Promise<boolean> {
   ownerSessionState = { checking: false, authenticated: true, email: OWNER_EMAIL, error: null };
   notifyOwnerListeners();
   return true;
-}
-
-export async function refreshOwnerServerSessionIfPossible(): Promise<boolean> {
-  if (isNativeAndroidApp()) return true;
-  const user = auth.currentUser || currentUser;
-  if (user && (user.email || '').trim().toLowerCase() === OWNER_EMAIL) {
-    return establishOwnerServerSession(user);
-  }
-  return checkOwnerServerSession();
 }
 
 if (typeof window !== 'undefined' && !isNativeAndroidApp()) {
@@ -273,62 +261,6 @@ export const subscribeGmailAuth = (listener: GmailAuthListener): (() => void) =>
   };
 };
 
-export const initAuth = (
-  onAuthSuccess?: (user: User, token: string) => void,
-  onAuthFailure?: () => void
-) => {
-  return onAuthStateChanged(auth, async (user: User | null) => {
-    if (user) {
-      if (cachedAccessToken) {
-        if (onAuthSuccess) onAuthSuccess(user, cachedAccessToken);
-      } else if (!isSigningIn) {
-        cachedAccessToken = null;
-        if (onAuthFailure) onAuthFailure();
-      }
-    } else {
-      cachedAccessToken = null;
-      if (onAuthFailure) onAuthFailure();
-    }
-  });
-};
-
-export const ownerSignIn = async (): Promise<boolean> => {
-  if (isNativeAndroidApp()) return true;
-  lastRedirectAuthError = null;
-  ownerSessionState = { ...ownerSessionState, error: null };
-  notifyOwnerListeners();
-
-  try {
-    isSigningIn = true;
-    const result = await signInWithPopup(auth, ownerProvider);
-    currentUser = result.user;
-    const ok = await establishOwnerServerSession(result.user);
-    notifyListeners();
-    return ok;
-  } catch (err: unknown) {
-    const rawMsg = err instanceof Error ? err.message : String(err || '');
-    if (
-      typeof window !== 'undefined' &&
-      window.self === window.top &&
-      rawMsg.includes('auth/popup-blocked')
-    ) {
-      await signInWithRedirect(auth, ownerProvider);
-      return false;
-    }
-    const friendly = formatFirebaseAuthError(err);
-    ownerSessionState = {
-      checking: false,
-      authenticated: false,
-      email: null,
-      error: friendly
-    };
-    notifyOwnerListeners();
-    throw new Error(friendly);
-  } finally {
-    isSigningIn = false;
-  }
-};
-
 export const googleSignIn = async (
   returnScreenId?: string
 ): Promise<{ user: User; accessToken: string } | null> => {
@@ -340,13 +272,6 @@ export const googleSignIn = async (
       const email = (res.email || OWNER_EMAIL).trim();
       const userObj = { email } as User;
       cachedAccessToken = res.accessToken || 'native_android_gmail_connected';
-      if (res.accessToken && res.accessToken !== 'native_android_gmail_connected') {
-        void fetch('/api/internal/gmail-token', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ accessToken: res.accessToken })
-        }).catch(() => undefined);
-      }
       currentUser = userObj;
       notifyListeners();
       return { user: userObj, accessToken: cachedAccessToken };

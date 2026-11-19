@@ -1,35 +1,5 @@
 import type { GoogleCalendarNormalizedItem } from './googleCalendarService.ts';
 
-export type NativeMcpConnectionState =
-  | 'connected'
-  | 'reconnecting'
-  | 'offline_queued'
-  | 'offline'
-  | 'unpaired'
-  | 'auth_error';
-
-export interface NativeMcpSyncStatus {
-  state: NativeMcpConnectionState;
-  statusLabel: string;
-  configured: boolean;
-  baseUrl: string;
-  mcpEndpointUrl: string;
-  maskedToken: string;
-  revealedToken?: string;
-  deviceToken?: string;
-  keystoreProtected: boolean;
-  networkOnline: boolean;
-  pendingLocalChanges: boolean;
-  pendingSyncCount: number;
-  syncInFlight: boolean;
-  revision: number;
-  lastSyncAt: string | null;
-  lastError: string | null;
-  totalMcpCalls: number;
-  lastMcpAccessAt: string | null;
-  activeOAuthGrants: number;
-}
-
 export interface NativePixelTunnelStatus {
   running: boolean;
   state: string;
@@ -54,17 +24,10 @@ interface HafnerNativeInterface {
   loadStateJson: () => string | null;
   saveStateJson: (json: string) => boolean;
   getBackupMetaJson: () => string;
-  getMcpSyncStatusJson?: () => string;
   getPixelTunnelStatusJson?: () => string;
   openPixelTunnelSetup?: () => boolean;
   setPixelTunnelEnabled?: (enabled: boolean) => string;
   setPixelTunnelWriteEnabled?: (writeEnabled: boolean) => string;
-  getRevealedMcpToken?: () => string;
-  copyToClipboard?: (label: string, text: string) => boolean;
-  configureMcpSync?: (baseUrl: string, token: string) => string;
-  pairMcpWithCode?: (baseUrl: string, code: string) => string;
-  triggerMcpSyncNow?: () => boolean;
-  disconnectMcpSync?: () => string;
   saveDocumentToDevice: (
     requestId: string,
     base64Data: string,
@@ -94,8 +57,6 @@ interface HafnerNativeInterface {
   getGmailConfigJson?: () => string;
   signInWithGoogle?: (requestId: string) => void;
   disconnectGmail?: () => string;
-  saveGmailAppPassword?: (senderEmail: string, appPassword: string) => string;
-  pasteGmailAppPasswordFromClipboard?: (senderEmail: string) => string;
   readDeviceCalendar: (requestId: string, startDateIso: string, endDateIso: string) => void;
   upsertDeviceCalendarEvent?: (requestId: string, payloadJson: string) => void;
   deleteDeviceCalendarEvent?: (requestId: string, googleEventId: string) => void;
@@ -116,7 +77,6 @@ declare global {
     __onHafnerNativeCallback?: (requestId: string, ok: boolean, payloadOrError: string) => void;
     __hafnerNativeBack?: () => boolean;
     __onHafnerNativeRemoteState?: (stateJson: string, revision: number, summary: string) => void;
-    __onHafnerNativeMcpStatus?: (statusJson: string) => void;
     __onHafnerNativePixelTunnelStatus?: (statusJson: string) => void;
     __onHafnerNativeGmailConfigUpdated?: (configJson: string, autoDetected: boolean) => void;
   }
@@ -128,43 +88,13 @@ type PendingCallback = {
 };
 
 type RemoteStateListener = (stateJson: string, revision: number, summary: string) => void;
-type McpStatusListener = (status: NativeMcpSyncStatus) => void;
 type PixelTunnelStatusListener = (status: NativePixelTunnelStatus) => void;
 type GmailConfigListener = (config: NativeGmailConfig, autoDetected: boolean) => void;
 
 const pendingCallbacks = new Map<string, PendingCallback>();
 const remoteStateListeners = new Set<RemoteStateListener>();
-const mcpStatusListeners = new Set<McpStatusListener>();
 const pixelTunnelStatusListeners = new Set<PixelTunnelStatusListener>();
 const gmailConfigListeners = new Set<GmailConfigListener>();
-
-const LEGACY_REMOTE_URL_KEY = 'hafner_remote_mcp_base_url';
-const LEGACY_REMOTE_TOKEN_KEY = 'hafner_remote_mcp_token';
-export const DEFAULT_INFINITY_CLOUD_URL = 'https://infinity-hafner.ai.studio';
-
-export function normalizeInfinityCloudBaseUrl(raw?: string | null): string {
-  const trimmed = (raw || '').trim();
-  if (!trimmed) return DEFAULT_INFINITY_CLOUD_URL;
-  const withoutMcp = trimmed.replace(/\/mcp.*$/i, '').replace(/\/+$/, '');
-  const lower = withoutMcp.toLowerCase();
-  if (
-    lower.includes('523881801839.europe-west1.run.app') ||
-    lower.includes('hafner-gruenraum.ai.studio') ||
-    lower.includes('infinity-hafner.ai.studio')
-  ) {
-    return DEFAULT_INFINITY_CLOUD_URL;
-  }
-  return withoutMcp || DEFAULT_INFINITY_CLOUD_URL;
-}
-
-function normalizeSyncStatusUrls(status: NativeMcpSyncStatus): NativeMcpSyncStatus {
-  const cleanBase = normalizeInfinityCloudBaseUrl(status.baseUrl);
-  return {
-    ...status,
-    baseUrl: cleanBase,
-    mcpEndpointUrl: `${cleanBase}/mcp`
-  };
-}
 
 if (typeof window !== 'undefined') {
   window.__onHafnerNativeCallback = (requestId: string, ok: boolean, payloadOrError: string) => {
@@ -185,21 +115,6 @@ if (typeof window !== 'undefined') {
       } catch {
         // Ignore individual listener error
       }
-    }
-  };
-
-  window.__onHafnerNativeMcpStatus = (statusJson: string) => {
-    try {
-      const parsed = normalizeSyncStatusUrls(JSON.parse(statusJson) as NativeMcpSyncStatus);
-      for (const listener of mcpStatusListeners) {
-        try {
-          listener(parsed);
-        } catch {
-          // Ignore individual listener error
-        }
-      }
-    } catch {
-      // Ignore malformed status payload
     }
   };
 
@@ -247,17 +162,6 @@ export function isNativeAndroidApp(): boolean {
   }
 }
 
-// Bereinigt etwaige frühere Klartext-Einträge aus localStorage auf dem Pixel 10 Pro
-export function migrateLegacyWebStorageCredentialsIfNeeded(): void {
-  if (typeof window === 'undefined' || !isNativeAndroidApp()) return;
-  try {
-    localStorage.removeItem(LEGACY_REMOTE_URL_KEY);
-    localStorage.removeItem(LEGACY_REMOTE_TOKEN_KEY);
-  } catch {
-    // Ignore storage cleanup error
-  }
-}
-
 export function loadNativeStoreJson(): string | null {
   if (!isNativeAndroidApp()) return null;
   try {
@@ -273,18 +177,6 @@ export function saveNativeStoreJson(json: string): void {
     window.HafnerNative?.saveStateJson(json);
   } catch {
     // localStorage remains active as secondary mirror
-  }
-}
-
-export function getNativeMcpSyncStatus(): NativeMcpSyncStatus | null {
-  if (!isNativeAndroidApp()) return null;
-  migrateLegacyWebStorageCredentialsIfNeeded();
-  try {
-    const raw = window.HafnerNative?.getMcpSyncStatusJson?.();
-    if (!raw) return null;
-    return normalizeSyncStatusUrls(JSON.parse(raw) as NativeMcpSyncStatus);
-  } catch {
-    return null;
   }
 }
 
@@ -341,67 +233,10 @@ export function subscribeNativePixelTunnelStatus(
   };
 }
 
-export function pairNativeMcpWithCode(
-  baseUrl: string,
-  code: string
-): NativeMcpSyncStatus | null {
-  if (!isNativeAndroidApp()) return null;
-  try {
-    const cleanUrl = normalizeInfinityCloudBaseUrl(baseUrl);
-    const raw = window.HafnerNative?.pairMcpWithCode?.(cleanUrl, code.trim());
-    if (!raw) return null;
-    return normalizeSyncStatusUrls(JSON.parse(raw) as NativeMcpSyncStatus);
-  } catch {
-    return null;
-  }
-}
-
-export function configureNativeMcpSync(
-  baseUrl: string,
-  token: string
-): NativeMcpSyncStatus | null {
-  if (!isNativeAndroidApp()) return null;
-  try {
-    const cleanUrl = normalizeInfinityCloudBaseUrl(baseUrl);
-    const raw = window.HafnerNative?.configureMcpSync?.(cleanUrl, token.trim());
-    if (!raw) return null;
-    return normalizeSyncStatusUrls(JSON.parse(raw) as NativeMcpSyncStatus);
-  } catch {
-    return null;
-  }
-}
-
-export function triggerNativeMcpSyncNow(): void {
-  if (!isNativeAndroidApp()) return;
-  try {
-    window.HafnerNative?.triggerMcpSyncNow?.();
-  } catch {
-    // Ignore
-  }
-}
-
-export function disconnectNativeMcpSync(): NativeMcpSyncStatus | null {
-  if (!isNativeAndroidApp()) return null;
-  try {
-    const raw = window.HafnerNative?.disconnectMcpSync?.();
-    if (!raw) return null;
-    return normalizeSyncStatusUrls(JSON.parse(raw) as NativeMcpSyncStatus);
-  } catch {
-    return null;
-  }
-}
-
 export function subscribeNativeRemoteState(listener: RemoteStateListener): () => void {
   remoteStateListeners.add(listener);
   return () => {
     remoteStateListeners.delete(listener);
-  };
-}
-
-export function subscribeNativeMcpStatus(listener: McpStatusListener): () => void {
-  mcpStatusListeners.add(listener);
-  return () => {
-    mcpStatusListeners.delete(listener);
   };
 }
 
@@ -423,7 +258,7 @@ export function getNativeBackupMeta(): NativeBackupMeta | null {
   }
 }
 
-export async function blobToBase64(blob: Blob): Promise<string> {
+async function blobToBase64(blob: Blob): Promise<string> {
   const buffer = await blob.arrayBuffer();
   const bytes = new Uint8Array(buffer);
   let binary = '';
@@ -532,37 +367,6 @@ export function disconnectNativeGmail(): NativeGmailConfig | null {
   }
   try {
     const raw = window.HafnerNative.disconnectGmail();
-    if (!raw) return null;
-    return JSON.parse(raw) as NativeGmailConfig;
-  } catch {
-    return null;
-  }
-}
-
-export function saveNativeGmailAppPassword(
-  senderEmail: string,
-  appPassword: string
-): NativeGmailConfig | null {
-  if (!isNativeAndroidApp() || !window.HafnerNative?.saveGmailAppPassword) {
-    return null;
-  }
-  try {
-    const raw = window.HafnerNative.saveGmailAppPassword(senderEmail, appPassword);
-    if (!raw) return null;
-    return JSON.parse(raw) as NativeGmailConfig;
-  } catch {
-    return null;
-  }
-}
-
-export function pasteNativeGmailAppPasswordFromClipboard(
-  senderEmail: string
-): NativeGmailConfig | null {
-  if (!isNativeAndroidApp() || !window.HafnerNative?.pasteGmailAppPasswordFromClipboard) {
-    return null;
-  }
-  try {
-    const raw = window.HafnerNative.pasteGmailAppPasswordFromClipboard(senderEmail);
     if (!raw) return null;
     return JSON.parse(raw) as NativeGmailConfig;
   } catch {
@@ -752,126 +556,3 @@ export function setWebSessionToken(token: string | null): void {
 export function getWebSessionToken(): string | null {
   return webSessionToken;
 }
-
-export function resolveBackendEndpoint(path: string): {
-  url: string | null;
-  headers: Record<string, string>;
-} {
-  const cleanPath = path.startsWith('/') ? path : `/${path}`;
-  if (isNativeAndroidApp()) {
-    if (cleanPath.startsWith('/api/internal/events')) {
-      return { url: null, headers: {} };
-    }
-    const status = getNativeMcpSyncStatus();
-    const base = normalizeInfinityCloudBaseUrl(status?.baseUrl || DEFAULT_INFINITY_CLOUD_URL);
-    const headers: Record<string, string> = {
-      'X-Device-Model': 'Google Pixel 10 Pro'
-    };
-    const token = status?.deviceToken?.trim() || status?.revealedToken?.trim();
-    if (token && token.length >= 16) {
-      headers['Authorization'] = `Bearer ${token}`;
-    }
-    return {
-      url: `${base}${cleanPath}`,
-      headers
-    };
-  }
-  const headers: Record<string, string> = {};
-  let finalUrl = cleanPath;
-  if (webSessionToken) {
-    headers['Authorization'] = `Bearer ${webSessionToken}`;
-    if (cleanPath.startsWith('/api/internal/events')) {
-      const sep = cleanPath.includes('?') ? '&' : '?';
-      finalUrl = `${cleanPath}${sep}session_token=${encodeURIComponent(webSessionToken)}`;
-    }
-  }
-  return { url: finalUrl, headers };
-}
-
-export function getRevealedNativeMcpToken(): string | null {
-  if (!isNativeAndroidApp()) return null;
-  try {
-    const direct = window.HafnerNative?.getRevealedMcpToken?.()?.trim();
-    if (direct && direct.length >= 16) return direct;
-    const status = getNativeMcpSyncStatus();
-    const fromStatus = status?.revealedToken?.trim() || status?.deviceToken?.trim();
-    if (fromStatus && fromStatus.length >= 16) return fromStatus;
-  } catch {
-    // Ignore
-  }
-  return null;
-}
-
-export async function copyTextRobustly(label: string, text: string): Promise<boolean> {
-  const cleanText = text.trim();
-  if (!cleanText) return false;
-
-  if (isNativeAndroidApp() && window.HafnerNative?.copyToClipboard) {
-    try {
-      const ok = window.HafnerNative.copyToClipboard(label, cleanText);
-      if (ok) return true;
-    } catch {
-      // Fallback to web clipboard below
-    }
-  }
-
-  try {
-    if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(cleanText);
-      return true;
-    }
-  } catch {
-    // Fallback to textarea execCommand below
-  }
-
-  if (typeof document !== 'undefined') {
-    try {
-      const ta = document.createElement('textarea');
-      ta.value = cleanText;
-      ta.setAttribute('readonly', 'true');
-      ta.className = 'fixed -top-96 left-0 opacity-0 pointer-events-none';
-      document.body.appendChild(ta);
-      ta.focus();
-      ta.select();
-      const copied = document.execCommand('copy');
-      document.body.removeChild(ta);
-      if (copied) return true;
-    } catch {
-      // Ignore
-    }
-  }
-
-  return false;
-}
-
-export function resolveMcpAdminEndpoint(
-  path: string,
-  overrideBaseUrl?: string
-): {
-  url: string;
-  headers: Record<string, string>;
-} {
-  const cleanPath = path.startsWith('/') ? path : `/${path}`;
-  if (isNativeAndroidApp()) {
-    const status = getNativeMcpSyncStatus();
-    const normalizedBase = normalizeInfinityCloudBaseUrl(
-      overrideBaseUrl?.trim() || status?.baseUrl?.trim() || DEFAULT_INFINITY_CLOUD_URL
-    );
-    const authToken =
-      status?.deviceToken?.trim() ||
-      status?.revealedToken?.trim() ||
-      getRevealedNativeMcpToken();
-    const headers: Record<string, string> = {
-      'X-Device-Model': 'Google Pixel 10 Pro'
-    };
-    if (authToken) {
-      headers['Authorization'] = `Bearer ${authToken}`;
-    }
-    return {
-      url: `${normalizedBase}${cleanPath}`,
-      headers
-    };
-  }
-  return { url: cleanPath, headers: {} };
-}
-

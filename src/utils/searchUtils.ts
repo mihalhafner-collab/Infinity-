@@ -46,7 +46,7 @@ export function normalizeSearchText(input: string | number | null | undefined): 
     .replace(/ß/g, 'ss');
 }
 
-export function normalizeSearchWithUmlauts(input: string | number | null | undefined): string {
+function normalizeSearchWithUmlauts(input: string | number | null | undefined): string {
   if (input === null || input === undefined) return '';
   const raw = String(input).toLowerCase().trim();
   if (!raw) return '';
@@ -63,7 +63,7 @@ export function normalizeSearchWithUmlauts(input: string | number | null | undef
   return expanded === stripped ? expanded : `${expanded} ${stripped}`;
 }
 
-export function extractDigits(input: string | number | null | undefined): string {
+function extractDigits(input: string | number | null | undefined): string {
   if (input === null || input === undefined) return '';
   return String(input).replace(/\D+/g, '');
 }
@@ -346,21 +346,4 @@ export function scoreSearchIndex(
   }
 
   return totalScore;
-}
-
-/**
- * Kompatibilitäts-Hilfsfunktion: Prüft direkt, ob alle Tokens von `query` in `fields` matchen.
- */
-export function matchesSearchQuery(
-  query: string,
-  fields: Array<string | number | null | undefined>
-): boolean {
-  const parsed = parseSearchQuery(query);
-  if (parsed.tokens.length === 0) return true;
-  const entry = buildSearchIndexEntry({
-    primary: fields.slice(0, 3),
-    secondary: fields.slice(3, 7),
-    keywords: fields.slice(7)
-  });
-  return scoreSearchIndex(parsed, entry) > 0;
 }

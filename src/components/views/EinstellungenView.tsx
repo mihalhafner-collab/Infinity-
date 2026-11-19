@@ -5,7 +5,6 @@ import { BottomActionBar } from '../common/BottomActionBar.tsx';
 import { BottomNav } from '../common/BottomNav.tsx';
 import { CollapsibleCard } from '../common/CollapsibleCard.tsx';
 import { GoogleSignInButton } from '../common/GoogleSignInButton.tsx';
-import { PWAInstallCard } from '../common/PWAInstallCard.tsx';
 import {
   HAFNER_LOGO_URL,
   ISSUER_BANK_NAME,
@@ -42,22 +41,13 @@ import {
   Calendar,
   CloudSun,
   Bot,
-  Trash2,
-  CheckCircle,
   Mail,
   LogOut,
   RefreshCw,
   ShieldCheck,
   Smartphone,
-  Sliders,
-  HardDrive,
-  KeyRound
+  Sliders
 } from 'lucide-react';
-import {
-  getStoredDeviceApiKey,
-  hasFixedApiKey,
-  setFixedApiKey
-} from '../../services/gemini.ts';
 
 export const EinstellungenView: React.FC = () => {
   const { appSyncStatus } = useApp();
@@ -113,23 +103,6 @@ export const EinstellungenView: React.FC = () => {
   const [arbeitsvorgabenOpen, setArbeitsvorgabenOpen] = useState(false);
   const [rechnungsdatenOpen, setRechnungsdatenOpen] = useState(false);
   const [verbindungenOpen, setVerbindungenOpen] = useState(true);
-  const [speicherOpen, setSpeicherOpen] = useState(false);
-
-  const [hourlyRate, setHourlyRate] = useState('50');
-  const [paymentTarget, setPaymentTarget] = useState('14 Tage ohne Abzug');
-  const [numberPrefix, setNumberPrefix] = useState('RE');
-  const [storageCleaned, setStorageCleaned] = useState(false);
-
-  const [fixedKeyInput, setFixedKeyInput] = useState(() => getStoredDeviceApiKey());
-  const [fixedKeyActive, setFixedKeyActive] = useState(() => hasFixedApiKey());
-  const [fixedKeySavedBanner, setFixedKeySavedBanner] = useState(false);
-
-  const handleSaveFixedApiKey = () => {
-    setFixedApiKey(fixedKeyInput);
-    setFixedKeyActive(hasFixedApiKey());
-    setFixedKeySavedBanner(true);
-    setTimeout(() => setFixedKeySavedBanner(false), 3000);
-  };
 
   const handleTogglePixelTunnelEnabled = () => {
     if (!isNativeAndroid) return;
@@ -154,11 +127,6 @@ export const EinstellungenView: React.FC = () => {
     openNativePixelTunnelSetup();
   };
 
-  const handleCleanStorage = () => {
-    setStorageCleaned(true);
-    setTimeout(() => setStorageCleaned(false), 3000);
-  };
-
   const effectiveRevision = isNativeAndroid
     ? Math.max(pixelTunnelStatus?.local_revision ?? 0, appSyncStatus.revision ?? 0)
     : appSyncStatus.revision;
@@ -180,14 +148,11 @@ export const EinstellungenView: React.FC = () => {
           <div className="grid grid-cols-2 gap-2">
             <div>
               <label className="font-semibold text-slate-700 block mb-1">
-                Richtwert-Stundensatz (€)
+                Richtwert-Stundensatz
               </label>
-              <input
-                type="number"
-                value={hourlyRate}
-                onChange={(e) => setHourlyRate(e.target.value)}
-                className="w-full h-10 px-3 bg-white border border-slate-200 rounded-xl font-bold text-slate-900"
-              />
+              <div className="h-10 px-3 bg-white border border-slate-200 rounded-xl flex items-center font-bold text-slate-900">
+                50,00 € / Std.
+              </div>
             </div>
             <div>
               <label className="font-semibold text-slate-700 block mb-1">
@@ -203,7 +168,7 @@ export const EinstellungenView: React.FC = () => {
         {/* GRUPPE 2: Rechnungsdaten & Original-Design */}
         <CollapsibleCard
           title="Rechnungsdaten & Logo"
-          subtitle={`Hafner Grünraum Handwerk · Format ${numberPrefix}-75/2026`}
+          subtitle="Hafner Grünraum Handwerk · Format RE-75/2026"
           icon={
             <img
               src={HAFNER_LOGO_URL}
@@ -249,23 +214,17 @@ export const EinstellungenView: React.FC = () => {
               <label className="font-semibold text-slate-700 block mb-1">
                 Nummernkreis Präfix
               </label>
-              <input
-                type="text"
-                value={numberPrefix}
-                onChange={(e) => setNumberPrefix(e.target.value)}
-                className="w-full h-10 px-3 bg-white border border-slate-200 rounded-xl font-bold text-slate-900"
-              />
+              <div className="h-10 px-3 bg-white border border-slate-200 rounded-xl flex items-center font-bold text-slate-900">
+                RE (z. B. RE-75/2026)
+              </div>
             </div>
             <div>
               <label className="font-semibold text-slate-700 block mb-1">
                 Zahlungsziel
               </label>
-              <input
-                type="text"
-                value={paymentTarget}
-                onChange={(e) => setPaymentTarget(e.target.value)}
-                className="w-full h-10 px-3 bg-white border border-slate-200 rounded-xl font-bold text-slate-900"
-              />
+              <div className="h-10 px-3 bg-white border border-slate-200 rounded-xl flex items-center font-bold text-slate-900">
+                14 Tage ohne Abzug
+              </div>
             </div>
           </div>
 
@@ -280,63 +239,12 @@ export const EinstellungenView: React.FC = () => {
         {/* GRUPPE 3: Verbindungen & Pixel-Tunnel */}
         <CollapsibleCard
           title="Verbindungen & Pixel-Tunnel"
-          subtitle="Fester API-Key, ChatGPT Pixel-Tunnel, Gmail, Kalender & Wetter"
+          subtitle="ChatGPT Pixel-Tunnel, Gmail, Kalender & Wetter"
           icon={<Smartphone size={16} />}
           iconBgClassName="bg-indigo-50 text-[#3138A0] border-indigo-100"
           open={verbindungenOpen}
           onToggle={() => setVerbindungenOpen(!verbindungenOpen)}
         >
-          {/* Fester API-Key (dauerhaft im lokalen Gerätespeicher auf dem Pixel 10 Pro) */}
-          <div className="p-3 bg-white border border-slate-200 rounded-xl space-y-2">
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2 min-w-0">
-                <KeyRound size={16} className="text-[#3138A0] shrink-0" />
-                <div className="min-w-0">
-                  <span className="font-bold text-slate-900 block text-xs">
-                    Fester API-Key (Gerätespeicher)
-                  </span>
-                  <span className="text-[10px] text-slate-500 block">
-                    Einmalig eingeben · bleibt bei APK-Updates erhalten (Fallback: Build-Secret)
-                  </span>
-                </div>
-              </div>
-              <span
-                className={`text-[10px] font-bold px-2 py-0.5 rounded-md shrink-0 ${
-                  fixedKeyActive
-                    ? 'text-[#2C7738] bg-emerald-50'
-                    : 'text-slate-600 bg-slate-100'
-                }`}
-              >
-                {fixedKeyActive ? 'Hinterlegt' : 'Nicht gesetzt'}
-              </span>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <input
-                type="password"
-                value={fixedKeyInput}
-                onChange={(e) => setFixedKeyInput(e.target.value)}
-                placeholder="Fester API-Key (optional, falls nicht als Secret gesetzt)"
-                autoComplete="off"
-                className="flex-1 h-9 px-3 bg-slate-50 border border-slate-200 rounded-lg text-xs font-mono text-slate-900"
-              />
-              <button
-                type="button"
-                onClick={handleSaveFixedApiKey}
-                className="h-9 px-3 bg-[#3138A0] hover:bg-[#272d82] active:scale-98 text-white font-semibold rounded-lg text-[11px] shrink-0 transition-all"
-              >
-                Speichern
-              </button>
-            </div>
-
-            {fixedKeySavedBanner && (
-              <div className="text-[10px] font-semibold text-[#2C7738] flex items-center gap-1">
-                <CheckCircle size={12} />
-                <span>Fester API-Key lokal gespeichert.</span>
-              </div>
-            )}
-          </div>
-
           {/* Direkter privater OpenAI-Pixel-Tunnel */}
           {isNativeAndroid && (
             <div className="p-3 bg-white border border-indigo-200/90 rounded-xl space-y-2.5">
@@ -630,52 +538,6 @@ export const EinstellungenView: React.FC = () => {
               </button>
             </div>
           </div>
-        </CollapsibleCard>
-
-        {/* GRUPPE 4: Speicher und App */}
-        <CollapsibleCard
-          title="Speicher und App"
-          subtitle={
-            isNativeAndroid
-              ? 'Startbildschirm-Icon · 128 MB insgesamt · Bereinigung'
-              : 'Lokaler Browser-Cache & App-Installation'
-          }
-          icon={<HardDrive size={16} />}
-          iconBgClassName="bg-slate-100 text-slate-700 border-slate-200"
-          open={speicherOpen}
-          onToggle={() => setSpeicherOpen(!speicherOpen)}
-        >
-          <PWAInstallCard />
-
-          <div className="grid grid-cols-2 gap-2 text-center">
-            <div className="p-2.5 bg-white border border-slate-200 rounded-xl">
-              <span className="text-[10px] text-slate-400 uppercase font-semibold block">
-                Fotos & Medien
-              </span>
-              <span className="text-sm font-bold text-slate-900 font-mono">112 MB</span>
-            </div>
-            <div className="p-2.5 bg-white border border-slate-200 rounded-xl">
-              <span className="text-[10px] text-slate-400 uppercase font-semibold block">
-                App-Daten
-              </span>
-              <span className="text-sm font-bold text-slate-900 font-mono">16 MB</span>
-            </div>
-          </div>
-
-          {storageCleaned && (
-            <div className="p-2 bg-emerald-50 border border-emerald-200 rounded-xl text-[11px] text-[#2C7738] font-semibold flex items-center gap-1.5 animate-fade-in">
-              <CheckCircle size={14} />
-              <span>Temporäre Arbeitsdaten bereinigt. Geschützte Originale unverändert.</span>
-            </div>
-          )}
-
-          <button
-            onClick={handleCleanStorage}
-            className="w-full h-11 bg-white hover:bg-slate-100 active:scale-98 border border-slate-200 text-slate-800 font-semibold rounded-xl text-xs flex items-center justify-center gap-1.5 transition-all shadow-2xs"
-          >
-            <Trash2 size={14} className="text-[#3138A0]" />
-            <span>Speicher bereinigen</span>
-          </button>
         </CollapsibleCard>
       </div>
 

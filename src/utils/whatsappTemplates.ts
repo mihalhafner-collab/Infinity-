@@ -47,13 +47,13 @@ export const WHATSAPP_TEMPLATES: readonly WhatsAppTemplateDefinition[] = [
   }
 ] as const;
 
-export function buildCustomerSalutation(customerName?: string | null): string {
+function buildCustomerSalutation(customerName?: string | null): string {
   const clean = (customerName || '').trim();
   if (!clean) return 'Guten Tag,';
   return `Guten Tag ${clean},`;
 }
 
-export function loadCustomWhatsAppTemplates(): Partial<Record<WhatsAppTemplateId, string>> {
+function loadCustomWhatsAppTemplates(): Partial<Record<WhatsAppTemplateId, string>> {
   if (typeof window === 'undefined') return {};
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
@@ -65,29 +65,7 @@ export function loadCustomWhatsAppTemplates(): Partial<Record<WhatsAppTemplateId
   }
 }
 
-export function saveCustomWhatsAppTemplate(id: WhatsAppTemplateId, body: string): void {
-  if (typeof window === 'undefined') return;
-  try {
-    const current = loadCustomWhatsAppTemplates();
-    current[id] = body;
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(current));
-  } catch {
-    // Ignore storage quota error
-  }
-}
-
-export function resetCustomWhatsAppTemplate(id: WhatsAppTemplateId): void {
-  if (typeof window === 'undefined') return;
-  try {
-    const current = loadCustomWhatsAppTemplates();
-    delete current[id];
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(current));
-  } catch {
-    // Ignore storage error
-  }
-}
-
-export function getWhatsAppTemplateRawBody(id: WhatsAppTemplateId): string {
+function getWhatsAppTemplateRawBody(id: WhatsAppTemplateId): string {
   const custom = loadCustomWhatsAppTemplates()[id];
   if (typeof custom === 'string' && custom.trim()) {
     return custom;

@@ -23,7 +23,7 @@ const PROPERTY_TYPES = [
   'Grundstück / Hang'
 ];
 
-export const SITE_FEATURES = [
+const SITE_FEATURES = [
   'Zufahrt mit Anhänger',
   'Wasser außen',
   'Strom außen',

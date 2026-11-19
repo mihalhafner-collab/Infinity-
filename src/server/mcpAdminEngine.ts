@@ -3290,15 +3290,45 @@ export async function sendInvoiceAdminAction(
     );
   }
 
-  // Trockenlauf (dry_run=true): Prüft Rechnung, Empfänger & Original-PDF-Erzeugung ohne echten Versand
+  // Trockenlauf (dry_run=true): Prüft Rechnung, Empfänger, Original-PDF-Erzeugung & Versanddienst ohne echten Versand
   if (params.dry_run === true) {
-    const pdfArtifact = await generateInvoicePdfAsync(resolvedData);
+    let pdfArtifact: Awaited<ReturnType<typeof generateInvoicePdfAsync>> | null = null;
+    let pdfError: string | null = null;
+    try {
+      pdfArtifact = await generateInvoicePdfAsync(resolvedData);
+      if (!pdfArtifact || !pdfArtifact.blob || pdfArtifact.blob.size <= 0) {
+        pdfError = 'Leeres Rechnungs-PDF erzeugt (0 Bytes).';
+      }
+    } catch (err) {
+      pdfError = err instanceof Error ? err.message : String(err);
+    }
+
+    const activeToken = getServerGmailAccessToken();
+    const mailReady = Boolean(activeToken);
+    const pdfOk = Boolean(pdfArtifact && !pdfError);
+    const readyToSend = pdfOk && mailReady;
+    const blockingErrors: string[] = [];
+    if (!pdfOk) {
+      blockingErrors.push(`PDF-Erzeugung fehlgeschlagen: ${pdfError || 'Unbekannter PDF-Fehler'}`);
+    }
+    if (!mailReady) {
+      blockingErrors.push('Kein aktives Gmail-Zugriffstoken für den Versand vorhanden.');
+    }
+
     return {
-      ok: true,
+      ok: readyToSend,
       action: 'send_invoice',
       dry_run: true,
       sent: false,
-      ready_to_send: true,
+      ready_to_send: readyToSend,
+      pdf_ready: pdfOk,
+      mail_provider_ready: mailReady,
+      ...(blockingErrors.length > 0
+        ? {
+            error: blockingErrors.join(' | '),
+            blocking_errors: blockingErrors
+          }
+        : {}),
       requires_user_confirmed: true,
       revision: store.revision,
       invoice_id: inv.id,
@@ -3306,8 +3336,8 @@ export async function sendInvoiceAdminAction(
       recipient_name: resolvedData.recipientName,
       recipient_email: recipientEmail,
       total_amount: resolvedData.totalAmount,
-      filename: pdfArtifact.filename,
-      pdf_size_bytes: pdfArtifact.blob.size,
+      filename: pdfArtifact?.filename || emailDefaults.filename,
+      pdf_size_bytes: pdfArtifact?.blob.size || 0,
       subject: emailDefaults.subject
     };
   }
