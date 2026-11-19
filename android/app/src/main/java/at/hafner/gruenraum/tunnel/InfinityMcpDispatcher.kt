@@ -213,7 +213,7 @@ class InfinityMcpDispatcher(
                 "resources/read" -> {
                     val uri = params.optString("uri", "")
                     if (uri == "app://state/overview") {
-                        val overview = buildOverview(storeManager.loadOrInitStateObject())
+                        val overview = buildOverview(storeManager.loadOrInitLightStateObject())
                         okResponse(
                             idVal,
                             JSONObject().put(
@@ -230,7 +230,7 @@ class InfinityMcpDispatcher(
                         val col = uri.removePrefix("app://collection/")
                         if (NativeStoreManager.COLLECTION_KEYS.contains(col)) {
                             val data = queryCollection(
-                                storeManager.loadOrInitStateObject(),
+                                storeManager.loadOrInitLightStateObject(),
                                 JSONObject().put("collection", col).put("limit", 100)
                             )
                             okResponse(
@@ -265,6 +265,14 @@ class InfinityMcpDispatcher(
         }
     }
 
+    private fun loadReadState(args: JSONObject? = null): JSONObject {
+        return if (args != null && args.optBoolean("include_photos", false)) {
+            storeManager.loadOrInitStateObject()
+        } else {
+            storeManager.loadOrInitLightStateObject()
+        }
+    }
+
     private fun executeTool(
         tunnelRequestId: String,
         tunnelFingerprint: String,
@@ -272,22 +280,22 @@ class InfinityMcpDispatcher(
         args: JSONObject
     ): JSONObject {
         return when (name) {
-            "infinity_status" -> buildStatusPayload(storeManager.loadOrInitStateObject())
+            "infinity_status" -> buildStatusPayload(loadReadState())
 
             "pixel_abfrage" -> executePixelQuery(args)
 
-            "admin_get_overview" -> buildOverview(storeManager.loadOrInitStateObject())
+            "admin_get_overview" -> buildOverview(loadReadState())
 
-            "admin_read_records" -> queryCollection(storeManager.loadOrInitStateObject(), args)
+            "admin_read_records" -> queryCollection(loadReadState(args), args)
 
             "admin_calculate_guv" -> {
                 val year = if (args.has("year") && !args.isNull("year")) args.optInt("year", 2026) else null
-                calculateGuvSummaryJson(storeManager.loadOrInitStateObject(), year)
+                calculateGuvSummaryJson(loadReadState(), year)
             }
 
-            "admin_get_invoice_pdf" -> getInvoicePdfInState(storeManager.loadOrInitStateObject(), args)
+            "admin_get_invoice_pdf" -> getInvoicePdfInState(loadReadState(), args)
 
-            "admin_get_delivery_status" -> getDeliveryStatusInState(storeManager.loadOrInitStateObject(), args)
+            "admin_get_delivery_status" -> getDeliveryStatusInState(loadReadState(), args)
 
             "pixel_aktion",
             "admin_upsert_record",
@@ -301,17 +309,17 @@ class InfinityMcpDispatcher(
                 val opLabel = normalizedArgs.optString("op", "upsert").trim()
                 val hasBatch = (normalizedArgs.optJSONArray("operations")?.length() ?: 0) > 0
                 if (!hasBatch && opLabel == "get_invoice_pdf") {
-                    return getInvoicePdfInState(storeManager.loadOrInitStateObject(), normalizedArgs)
+                    return getInvoicePdfInState(loadReadState(), normalizedArgs)
                 }
                 if (!hasBatch && opLabel == "delivery_status") {
-                    return getDeliveryStatusInState(storeManager.loadOrInitStateObject(), normalizedArgs)
+                    return getDeliveryStatusInState(loadReadState(), normalizedArgs)
                 }
                 if (!hasBatch && normalizedArgs.optBoolean("dry_run", false)) {
                     if (opLabel == "send_invoice") {
-                        return sendInvoiceInState(storeManager.loadOrInitStateObject(), normalizedArgs)
+                        return sendInvoiceInState(loadReadState(), normalizedArgs)
                     }
                     if (opLabel == "send_work_record") {
-                        return sendWorkRecordInState(storeManager.loadOrInitStateObject(), normalizedArgs)
+                        return sendWorkRecordInState(loadReadState(), normalizedArgs)
                     }
                 }
                 assertWritePermitted()
@@ -341,17 +349,17 @@ class InfinityMcpDispatcher(
                 val normalizedArgs = normalizeLegacyBillingArgs(name, args)
                 val actLabel = normalizedArgs.optString("action", "create_invoice").trim()
                 if (actLabel == "get_invoice_pdf") {
-                    return getInvoicePdfInState(storeManager.loadOrInitStateObject(), normalizedArgs)
+                    return getInvoicePdfInState(loadReadState(), normalizedArgs)
                 }
                 if (actLabel == "delivery_status") {
-                    return getDeliveryStatusInState(storeManager.loadOrInitStateObject(), normalizedArgs)
+                    return getDeliveryStatusInState(loadReadState(), normalizedArgs)
                 }
                 if (normalizedArgs.optBoolean("dry_run", false)) {
                     if (actLabel == "send_invoice") {
-                        return sendInvoiceInState(storeManager.loadOrInitStateObject(), normalizedArgs)
+                        return sendInvoiceInState(loadReadState(), normalizedArgs)
                     }
                     if (actLabel == "send_work_record") {
-                        return sendWorkRecordInState(storeManager.loadOrInitStateObject(), normalizedArgs)
+                        return sendWorkRecordInState(loadReadState(), normalizedArgs)
                     }
                 }
                 assertWritePermitted()
@@ -556,7 +564,7 @@ class InfinityMcpDispatcher(
     }
 
     private fun executePixelQuery(args: JSONObject): JSONObject {
-        val state = storeManager.loadOrInitStateObject()
+        val state = loadReadState(args)
         val requested = mutableListOf<String>()
         val colsArr = args.optJSONArray("collections")
         if (colsArr != null) {
@@ -928,59 +936,7 @@ class InfinityMcpDispatcher(
     }
 
     private fun stripHeavyPhotos(item: JSONObject, includePhotos: Boolean): JSONObject {
-        val copy = JSONObject(item.toString())
-        if (includePhotos) return copy
-        if (copy.has("photos")) {
-            val arr = copy.optJSONArray("photos")
-            copy.put("photo_count", arr?.length() ?: 0)
-            copy.remove("photos")
-        }
-        val singlePhoto = copy.optString("photo", "")
-        if (singlePhoto.startsWith("data:")) {
-            copy.put("has_photo", true)
-            copy.remove("photo")
-        }
-        val imagesArr = copy.optJSONArray("images")
-        if (imagesArr != null) {
-            copy.put("image_count", imagesArr.length())
-            val strippedImages = JSONArray()
-            for (i in 0 until imagesArr.length()) {
-                val imgObj = imagesArr.optJSONObject(i)
-                if (imgObj == null) {
-                    strippedImages.put(imagesArr.opt(i))
-                    continue
-                }
-                val imgCopy = JSONObject(imgObj.toString())
-                val url = imgCopy.optString("url", "")
-                if (url.startsWith("data:")) {
-                    imgCopy.remove("url")
-                    imgCopy.put("has_data_url", true)
-                }
-                strippedImages.put(imgCopy)
-            }
-            copy.put("images", strippedImages)
-        }
-        val docsArr = copy.optJSONArray("documents")
-        if (docsArr != null) {
-            copy.put("document_count", docsArr.length())
-            val strippedDocs = JSONArray()
-            for (i in 0 until docsArr.length()) {
-                val docObj = docsArr.optJSONObject(i)
-                if (docObj == null) {
-                    strippedDocs.put(docsArr.opt(i))
-                    continue
-                }
-                val docCopy = JSONObject(docObj.toString())
-                val url = docCopy.optString("url", "")
-                if (url.startsWith("data:")) {
-                    docCopy.remove("url")
-                    docCopy.put("has_data_url", true)
-                }
-                strippedDocs.put(docCopy)
-            }
-            copy.put("documents", strippedDocs)
-        }
-        return copy
+        return NativeStoreManager.stripHeavyMediaFromRecordFast(item, includePhotos)
     }
 
     private fun projectItem(
@@ -3375,7 +3331,9 @@ class InfinityMcpDispatcher(
         }
         if (includeBase64) {
             out.put("pdf_base64", base64Pdf)
-            out.put("data_url", "data:application/pdf;base64,$base64Pdf")
+            if (args.optBoolean("include_data_url", false)) {
+                out.put("data_url", "data:application/pdf;base64,$base64Pdf")
+            }
         }
         return out
     }
@@ -4258,51 +4216,10 @@ class InfinityMcpDispatcher(
 
         tools.put(
             JSONObject()
-                .put("name", "admin_send_work_record")
-                .put(
-                    "description",
-                    "Versendet eine oder mehrere Arbeitsaufzeichnungen aus Infinity direkt per E-Mail an den Kunden und speichert die Versand- und Zustellbestätigung (sent_at, sent_to, sent_status='sent', sent_message_id). Erfordert user_confirmed=true oder dry_run=true."
-                )
-                .put(
-                    "annotations",
-                    JSONObject()
-                        .put("title", "Arbeitsaufzeichnung direkt per E-Mail versenden")
-                        .put("readOnlyHint", false)
-                        .put("destructiveHint", false)
-                        .put("idempotentHint", true)
-                        .put("openWorldHint", false)
-                )
-                .put(
-                    "inputSchema",
-                    JSONObject()
-                        .put("type", "object")
-                        .put("additionalProperties", false)
-                        .put(
-                            "properties",
-                            JSONObject()
-                                .put("work_record_id", JSONObject().put("type", "string"))
-                                .put(
-                                    "work_record_ids",
-                                    JSONObject()
-                                        .put("type", "array")
-                                        .put("items", JSONObject().put("type", "string"))
-                                )
-                                .put("customer_id", JSONObject().put("type", "string"))
-                                .put("user_confirmed", JSONObject().put("type", "boolean"))
-                                .put("dry_run", JSONObject().put("type", "boolean"))
-                                .put("recipient_email", JSONObject().put("type", "string"))
-                                .put("request_id", JSONObject().put("type", "string"))
-                                .put("expected_revision", JSONObject().put("type", "number"))
-                        )
-                )
-        )
-
-        tools.put(
-            JSONObject()
                 .put("name", "admin_get_invoice_pdf")
                 .put(
                     "description",
-                    "Ruft das Original-Rechnungs-PDF einer bestehenden Rechnung aus Infinity ab (inkl. Base64-PDF pdf_base64, data_url, Dateiname, Betreff, Begleittext und aktuellem Versand-/Zustellstatus), z.B. für direkten Abruf oder Übergabe an einen Versanddienst."
+                    "Ruft das Original-Rechnungs-PDF einer bestehenden Rechnung aus Infinity ab (inkl. Base64-PDF pdf_base64, Dateiname, Betreff, Begleittext und aktuellem Versand-/Zustellstatus)."
                 )
                 .put(
                     "annotations",
@@ -4324,37 +4241,7 @@ class InfinityMcpDispatcher(
                             JSONObject()
                                 .put("invoice_id", JSONObject().put("type", "string"))
                                 .put("include_base64", JSONObject().put("type", "boolean"))
-                        )
-                )
-        )
-
-        tools.put(
-            JSONObject()
-                .put("name", "admin_get_delivery_status")
-                .put(
-                    "description",
-                    "Ruft die Versand- und Zustellbestätigung (sent, delivered_to_provider, sent_status, sent_at, sent_to, sent_via, sent_message_id) für eine Rechnung oder eine Arbeitsaufzeichnung ab."
-                )
-                .put(
-                    "annotations",
-                    JSONObject()
-                        .put("title", "Versand- und Zustellbestätigung abrufen")
-                        .put("readOnlyHint", true)
-                        .put("destructiveHint", false)
-                        .put("idempotentHint", true)
-                        .put("openWorldHint", false)
-                )
-                .put(
-                    "inputSchema",
-                    JSONObject()
-                        .put("type", "object")
-                        .put("additionalProperties", false)
-                        .put(
-                            "properties",
-                            JSONObject()
-                                .put("invoice_id", JSONObject().put("type", "string"))
-                                .put("work_record_id", JSONObject().put("type", "string"))
-                                .put("id", JSONObject().put("type", "string"))
+                                .put("include_data_url", JSONObject().put("type", "boolean"))
                         )
                 )
         )

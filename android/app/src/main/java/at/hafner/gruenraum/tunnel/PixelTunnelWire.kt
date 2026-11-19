@@ -234,6 +234,7 @@ class PixelTunnelWire(
                 connection.requestMethod = method
                 connection.setRequestProperty("Authorization", "Bearer $secret")
                 connection.setRequestProperty("Accept", "application/json")
+                connection.setRequestProperty("Connection", "keep-alive")
                 if (organization.isNotEmpty()) {
                     connection.setRequestProperty("OpenAI-Organization", organization)
                 }

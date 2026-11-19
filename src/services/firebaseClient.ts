@@ -92,6 +92,13 @@ let bootChecked = false;
 export async function validateFirestoreBootConnection(): Promise<void> {
   if (bootChecked) return;
   bootChecked = true;
+  if (
+    typeof window !== 'undefined' &&
+    (window.location.hostname === 'appassets.androidplatform.net' ||
+      'HafnerNative' in window)
+  ) {
+    return;
+  }
   try {
     await getDocFromServer(doc(db, 'test', 'connection'));
   } catch (error) {
