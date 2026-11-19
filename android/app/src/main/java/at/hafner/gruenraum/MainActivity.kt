@@ -38,6 +38,7 @@ import at.hafner.gruenraum.calendar.NativeCalendarReader
 import at.hafner.gruenraum.documents.NativeDocumentManager
 import at.hafner.gruenraum.documents.NativeMailSender
 import at.hafner.gruenraum.storage.NativeStoreManager
+import at.hafner.gruenraum.sync.McpCredentials
 import at.hafner.gruenraum.sync.NativeMcpSyncManager
 import at.hafner.gruenraum.sync.SecureMcpCredentialStore
 import at.hafner.gruenraum.tunnel.PixelTunnelActivity
@@ -1527,7 +1528,7 @@ class MainActivity : AppCompatActivity() {
         private fun dispatchRawMimeViaNativeMail(
             activity: MainActivity?,
             mailSender: NativeMailSender,
-            creds: SecureMcpCredentialStore.McpCredentials,
+            creds: McpCredentials,
             senderEmail: String,
             recipientEmail: String,
             rawMime: String,
