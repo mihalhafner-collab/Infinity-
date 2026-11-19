@@ -681,10 +681,10 @@ async function handleSingleJsonRpc(
           },
           serverInfo: {
             name: 'infinity-hafner-mcp',
-            version: '1.3.6'
+            version: '1.3.7'
           },
           instructions:
-            'Privater OpenAI-MCP-Tunnel mit ausgehendem HTTPS (ChatGPT ↔ privater Tunnel ↔ Pixel-App ↔ lokale Datenbank auf Google Pixel 10 Pro). Bündle Leseabfragen über pixel_abfrage (collections: [...]) und Schreibvorgänge über pixel_aktion oder pixel_abrechnung (inkl. action="send_invoice" oder admin_send_invoice für den Rechnungsversand nach Nutzerfreigabe) in einem einzigen Aufruf, um Wartezeiten zu minimieren. Verwendet exakt dieselbe geprüfte App-Logik (L.C.R.-Sperren, RE-75/2026 Rechnungen, Rechnungsversand nach Nutzerfreigabe, Storno-Regeln und österreichische GuV).'
+            'Privater OpenAI-MCP-Tunnel mit ausgehendem HTTPS (ChatGPT ↔ privater Tunnel ↔ Pixel-App ↔ lokale Datenbank auf Google Pixel 10 Pro). Bündle Leseabfragen über pixel_abfrage (collections: [...], unbilled_only liefert ausschließlich abrechenbare Nicht-L.C.R.-Arbeiten, include_pdf=true liefert das Original-Rechnungs-PDF, include_delivery_status=true liefert die Versand-/Zustellbestätigung) und Schreib-/Versandvorgänge über pixel_aktion, pixel_abrechnung oder admin_send_invoice / admin_send_work_record / admin_get_invoice_pdf / admin_get_delivery_status.'
         }
       };
     }

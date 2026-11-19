@@ -1436,7 +1436,7 @@ export function buildDefaultInvoiceEmailPayload(
   };
 }
 
-function bytesToBase64Mime(bytes: Uint8Array): string {
+export function bytesToBase64Mime(bytes: Uint8Array): string {
   let binary = '';
   const chunkSize = 0x8000;
   for (let i = 0; i < bytes.length; i += chunkSize) {
@@ -1444,6 +1444,168 @@ function bytesToBase64Mime(bytes: Uint8Array): string {
     binary += String.fromCharCode(...chunk);
   }
   return btoa(binary);
+}
+
+export interface DefaultWorkRecordEmailPayload {
+  docTitle: string;
+  recipientEmail: string;
+  recipientPhone: string;
+  recipientName: string;
+  subject: string;
+  bodyText: string;
+  totalHours: number;
+  totalAmountEur: number;
+}
+
+export function buildDefaultWorkRecordEmailPayload(
+  records: WorkRecord[],
+  customer: Customer,
+  properties: CustomerProperty[] = []
+): DefaultWorkRecordEmailPayload {
+  const sorted = [...records].sort((a, b) => a.work_date.localeCompare(b.work_date));
+  const recipientName = customer.name || 'Kunde';
+  const recipientEmail = (customer.email || '').trim();
+  const recipientPhone = (customer.phone || '').trim();
+  const salutation = detectRecipientSalutation(recipientName, customer).salutationLine;
+  const period = computeServicePeriod(sorted, getTodayLocalIso());
+  const docTitle =
+    sorted.length === 1
+      ? `Arbeitsaufzeichnung vom ${formatDateDE(sorted[0].work_date)}`
+      : `Arbeitsaufzeichnungen (${period})`;
+
+  let totalHours = 0;
+  let totalAmount = 0;
+  const lines: string[] = [];
+
+  sorted.forEach((rec, idx) => {
+    const prop = rec.property_id ? properties.find((p) => p.id === rec.property_id) : undefined;
+    const propSuffix = prop && prop.name ? ` (${prop.name})` : '';
+    const hrs = Number(rec.hours || 0);
+    const rate = rec.hourly_rate !== null ? Number(rec.hourly_rate) : null;
+    const workAmt =
+      rec.accounting_amount !== null && rec.accounting_amount !== undefined
+        ? Number(rec.accounting_amount)
+        : rate !== null
+          ? Math.round(hrs * rate * 100) / 100
+          : 0;
+    totalHours += hrs;
+    totalAmount += workAmt;
+
+    const rateLabel = rate !== null ? ` à ${formatEuro(rate)}/Std` : '';
+    lines.push(
+      `${idx + 1}. ${formatDateDE(rec.work_date)} – ${rec.title}${propSuffix}: ${formatQtyTwoDecimals(hrs)} Std${rateLabel} (${formatEuro(workAmt)})`
+    );
+    if (rec.materials && rec.materials.length > 0) {
+      for (const m of rec.materials) {
+        const mTot =
+          m.total !== null
+            ? m.total
+            : m.price_per_unit !== null
+              ? Math.round(m.quantity * m.price_per_unit * 100) / 100
+              : 0;
+        lines.push(
+          `   • Material: ${m.name} (${formatQtyNumber(m.quantity)} ${m.unit}${mTot > 0 ? ` = ${formatEuro(mTot)}` : ''})`
+        );
+      }
+    }
+    if (rec.notes && rec.notes.trim() && rec.customer_visible !== false) {
+      lines.push(`   • Hinweis: ${rec.notes.trim()}`);
+    }
+  });
+
+  const subject = `${docTitle} – ${ISSUER_COMPANY}`;
+  const bodyText = [
+    salutation,
+    '',
+    `hiermit erhalten Sie die Übersicht Ihrer durchgeführten Arbeiten (${period}):`,
+    '',
+    ...lines,
+    '',
+    `Gesamtstunden: ${formatQtyTwoDecimals(totalHours)} Std`,
+    `Gesamtbetrag: ${formatEuro(Math.round(totalAmount * 100) / 100)}`,
+    '',
+    'Mit freundlichen Grüßen',
+    ISSUER_CONTACT_PERSON,
+    `${ISSUER_STREET}, ${ISSUER_CITY}`,
+    `Tel. ${ISSUER_PHONE}`
+  ].join('\n');
+
+  return {
+    docTitle,
+    recipientEmail,
+    recipientPhone,
+    recipientName,
+    subject,
+    bodyText,
+    totalHours: Math.round(totalHours * 100) / 100,
+    totalAmountEur: Math.round(totalAmount * 100) / 100
+  };
+}
+
+export async function sendPlainEmailViaGmail({
+  accessToken,
+  to,
+  subject,
+  bodyText,
+  onUnauthorized
+}: {
+  accessToken: string;
+  to: string;
+  subject: string;
+  bodyText: string;
+  onUnauthorized?: () => void;
+}): Promise<{ id: string }> {
+  const cleanTo = to.trim();
+  if (!cleanTo || !cleanTo.includes('@')) {
+    throw new Error('Bitte eine gültige Empfänger-E-Mail-Adresse eingeben.');
+  }
+  if (!accessToken || accessToken === 'LOCAL_MCP_VERIFIED') {
+    throw new Error(
+      'Kein gültiges Gmail-Zugriffstoken vorhanden. Bitte zuerst in Infinity mit Google (Gmail) anmelden.'
+    );
+  }
+
+  const bodyBase64 = wrapBase64LinesMime(utf8ToBase64Mime(bodyText));
+  const encodedSubject = `=?UTF-8?B?${utf8ToBase64Mime(subject)}?=`;
+  const generatedMsgId = `<hafner-work-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@gruenraum.at>`;
+
+  const mimeLines = [
+    `To: ${cleanTo}`,
+    `Subject: ${encodedSubject}`,
+    `Message-ID: ${generatedMsgId}`,
+    'MIME-Version: 1.0',
+    'Content-Type: text/plain; charset="UTF-8"',
+    'Content-Transfer-Encoding: base64',
+    '',
+    bodyBase64,
+    ''
+  ];
+
+  const rawBase64Url = asciiToBase64UrlMime(mimeLines.join('\r\n'));
+  const response = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ raw: rawBase64Url })
+  });
+
+  if (response.status === 401 || response.status === 403) {
+    onUnauthorized?.();
+    throw new Error(
+      'Gmail-Sitzung abgelaufen oder Berechtigung fehlt. Bitte erneut mit Google anmelden.'
+    );
+  }
+
+  if (!response.ok) {
+    const errPayload = await response.json().catch(() => null);
+    const detail = errPayload?.error?.message || `HTTP ${response.status}`;
+    throw new Error(`Gmail-Versand fehlgeschlagen: ${detail}`);
+  }
+
+  const parsed = (await response.json()) as { id?: string };
+  return { id: parsed.id || generatedMsgId };
 }
 
 function utf8ToBase64Mime(text: string): string {
@@ -1602,10 +1764,14 @@ if (typeof window !== 'undefined') {
           JSON.stringify({
             ok: true,
             base64Pdf,
+            pdfSizeBytes: buf.byteLength,
             filename: pdfArtifact.filename,
             subject: emailDefaults.subject,
             bodyText: emailDefaults.bodyText,
-            recipientEmail: emailDefaults.recipientEmail
+            recipientEmail: emailDefaults.recipientEmail,
+            recipientPhone: emailDefaults.recipientPhone,
+            recipientName: resolved.recipientName,
+            totalAmount: resolved.totalAmount
           })
         );
       } catch (err: unknown) {
@@ -1620,4 +1786,5 @@ if (typeof window !== 'undefined') {
     })();
   };
 }
+
 

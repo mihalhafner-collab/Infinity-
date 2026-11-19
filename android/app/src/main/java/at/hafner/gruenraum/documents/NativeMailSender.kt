@@ -107,6 +107,32 @@ class NativeMailSender(private val context: Context) {
         return lines.joinToString("\r\n")
     }
 
+    fun buildPlainTextMimeMessage(
+        senderEmail: String,
+        recipientEmail: String,
+        subject: String,
+        bodyText: String
+    ): String {
+        val wrappedBodyB64 = wrapBase64(encodeUtf8Base64SingleLine(bodyText))
+        val encodedSubject = "=?UTF-8?B?${encodeUtf8Base64SingleLine(subject)}?="
+        val cleanFrom = senderEmail.trim().ifBlank { "mihalhafner@gmail.com" }
+        val rfcMsgId = "<hafner-${System.currentTimeMillis()}@gruenraum.at>"
+
+        val lines = listOf(
+            "From: \"Hafner Gruenraum Handwerk\" <$cleanFrom>",
+            "To: ${recipientEmail.trim()}",
+            "Subject: $encodedSubject",
+            "Message-ID: $rfcMsgId",
+            "MIME-Version: 1.0",
+            "Content-Type: text/plain; charset=\"UTF-8\"",
+            "Content-Transfer-Encoding: base64",
+            "",
+            wrappedBodyB64,
+            ""
+        )
+        return lines.joinToString("\r\n")
+    }
+
     /**
      * Sendet die E-Mail inkl. PDF direkt per Gmail REST API (OAuth2 Bearer Token).
      */

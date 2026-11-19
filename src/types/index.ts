@@ -114,6 +114,11 @@ export interface WorkRecord {
   notes: string;
   materials: UsedMaterial[];
   photos: string[];
+  sent_at?: string | null;
+  sent_via?: string | null;
+  sent_to?: string | null;
+  sent_status?: 'sent' | 'failed' | null;
+  sent_message_id?: string | null;
   created_at?: string;
   updated_at?: string;
 }

@@ -1400,16 +1400,14 @@ class MainActivity : AppCompatActivity() {
             pendingMcpPdfCallbacks.remove(callbackId)?.complete(payloadJson)
         }
 
-        fun sendInvoiceViaExistingEngineBlocking(
-            context: Context,
+        fun buildInvoicePdfViaExistingEngineBlocking(
             invoice: JSONObject,
             customers: org.json.JSONArray,
-            workRecords: org.json.JSONArray,
-            recipientEmail: String
+            workRecords: org.json.JSONArray
         ): JSONObject {
             val activity = activeInstance?.get()
                 ?: throw IllegalStateException(
-                    "Bitte Infinity auf dem Pixel 10 Pro geöffnet lassen, damit das Original-Rechnungs-PDF erzeugt und versendet werden kann."
+                    "Bitte Infinity auf dem Pixel 10 Pro geöffnet lassen, damit das Original-Rechnungs-PDF erzeugt werden kann."
                 )
 
             val callbackId = "mcp_pdf_${System.currentTimeMillis()}_${java.util.UUID.randomUUID()}"
@@ -1435,7 +1433,7 @@ class MainActivity : AppCompatActivity() {
 
             val pdfJsonStr = try {
                 pdfFuture.get(15, java.util.concurrent.TimeUnit.SECONDS)
-            } catch (e: Exception) {
+            } catch (_: Exception) {
                 pendingMcpPdfCallbacks.remove(callbackId)
                 throw IllegalStateException("Zeitüberschreitung beim Erzeugen des Original-Rechnungs-PDFs.")
             }
@@ -1446,7 +1444,22 @@ class MainActivity : AppCompatActivity() {
                     pdfPayload.optString("error", "Original-Rechnungs-PDF konnte nicht erzeugt werden.")
                 )
             }
+            return pdfPayload
+        }
 
+        fun sendInvoiceViaExistingEngineBlocking(
+            context: Context,
+            invoice: JSONObject,
+            customers: org.json.JSONArray,
+            workRecords: org.json.JSONArray,
+            recipientEmail: String
+        ): JSONObject {
+            val activity = activeInstance?.get()
+                ?: throw IllegalStateException(
+                    "Bitte Infinity auf dem Pixel 10 Pro geöffnet lassen, damit das Original-Rechnungs-PDF erzeugt und versendet werden kann."
+                )
+
+            val pdfPayload = buildInvoicePdfViaExistingEngineBlocking(invoice, customers, workRecords)
             val base64Pdf = pdfPayload.optString("base64Pdf", "")
             val filename = pdfPayload.optString("filename", "Rechnung.pdf")
             val subject = pdfPayload.optString("subject", "Rechnung – Hafner Grünraum Handwerk")
@@ -1467,19 +1480,73 @@ class MainActivity : AppCompatActivity() {
                 base64Pdf = base64Pdf
             )
 
+            return dispatchRawMimeViaNativeMail(
+                activity = activity,
+                mailSender = mailSender,
+                creds = creds,
+                senderEmail = senderEmail,
+                recipientEmail = recipientEmail,
+                rawMime = rawMime,
+                notificationLabel = invNumber,
+                filename = filename
+            )
+        }
+
+        fun sendPlainEmailViaExistingEngineBlocking(
+            context: Context,
+            recipientEmail: String,
+            subject: String,
+            bodyText: String,
+            notificationLabel: String
+        ): JSONObject {
+            val activity = activeInstance?.get()
+            val credentialStore = SecureMcpCredentialStore(context.applicationContext)
+            val mailSender = NativeMailSender(context.applicationContext)
+            val creds = credentialStore.loadCredentials()
+            val senderEmail = creds.gmailSenderEmail.ifBlank { "mihalhafner@gmail.com" }
+
+            val rawMime = mailSender.buildPlainTextMimeMessage(
+                senderEmail = senderEmail,
+                recipientEmail = recipientEmail,
+                subject = subject,
+                bodyText = bodyText
+            )
+
+            return dispatchRawMimeViaNativeMail(
+                activity = activity,
+                mailSender = mailSender,
+                creds = creds,
+                senderEmail = senderEmail,
+                recipientEmail = recipientEmail,
+                rawMime = rawMime,
+                notificationLabel = notificationLabel,
+                filename = null
+            )
+        }
+
+        private fun dispatchRawMimeViaNativeMail(
+            activity: MainActivity?,
+            mailSender: NativeMailSender,
+            creds: SecureMcpCredentialStore.McpCredentials,
+            senderEmail: String,
+            recipientEmail: String,
+            rawMime: String,
+            notificationLabel: String,
+            filename: String?
+        ): JSONObject {
             // 1. Gespeichertes Google OAuth-Token
             val storedToken = creds.gmailOAuthToken.trim()
             if (storedToken.isNotEmpty()) {
                 val apiOutcome = mailSender.sendViaGmailRestApi(storedToken, rawMime)
                 if (apiOutcome.ok) {
-                    activity.runOnUiThread {
-                        mailSender.showMailSentNotification(recipientEmail, invNumber)
+                    activity?.runOnUiThread {
+                        mailSender.showMailSentNotification(recipientEmail, notificationLabel)
                     }
                     return JSONObject()
                         .put("ok", true)
                         .put("method", "gmail_api")
                         .put("messageId", apiOutcome.messageId ?: "gmail-${System.currentTimeMillis()}")
-                        .put("filename", filename)
+                        .apply { if (filename != null) put("filename", filename) }
                 }
             }
 
@@ -1493,41 +1560,43 @@ class MainActivity : AppCompatActivity() {
                     rawMimeMessage = rawMime
                 )
                 if (smtpOutcome.ok) {
-                    activity.runOnUiThread {
-                        mailSender.showMailSentNotification(recipientEmail, invNumber)
+                    activity?.runOnUiThread {
+                        mailSender.showMailSentNotification(recipientEmail, notificationLabel)
                     }
                     return JSONObject()
                         .put("ok", true)
                         .put("method", "smtp_tls")
                         .put("messageId", smtpOutcome.messageId ?: "smtp-${System.currentTimeMillis()}")
-                        .put("filename", filename)
+                        .apply { if (filename != null) put("filename", filename) }
                 }
             }
 
             // 3. Stille Hintergrund-Erneuerung des Google-OAuth-Tokens
-            val latch = java.util.concurrent.CountDownLatch(1)
-            var refreshedToken: String? = null
-            activity.requestNativeGoogleSignIn(
-                requestId = "",
-                silentOnly = true
-            ) { token, _ ->
-                refreshedToken = token
-                latch.countDown()
-            }
-            runCatching { latch.await(8, java.util.concurrent.TimeUnit.SECONDS) }
+            if (activity != null) {
+                val latch = java.util.concurrent.CountDownLatch(1)
+                var refreshedToken: String? = null
+                activity.requestNativeGoogleSignIn(
+                    requestId = "",
+                    silentOnly = true
+                ) { token, _ ->
+                    refreshedToken = token
+                    latch.countDown()
+                }
+                runCatching { latch.await(8, java.util.concurrent.TimeUnit.SECONDS) }
 
-            val silentToken = refreshedToken?.trim().orEmpty()
-            if (silentToken.isNotEmpty()) {
-                val retryOutcome = mailSender.sendViaGmailRestApi(silentToken, rawMime)
-                if (retryOutcome.ok) {
-                    activity.runOnUiThread {
-                        mailSender.showMailSentNotification(recipientEmail, invNumber)
+                val silentToken = refreshedToken?.trim().orEmpty()
+                if (silentToken.isNotEmpty()) {
+                    val retryOutcome = mailSender.sendViaGmailRestApi(silentToken, rawMime)
+                    if (retryOutcome.ok) {
+                        activity.runOnUiThread {
+                            mailSender.showMailSentNotification(recipientEmail, notificationLabel)
+                        }
+                        return JSONObject()
+                            .put("ok", true)
+                            .put("method", "gmail_api")
+                            .put("messageId", retryOutcome.messageId ?: "gmail-${System.currentTimeMillis()}")
+                            .apply { if (filename != null) put("filename", filename) }
                     }
-                    return JSONObject()
-                        .put("ok", true)
-                        .put("method", "gmail_api")
-                        .put("messageId", retryOutcome.messageId ?: "gmail-${System.currentTimeMillis()}")
-                        .put("filename", filename)
                 }
             }
 

@@ -76,7 +76,7 @@ class InfinityMcpDispatcher(
                         )
                         .put(
                             "instructions",
-                            "Direkter privater OpenAI-Pixel-Tunnel auf dem Google Pixel 10 Pro (App: Infinity · Hafner Michael – Grünraum Handwerk, Paket: at.hafner.gruenraum). Nutze infinity_status für Status/Revisionsprüfung, pixel_abfrage für Lesezugriffe (Übersicht, Kundensuche unabhängig von Namensreihenfolge, Einzeldatensätze, GuV), pixel_aktion für Schreibvorgänge (Anlegen, Ändern, Löschen, L.C.R., Wartung, Steuereinstellungen) und pixel_abrechnung bzw. admin_send_invoice für Rechnungen (RE-75/2026), Rechnungsversand nach ausdrücklicher Nutzerfreigabe (action='send_invoice', user_confirmed=true), Zahlungen und Storno."
+                            "Direkter privater OpenAI-Pixel-Tunnel auf dem Google Pixel 10 Pro (App: Infinity · Hafner Michael – Grünraum Handwerk, Paket: at.hafner.gruenraum). Nutze infinity_status für Status/Revisionsprüfung, pixel_abfrage für Lesezugriffe (Übersicht, Kundensuche, Einzeldatensätze, GuV, unbilled_only liefert ausschließlich abrechenbare Nicht-L.C.R.-Arbeiten, Original-Rechnungs-PDF via include_pdf=true, Versand-/Zustellbestätigung via include_delivery_status=true), pixel_aktion für Schreibvorgänge (Anlegen, Ändern, Löschen, L.C.R., Wartung, Steuereinstellungen, Arbeitsaufzeichnungen versenden via op='send_work_record') und pixel_abrechnung bzw. admin_send_invoice / admin_send_work_record / admin_get_invoice_pdf / admin_get_delivery_status für Rechnungen (RE-75/2026), Original-PDF-Abruf, Versand von Rechnungen & Arbeitsaufzeichnungen sowie Versand-/Zustellbestätigungen."
                         )
                     okResponse(idVal, result)
                 }
@@ -285,15 +285,28 @@ class InfinityMcpDispatcher(
                 calculateGuvSummaryJson(storeManager.loadOrInitStateObject(), year)
             }
 
+            "admin_get_invoice_pdf" -> getInvoicePdfInState(storeManager.loadOrInitStateObject(), args)
+
+            "admin_get_delivery_status" -> getDeliveryStatusInState(storeManager.loadOrInitStateObject(), args)
+
             "pixel_aktion",
             "admin_upsert_record",
             "admin_delete_record",
             "admin_toggle_lcr",
             "admin_record_maintenance",
             "admin_update_tax_settings",
+            "admin_send_work_record",
             "admin_batch_mutate" -> {
-                assertWritePermitted()
                 val normalizedArgs = normalizeLegacyActionArgs(name, args)
+                val opLabel = normalizedArgs.optString("op", "upsert").trim()
+                val hasBatch = (normalizedArgs.optJSONArray("operations")?.length() ?: 0) > 0
+                if (!hasBatch && opLabel == "get_invoice_pdf") {
+                    return getInvoicePdfInState(storeManager.loadOrInitStateObject(), normalizedArgs)
+                }
+                if (!hasBatch && opLabel == "delivery_status") {
+                    return getDeliveryStatusInState(storeManager.loadOrInitStateObject(), normalizedArgs)
+                }
+                assertWritePermitted()
                 val effectiveReqId = normalizedArgs.optString("request_id", "").trim()
                     .ifEmpty { tunnelRequestId }
                 val effectiveFp =
@@ -301,7 +314,6 @@ class InfinityMcpDispatcher(
                 val expectedRev = if (normalizedArgs.has("expected_revision") && !normalizedArgs.isNull("expected_revision")) {
                     normalizedArgs.optInt("expected_revision", -1).takeIf { it >= 0 }
                 } else null
-                val opLabel = normalizedArgs.optString("op", "upsert")
                 val colLabel = normalizedArgs.optString("collection", "batch")
                 storeManager.executeTunnelMutation(
                     requestId = effectiveReqId,
@@ -318,8 +330,15 @@ class InfinityMcpDispatcher(
             "admin_send_invoice",
             "admin_pay_invoice",
             "admin_storno_invoice" -> {
-                assertWritePermitted()
                 val normalizedArgs = normalizeLegacyBillingArgs(name, args)
+                val actLabel = normalizedArgs.optString("action", "create_invoice").trim()
+                if (actLabel == "get_invoice_pdf") {
+                    return getInvoicePdfInState(storeManager.loadOrInitStateObject(), normalizedArgs)
+                }
+                if (actLabel == "delivery_status") {
+                    return getDeliveryStatusInState(storeManager.loadOrInitStateObject(), normalizedArgs)
+                }
+                assertWritePermitted()
                 val effectiveReqId = normalizedArgs.optString("request_id", "").trim()
                     .ifEmpty { tunnelRequestId }
                 val effectiveFp =
@@ -327,7 +346,6 @@ class InfinityMcpDispatcher(
                 val expectedRev = if (normalizedArgs.has("expected_revision") && !normalizedArgs.isNull("expected_revision")) {
                     normalizedArgs.optInt("expected_revision", -1).takeIf { it >= 0 }
                 } else null
-                val actLabel = normalizedArgs.optString("action", "create_invoice")
                 storeManager.executeTunnelMutation(
                     requestId = effectiveReqId,
                     fingerprint = effectiveFp.ifEmpty { tunnelFingerprint },
@@ -363,6 +381,7 @@ class InfinityMcpDispatcher(
             "admin_delete_record" -> copy.put("op", "delete")
             "admin_toggle_lcr" -> copy.put("op", "toggle_lcr")
             "admin_record_maintenance" -> copy.put("op", "maintenance")
+            "admin_send_work_record" -> copy.put("op", "send_work_record")
             "admin_update_tax_settings" -> {
                 copy.put("op", "tax_settings")
                 if (copy.has("settings") && !copy.has("tax_settings")) {
@@ -378,6 +397,9 @@ class InfinityMcpDispatcher(
         when (toolName) {
             "admin_create_invoice" -> copy.put("action", "create_invoice")
             "admin_send_invoice" -> copy.put("action", "send_invoice")
+            "admin_send_work_record" -> copy.put("action", "send_work_record")
+            "admin_get_invoice_pdf" -> copy.put("action", "get_invoice_pdf")
+            "admin_get_delivery_status" -> copy.put("action", "delivery_status")
             "admin_storno_invoice" -> copy.put("action", "storno")
             "admin_pay_invoice" -> {
                 if (!copy.has("action")) copy.put("action", "pay")
@@ -532,8 +554,22 @@ class InfinityMcpDispatcher(
             requested.add(singleCol)
         }
 
-        if (requested.isEmpty() && !args.optBoolean("include_overview", false) && !args.optBoolean("include_guv", false) && !args.has("guv_year")) {
-            if (args.optBoolean("unbilled_only", false) || (args.has("is_lcr") && !args.isNull("is_lcr"))) {
+        val explicitIncludePdf = args.optBoolean("include_pdf", false)
+        val explicitIncludeDelivery = args.optBoolean("include_delivery_status", false)
+
+        if (
+            requested.isEmpty() &&
+            !args.optBoolean("include_overview", false) &&
+            !args.optBoolean("include_guv", false) &&
+            !args.has("guv_year") &&
+            !explicitIncludePdf &&
+            !explicitIncludeDelivery
+        ) {
+            if (
+                args.optBoolean("unbilled_only", false) ||
+                (args.has("is_lcr") && !args.isNull("is_lcr")) ||
+                (args.has("billable") && !args.isNull("billable"))
+            ) {
                 requested.add("workRecords")
             } else if (args.optString("customer_id", "").trim().isNotEmpty()) {
                 requested.add("customers")
@@ -546,7 +582,7 @@ class InfinityMcpDispatcher(
 
         val includeOverview =
             args.optBoolean("include_overview", false) ||
-                (requested.isEmpty() && !args.optBoolean("include_guv", false) && !args.has("guv_year"))
+                (requested.isEmpty() && !args.optBoolean("include_guv", false) && !args.has("guv_year") && !explicitIncludePdf && !explicitIncludeDelivery)
         val includeGuv = args.optBoolean("include_guv", false) || args.has("guv_year")
 
         val response = JSONObject()
@@ -580,6 +616,33 @@ class InfinityMcpDispatcher(
                 )
             }
             response.put("collections", multi)
+        }
+
+        val invTargetId = firstNonBlank(
+            args.optString("invoice_id", ""),
+            if (singleCol == "invoices" || requested.isEmpty()) args.optString("id", "") else ""
+        )
+        if (explicitIncludePdf && invTargetId.isNotEmpty()) {
+            response.put(
+                "invoice_pdf",
+                getInvoicePdfInState(state, JSONObject().put("invoice_id", invTargetId).put("include_base64", true))
+            )
+        }
+
+        val deliveryTargetInv = args.optString("invoice_id", "").trim()
+        val deliveryTargetWr = args.optString("work_record_id", "").trim()
+        val deliveryTargetGeneric = args.optString("id", "").trim()
+        if (explicitIncludeDelivery && (deliveryTargetInv.isNotEmpty() || deliveryTargetWr.isNotEmpty() || deliveryTargetGeneric.isNotEmpty())) {
+            response.put(
+                "delivery_status",
+                getDeliveryStatusInState(
+                    state,
+                    JSONObject()
+                        .put("invoice_id", deliveryTargetInv)
+                        .put("work_record_id", deliveryTargetWr)
+                        .put("id", deliveryTargetGeneric)
+                )
+            )
         }
         return response
     }
@@ -632,6 +695,8 @@ class InfinityMcpDispatcher(
         val parentEqIdFilter = args.optString("parent_equipment_id", "").trim()
         val hasLcrFilter = args.has("is_lcr") && !args.isNull("is_lcr")
         val lcrFilter = args.optBoolean("is_lcr", false)
+        val hasBillableFilter = args.has("billable") && !args.isNull("billable")
+        val billableFilter = args.optBoolean("billable", true)
         val unbilledOnly = args.optBoolean("unbilled_only", false)
         val dateFrom = args.optString("date_from", "").trim()
         val dateTo = args.optString("date_to", "").trim()
@@ -692,8 +757,13 @@ class InfinityMcpDispatcher(
             if (hasLcrFilter && col == "workRecords" && item.optBoolean("is_lcr", false) != lcrFilter) {
                 continue
             }
+            if (hasBillableFilter && col == "workRecords" && item.optBoolean("billable", true) != billableFilter) {
+                continue
+            }
             if (unbilledOnly && col == "workRecords") {
                 if (optNullableString(item, "settlement_id") != null) continue
+                if (!hasBillableFilter && !item.optBoolean("billable", true)) continue
+                if (!hasLcrFilter && item.optBoolean("is_lcr", false)) continue
             }
             if (dateFrom.isNotEmpty() || dateTo.isNotEmpty()) {
                 val itemDate = firstNonBlank(
@@ -730,6 +800,8 @@ class InfinityMcpDispatcher(
             var billedCount = 0
             var billedHours = 0.0
             var billedAmountEur = 0.0
+            var nonBillableCount = 0
+            var nonBillableHours = 0.0
             for (w in matchedItems) {
                 val hrs = w.optDouble("hours", 0.0)
                 val amt = getWorkAccountingAmount(w)
@@ -746,6 +818,9 @@ class InfinityMcpDispatcher(
                     openBillableCount++
                     openBillableHours += hrs
                     openBillableAmountEur += amt
+                } else {
+                    nonBillableCount++
+                    nonBillableHours += hrs
                 }
             }
             workSummary = JSONObject()
@@ -758,6 +833,8 @@ class InfinityMcpDispatcher(
                 .put("billedCount", billedCount)
                 .put("billedHours", round2(billedHours))
                 .put("billedAmountEur", round2(billedAmountEur))
+                .put("nonBillableCount", nonBillableCount)
+                .put("nonBillableHours", round2(nonBillableHours))
         }
 
         val totalMatched = matchedItems.size
@@ -773,6 +850,12 @@ class InfinityMcpDispatcher(
             .put("returnedCount", matched.length())
         if (workSummary != null) {
             out.put("workSummary", workSummary)
+        }
+        if (col == "invoices" && idFilter.isNotEmpty() && matchedItems.size == 1) {
+            out.put(
+                "deliveryStatus",
+                getDeliveryStatusInState(state, JSONObject().put("invoice_id", matchedItems[0].optString("id")))
+            )
         }
         out.put("items", matched)
         return out
@@ -1025,6 +1108,12 @@ class InfinityMcpDispatcher(
             }
 
             "send_invoice" -> sendInvoiceInState(state, args)
+
+            "send_work_record" -> sendWorkRecordInState(state, args)
+
+            "get_invoice_pdf" -> getInvoicePdfInState(state, args)
+
+            "delivery_status" -> getDeliveryStatusInState(state, args)
 
             else -> throw IllegalArgumentException("Unbekannte Aktion '$op'.")
         }
@@ -2538,6 +2627,9 @@ class InfinityMcpDispatcher(
         return when (val action = args.optString("action", "create_invoice").trim()) {
             "create_invoice" -> createInvoiceInState(state, args)
             "send_invoice" -> sendInvoiceInState(state, args)
+            "send_work_record" -> sendWorkRecordInState(state, args)
+            "get_invoice_pdf" -> getInvoicePdfInState(state, args)
+            "delivery_status" -> getDeliveryStatusInState(state, args)
             "storno" -> stornoInvoiceInState(state, args)
             "pay", "update_payment", "reverse_payment", "delete_payment", "refund" ->
                 payInvoiceInState(state, action, args)
@@ -3072,7 +3164,7 @@ class InfinityMcpDispatcher(
         }
 
         if (args.optBoolean("dry_run", false)) {
-            return JSONObject()
+            val dryOut = JSONObject()
                 .put("ok", true)
                 .put("action", "send_invoice")
                 .put("dry_run", true)
@@ -3084,6 +3176,14 @@ class InfinityMcpDispatcher(
                 .put("recipient_name", recipientName)
                 .put("recipient_email", recipientEmail)
                 .put("total_amount", inv.optDouble("total_amount", 0.0))
+            runCatching {
+                MainActivity.buildInvoicePdfViaExistingEngineBlocking(inv, customers, workRecords)
+            }.onSuccess { pdfPayload ->
+                dryOut.put("filename", pdfPayload.optString("filename", "Rechnung.pdf"))
+                dryOut.put("pdf_size_bytes", pdfPayload.optInt("pdfSizeBytes", 0))
+                dryOut.put("subject", pdfPayload.optString("subject", ""))
+            }
+            return dryOut
         }
 
         // Versand nur nach ausdrücklicher Freigabe durch den Nutzer
@@ -3115,6 +3215,15 @@ class InfinityMcpDispatcher(
         inv.put("sent_via", sentViaLabel)
         inv.put("updated_at", Instant.now().toString())
 
+        val deliveryConfirmation = JSONObject()
+            .put("sent", true)
+            .put("delivered_to_provider", true)
+            .put("provider", sendResult.optString("method", "gmail_api"))
+            .put("message_id", messageId)
+            .put("sent_at", sentDateIso)
+            .put("recipient_email", recipientEmail)
+            .put("filename", filename)
+
         return JSONObject()
             .put("ok", true)
             .put("action", "send_invoice")
@@ -3126,7 +3235,368 @@ class InfinityMcpDispatcher(
             .put("sent_message_id", messageId)
             .put("sent_via", sentViaLabel)
             .put("filename", filename)
+            .put("delivery_confirmation", deliveryConfirmation)
             .put("invoice", inv)
+    }
+
+    private fun findInvoiceByRef(invoices: JSONArray, rawRef: String): JSONObject? {
+        val ref = rawRef.trim()
+        if (ref.isEmpty()) return null
+        for (i in 0 until invoices.length()) {
+            val cand = invoices.optJSONObject(i) ?: continue
+            val cid = cand.optString("id", "").trim()
+            val cnum = cand.optString("invoice_number", "").trim()
+            if (cid.equals(ref, ignoreCase = true) || cnum.equals(ref, ignoreCase = true)) {
+                return cand
+            }
+        }
+        return null
+    }
+
+    private fun getInvoicePdfInState(state: JSONObject, args: JSONObject): JSONObject {
+        val invRef = firstNonBlank(
+            args.optString("invoice_id", ""),
+            args.optString("id", "")
+        )
+        if (invRef.isEmpty()) {
+            throw IllegalArgumentException("Parameter 'invoice_id' (ID oder Rechnungsnummer, z.B. RE-75/2026) ist erforderlich.")
+        }
+
+        val invoices = state.optJSONArray("invoices") ?: JSONArray()
+        val inv = findInvoiceByRef(invoices, invRef)
+            ?: throw IllegalArgumentException("Rechnung '$invRef' nicht gefunden.")
+
+        val customers = state.optJSONArray("customers") ?: JSONArray()
+        val workRecords = state.optJSONArray("workRecords") ?: JSONArray()
+        val pdfPayload = MainActivity.buildInvoicePdfViaExistingEngineBlocking(inv, customers, workRecords)
+
+        val base64Pdf = pdfPayload.optString("base64Pdf", "")
+        val filename = pdfPayload.optString("filename", "Rechnung.pdf")
+        val pdfSizeBytes = pdfPayload.optInt("pdfSizeBytes", (base64Pdf.length * 3) / 4)
+        val includeBase64 = if (args.has("include_base64")) args.optBoolean("include_base64", true) else true
+
+        val sentStatus = optNullableString(inv, "sent_status")
+        val sentAt = optNullableString(inv, "sent_at")
+        val sentMsgId = optNullableString(inv, "sent_message_id")
+        val isSent = sentStatus == "sent" || sentAt != null
+
+        val deliveryStatus = JSONObject()
+            .put("sent", isSent)
+            .put("delivered_to_provider", isSent && sentMsgId != null)
+            .put("sent_status", sentStatus ?: (if (isSent) "sent" else "unsent"))
+            .put("sent_at", sentAt ?: JSONObject.NULL)
+            .put("sent_to", optNullableString(inv, "sent_to") ?: JSONObject.NULL)
+            .put("sent_via", optNullableString(inv, "sent_via") ?: JSONObject.NULL)
+            .put("sent_message_id", sentMsgId ?: JSONObject.NULL)
+
+        val out = JSONObject()
+            .put("ok", true)
+            .put("action", "get_invoice_pdf")
+            .put("invoice_id", inv.optString("id"))
+            .put("invoice_number", inv.optString("invoice_number"))
+            .put("customer_id", inv.optString("customer_id"))
+            .put("recipient_name", pdfPayload.optString("recipientName", inv.optString("billing_customer_name", "")))
+            .put("recipient_email", pdfPayload.optString("recipientEmail", ""))
+            .put("filename", filename)
+            .put("mime_type", "application/pdf")
+            .put("pdf_size_bytes", pdfSizeBytes)
+            .put("subject", pdfPayload.optString("subject", ""))
+            .put("body_text", pdfPayload.optString("bodyText", ""))
+            .put("total_amount", inv.optDouble("total_amount", 0.0))
+            .put("delivery_status", deliveryStatus)
+
+        if (includeBase64) {
+            out.put("pdf_base64", base64Pdf)
+            out.put("data_url", "data:application/pdf;base64,$base64Pdf")
+        }
+        return out
+    }
+
+    private fun getDeliveryStatusInState(state: JSONObject, args: JSONObject): JSONObject {
+        val invRef = args.optString("invoice_id", "").trim()
+        val wrRef = args.optString("work_record_id", "").trim()
+        val genericId = args.optString("id", "").trim()
+
+        val invoices = state.optJSONArray("invoices") ?: JSONArray()
+        val workRecords = state.optJSONArray("workRecords") ?: JSONArray()
+        val customers = state.optJSONArray("customers") ?: JSONArray()
+
+        val targetInvRef = invRef.ifEmpty { genericId }
+        if (targetInvRef.isNotEmpty()) {
+            val inv = findInvoiceByRef(invoices, targetInvRef)
+            if (inv != null || invRef.isNotEmpty()) {
+                if (inv == null) {
+                    throw IllegalArgumentException("Rechnung '$targetInvRef' nicht gefunden.")
+                }
+                val cust = findById(customers, inv.optString("customer_id"))
+                val sentStatus = optNullableString(inv, "sent_status")
+                val sentAt = optNullableString(inv, "sent_at")
+                val sentMsgId = optNullableString(inv, "sent_message_id")
+                val isSent = sentStatus == "sent" || sentAt != null
+                val recipientEmail = firstNonBlank(
+                    optNullableString(inv, "sent_to").orEmpty(),
+                    cust?.optString("email", "").orEmpty()
+                )
+                return JSONObject()
+                    .put("ok", true)
+                    .put("action", "delivery_status")
+                    .put("record_type", "invoice")
+                    .put("id", inv.optString("id"))
+                    .put("invoice_id", inv.optString("id"))
+                    .put("invoice_number", inv.optString("invoice_number"))
+                    .put("customer_id", inv.optString("customer_id"))
+                    .put("recipient_name", firstNonBlank(inv.optString("billing_customer_name", ""), cust?.optString("name", "").orEmpty()))
+                    .put("recipient_email", recipientEmail.ifEmpty { JSONObject.NULL })
+                    .put("sent", isSent)
+                    .put("delivered_to_provider", isSent && sentMsgId != null)
+                    .put("sent_status", sentStatus ?: (if (isSent) "sent" else "unsent"))
+                    .put("sent_at", sentAt ?: JSONObject.NULL)
+                    .put("sent_to", optNullableString(inv, "sent_to") ?: JSONObject.NULL)
+                    .put("sent_via", optNullableString(inv, "sent_via") ?: JSONObject.NULL)
+                    .put("sent_message_id", sentMsgId ?: JSONObject.NULL)
+            }
+        }
+
+        val targetWrRef = wrRef.ifEmpty { genericId }
+        if (targetWrRef.isNotEmpty()) {
+            val wr = findById(workRecords, targetWrRef)
+                ?: throw IllegalArgumentException("Arbeitsaufzeichnung oder Rechnung '$targetWrRef' nicht gefunden.")
+            val cust = findById(customers, wr.optString("customer_id"))
+            val sentStatus = optNullableString(wr, "sent_status")
+            val sentAt = optNullableString(wr, "sent_at")
+            val sentMsgId = optNullableString(wr, "sent_message_id")
+            val isSent = sentStatus == "sent" || sentAt != null
+            val recipientEmail = firstNonBlank(
+                optNullableString(wr, "sent_to").orEmpty(),
+                cust?.optString("email", "").orEmpty()
+            )
+            return JSONObject()
+                .put("ok", true)
+                .put("action", "delivery_status")
+                .put("record_type", "workRecord")
+                .put("id", wr.optString("id"))
+                .put("work_record_id", wr.optString("id"))
+                .put("title", wr.optString("title"))
+                .put("work_date", wr.optString("work_date"))
+                .put("customer_id", wr.optString("customer_id"))
+                .put("recipient_name", cust?.optString("name") ?: "")
+                .put("recipient_email", recipientEmail.ifEmpty { JSONObject.NULL })
+                .put("sent", isSent)
+                .put("delivered_to_provider", isSent && sentMsgId != null)
+                .put("sent_status", sentStatus ?: (if (isSent) "sent" else "unsent"))
+                .put("sent_at", sentAt ?: JSONObject.NULL)
+                .put("sent_to", optNullableString(wr, "sent_to") ?: JSONObject.NULL)
+                .put("sent_via", optNullableString(wr, "sent_via") ?: JSONObject.NULL)
+                .put("sent_message_id", sentMsgId ?: JSONObject.NULL)
+        }
+
+        throw IllegalArgumentException("Parameter 'invoice_id', 'work_record_id' oder 'id' ist für delivery_status erforderlich.")
+    }
+
+    private fun sendWorkRecordInState(state: JSONObject, args: JSONObject): JSONObject {
+        val workRecords = state.optJSONArray("workRecords") ?: JSONArray()
+        val customers = state.optJSONArray("customers") ?: JSONArray()
+        val properties = state.optJSONArray("properties") ?: JSONArray()
+
+        val requestedIds = mutableListOf<String>()
+        val idsArr = args.optJSONArray("work_record_ids")
+        if (idsArr != null) {
+            for (i in 0 until idsArr.length()) {
+                val wid = idsArr.optString(i, "").trim()
+                if (wid.isNotEmpty() && !requestedIds.contains(wid)) requestedIds.add(wid)
+            }
+        }
+        val singleId = firstNonBlank(
+            args.optString("work_record_id", ""),
+            args.optString("id", "")
+        )
+        if (singleId.isNotEmpty() && !requestedIds.contains(singleId)) {
+            requestedIds.add(singleId)
+        }
+
+        val targetRecords = mutableListOf<JSONObject>()
+        if (requestedIds.isNotEmpty()) {
+            for (wid in requestedIds) {
+                val rec = findById(workRecords, wid)
+                    ?: throw IllegalArgumentException("Arbeitsaufzeichnung '$wid' nicht gefunden.")
+                targetRecords.add(rec)
+            }
+        } else {
+            val custRef = args.optString("customer_id", "").trim()
+            if (custRef.isNotEmpty()) {
+                val resolvedCust = resolveCustomerByIdOrName(customers, custRef)
+                val targetCustId = resolvedCust?.optString("id") ?: custRef
+                for (i in 0 until workRecords.length()) {
+                    val w = workRecords.optJSONObject(i) ?: continue
+                    if (
+                        (w.optString("customer_id") == targetCustId ||
+                            getEffectiveBillingCustomerId(w, customers) == targetCustId) &&
+                        optNullableString(w, "settlement_id") == null &&
+                        w.optBoolean("billable", true) &&
+                        !w.optBoolean("is_lcr", false)
+                    ) {
+                        targetRecords.add(w)
+                    }
+                }
+            }
+        }
+
+        if (targetRecords.isEmpty()) {
+            throw IllegalArgumentException(
+                "Keine passenden Arbeitsaufzeichnungen zum Versenden gefunden. Bitte 'work_record_id', 'work_record_ids' oder 'customer_id' angeben."
+            )
+        }
+
+        val primaryRec = targetRecords[0]
+        val effectiveCustId = getEffectiveBillingCustomerId(primaryRec, customers)
+        val customer = findById(customers, effectiveCustId) ?: findById(customers, primaryRec.optString("customer_id"))
+        val recipientName = firstNonBlank(customer?.optString("name", "").orEmpty(), "Kunde")
+        val recipientEmail = firstNonBlank(
+            args.optString("recipient_email", ""),
+            optNullableString(primaryRec, "sent_to").orEmpty(),
+            customer?.optString("email", "").orEmpty()
+        )
+        if (recipientEmail.isEmpty() || !recipientEmail.contains("@")) {
+            throw IllegalStateException(
+                "Versand fehlgeschlagen: Für Arbeitsaufzeichnung '${primaryRec.optString("title")}' ($recipientName) ist keine gültige Empfänger-E-Mail-Adresse hinterlegt."
+            )
+        }
+
+        val sorted = targetRecords.sortedBy { it.optString("work_date", "") }
+        val subject = if (sorted.size == 1) {
+            "Arbeitsaufzeichnung vom ${formatDeDate(sorted[0].optString("work_date", todayIso()))} – ${sorted[0].optString("title", "Gartenarbeit")} – Hafner Grünraum Handwerk"
+        } else {
+            "Arbeitsaufzeichnungen (${sorted.size} Einsätze) – Hafner Grünraum Handwerk"
+        }
+
+        var totalHours = 0.0
+        var totalAmount = 0.0
+        val lines = mutableListOf<String>()
+        for (idx in sorted.indices) {
+            val rec = sorted[idx]
+            val propId = optNullableString(rec, "property_id")
+            val prop = if (propId != null) findById(properties, propId) else null
+            val dateStr = formatDeDate(rec.optString("work_date", todayIso()))
+            val hrs = rec.optDouble("hours", 0.0)
+            val amt = getWorkAccountingAmount(rec)
+            totalHours += hrs
+            totalAmount += amt
+            val propSuffix = if (prop != null && prop.optString("name", "").isNotEmpty()) " (${prop.optString("name")})" else ""
+            val amtSuffix = if (amt > 0.0) " · ${formatDec(amt)} EUR" else ""
+            lines.add("${idx + 1}. $dateStr – ${rec.optString("title", "Gartenarbeit")}$propSuffix: ${formatDec(hrs)} Std.$amtSuffix")
+
+            val mats = rec.optJSONArray("materials")
+            if (mats != null && mats.length() > 0) {
+                for (mIdx in 0 until mats.length()) {
+                    val m = mats.optJSONObject(mIdx) ?: continue
+                    val mTot = if (m.has("total") && !m.isNull("total")) " (${formatDec(m.optDouble("total", 0.0))} EUR)" else ""
+                    lines.add("   - Material: ${formatDec(m.optDouble("quantity", 1.0))} ${m.optString("unit", "Stück")} ${m.optString("name", "Material")}$mTot")
+                }
+            }
+            val notes = rec.optString("notes", "").trim()
+            if (notes.isNotEmpty() && rec.optBoolean("customer_visible", true)) {
+                lines.add("   - Hinweis: $notes")
+            }
+        }
+        totalHours = round2(totalHours)
+        totalAmount = round2(totalAmount)
+
+        val totalLine = if (totalAmount > 0.0) {
+            "Gesamt: ${formatDec(totalHours)} Std. · ${formatDec(totalAmount)} EUR"
+        } else {
+            "Gesamtstunden: ${formatDec(totalHours)} Std."
+        }
+        val bodyText = listOf(
+            "Guten Tag $recipientName,",
+            "",
+            "anbei erhalten Sie die Übersicht Ihrer durchgeführten Arbeiten von Hafner Michael – Grünraum Handwerk:",
+            "",
+            lines.joinToString("\n"),
+            "",
+            totalLine,
+            "",
+            "Mit freundlichen Grüßen",
+            "Michael Hafner",
+            "Hafner Grünraum Handwerk",
+            "Tel.: +436781280702",
+            "E-Mail: mihalhafner@gmail.com"
+        ).joinToString("\n")
+
+        val outIdsArr = JSONArray()
+        for (r in targetRecords) outIdsArr.put(r.optString("id"))
+
+        if (args.optBoolean("dry_run", false)) {
+            return JSONObject()
+                .put("ok", true)
+                .put("action", "send_work_record")
+                .put("dry_run", true)
+                .put("sent", false)
+                .put("ready_to_send", true)
+                .put("requires_user_confirmed", true)
+                .put("work_record_ids", outIdsArr)
+                .put("count", targetRecords.size)
+                .put("recipient_name", recipientName)
+                .put("recipient_email", recipientEmail)
+                .put("subject", subject)
+                .put("body_text", bodyText)
+                .put("total_hours", totalHours)
+                .put("total_amount", totalAmount)
+        }
+
+        val userConfirmed = args.optBoolean("user_confirmed", false) || args.optBoolean("confirmed", false)
+        if (!userConfirmed) {
+            throw IllegalStateException(
+                "Freigabe erforderlich: Arbeitsaufzeichnung (${targetRecords.size} Eintrag/Einträge, ${formatDec(totalHours)} Std.) an $recipientEmail ($recipientName) darf nur nach ausdrücklicher Freigabe durch den Nutzer versendet werden. Bitte Freigabe einholen und anschließend mit \"user_confirmed\": true erneut aufrufen."
+            )
+        }
+
+        val sendResult = MainActivity.sendPlainEmailViaExistingEngineBlocking(
+            context = context,
+            recipientEmail = recipientEmail,
+            subject = subject,
+            bodyText = bodyText,
+            notificationLabel = "Arbeitsaufzeichnung"
+        )
+
+        val sentDateIso = todayIso()
+        val nowIso = Instant.now().toString()
+        val messageId = sendResult.optString("messageId", "gmail-work-${System.currentTimeMillis()}")
+        val sentViaLabel = "Gmail Arbeitsaufzeichnung ($recipientEmail)"
+
+        val updatedArr = JSONArray()
+        for (rec in targetRecords) {
+            rec.put("sent_at", sentDateIso)
+            rec.put("sent_to", recipientEmail)
+            rec.put("sent_status", "sent")
+            rec.put("sent_message_id", messageId)
+            rec.put("sent_via", sentViaLabel)
+            rec.put("updated_at", nowIso)
+            updatedArr.put(stripHeavyPhotos(rec, false))
+        }
+
+        val deliveryConfirmation = JSONObject()
+            .put("sent", true)
+            .put("delivered_to_provider", true)
+            .put("provider", sendResult.optString("method", "gmail_api"))
+            .put("message_id", messageId)
+            .put("sent_at", sentDateIso)
+            .put("recipient_email", recipientEmail)
+
+        return JSONObject()
+            .put("ok", true)
+            .put("action", "send_work_record")
+            .put("work_record_ids", outIdsArr)
+            .put("count", targetRecords.size)
+            .put("sent_at", sentDateIso)
+            .put("sent_to", recipientEmail)
+            .put("sent_status", "sent")
+            .put("sent_message_id", messageId)
+            .put("sent_via", sentViaLabel)
+            .put("subject", subject)
+            .put("total_hours", totalHours)
+            .put("total_amount", totalAmount)
+            .put("delivery_confirmation", deliveryConfirmation)
+            .put("records", updatedArr)
     }
 
     /**
@@ -3465,6 +3935,7 @@ class InfinityMcpDispatcher(
                                 .put("item_type", JSONObject().put("type", "string"))
                                 .put("parent_equipment_id", JSONObject().put("type", "string"))
                                 .put("is_lcr", JSONObject().put("type", "boolean"))
+                                .put("billable", JSONObject().put("type", "boolean"))
                                 .put("unbilled_only", JSONObject().put("type", "boolean"))
                                 .put("date_from", JSONObject().put("type", "string"))
                                 .put("date_to", JSONObject().put("type", "string"))
@@ -3479,6 +3950,10 @@ class InfinityMcpDispatcher(
                                 .put("include_overview", JSONObject().put("type", "boolean"))
                                 .put("include_guv", JSONObject().put("type", "boolean"))
                                 .put("guv_year", JSONObject().put("type", "number"))
+                                .put("include_pdf", JSONObject().put("type", "boolean"))
+                                .put("include_delivery_status", JSONObject().put("type", "boolean"))
+                                .put("invoice_id", JSONObject().put("type", "string"))
+                                .put("work_record_id", JSONObject().put("type", "string"))
                         )
                 )
         )
@@ -3488,12 +3963,12 @@ class InfinityMcpDispatcher(
                 .put("name", "pixel_aktion")
                 .put(
                     "description",
-                    "Geprüfte Schreibfunktion für die lokale Infinity-Datenbank auf dem Pixel 10 Pro (erfordert aktive Schreibfreigabe am Gerät): Anlegen, Ändern und Löschen von Kunden, Objekten, Terminen, Arbeitsaufzeichnungen, Anfragen, Angeboten, Aufträgen, Geräten, Material und Ausgaben inklusive dauerhaftem Wiederholungsbeleg (request_id) und Revisionsprüfung."
+                    "Geprüfte Schreibfunktion für die lokale Infinity-Datenbank auf dem Pixel 10 Pro (erfordert aktive Schreibfreigabe am Gerät): Anlegen, Ändern und Löschen von Kunden, Objekten, Terminen, Arbeitsaufzeichnungen, Anfragen, Angeboten, Aufträgen, Geräten, Material und Ausgaben sowie Direktversand von Rechnungen (op='send_invoice') und Arbeitsaufzeichnungen (op='send_work_record'), Abruf des Original-Rechnungs-PDFs (op='get_invoice_pdf') und Versand-/Zustellbestätigung (op='delivery_status')."
                 )
                 .put(
                     "annotations",
                     JSONObject()
-                        .put("title", "Infinity Daten anlegen, ändern & löschen")
+                        .put("title", "Infinity Daten anlegen, ändern, löschen & versenden")
                         .put("readOnlyHint", false)
                         .put("destructiveHint", true)
                         .put("idempotentHint", true)
@@ -3522,12 +3997,18 @@ class InfinityMcpDispatcher(
                                                 .put("equipment_media")
                                                 .put("tax_settings")
                                                 .put("send_invoice")
+                                                .put("send_work_record")
+                                                .put("get_invoice_pdf")
+                                                .put("delivery_status")
                                         )
                                 )
                                 .put("invoice_id", JSONObject().put("type", "string"))
+                                .put("work_record_id", JSONObject().put("type", "string"))
+                                .put("customer_id", JSONObject().put("type", "string"))
                                 .put("user_confirmed", JSONObject().put("type", "boolean"))
                                 .put("dry_run", JSONObject().put("type", "boolean"))
                                 .put("recipient_email", JSONObject().put("type", "string"))
+                                .put("include_base64", JSONObject().put("type", "boolean"))
                                 .put("collection", JSONObject().put("type", "string"))
                                 .put("id", JSONObject().put("type", "string"))
                                 .put(
@@ -3578,12 +4059,12 @@ class InfinityMcpDispatcher(
                 .put("name", "pixel_abrechnung")
                 .put(
                     "description",
-                    "Geprüfte Abrechnungs-Logik auf dem Pixel 10 Pro (erfordert aktive Schreibfreigabe am Gerät): Erstellt Rechnungen (Format RE-75/2026, §6 Abs. 1 Z 27 UStG Kleinunternehmerregelung, Sperre abgerechneter Arbeiten über settlement_id), versendet bestehende Original-Rechnungs-PDFs nach ausdrücklicher Nutzerfreigabe (action='send_invoice', user_confirmed=true), verbucht Zahlungen oder erstellt Stornobelege (RE-S01/2026)."
+                    "Geprüfte Abrechnungs- und Versand-Logik auf dem Pixel 10 Pro: Erstellt Rechnungen (Format RE-75/2026, §6 Abs. 1 Z 27 UStG Kleinunternehmerregelung, Sperre abgerechneter Arbeiten über settlement_id), ruft das Original-Rechnungs-PDF ab (action='get_invoice_pdf'), versendet Original-Rechnungs-PDFs (action='send_invoice', user_confirmed=true) oder Arbeitsaufzeichnungen (action='send_work_record', user_confirmed=true), prüft die Versand- und Zustellbestätigung (action='delivery_status'), verbucht Zahlungen oder erstellt Stornobelege (RE-S01/2026)."
                 )
                 .put(
                     "annotations",
                     JSONObject()
-                        .put("title", "Infinity Rechnung erstellen, versenden, Zahlung buchen oder stornieren")
+                        .put("title", "Infinity Rechnung erstellen, PDF abrufen, versenden, Zahlung buchen oder stornieren")
                         .put("readOnlyHint", false)
                         .put("destructiveHint", false)
                         .put("idempotentHint", true)
@@ -3607,6 +4088,9 @@ class InfinityMcpDispatcher(
                                             JSONArray()
                                                 .put("create_invoice")
                                                 .put("send_invoice")
+                                                .put("send_work_record")
+                                                .put("get_invoice_pdf")
+                                                .put("delivery_status")
                                                 .put("pay")
                                                 .put("update_payment")
                                                 .put("reverse_payment")
@@ -3616,6 +4100,7 @@ class InfinityMcpDispatcher(
                                         )
                                 )
                                 .put("customer_id", JSONObject().put("type", "string"))
+                                .put("work_record_id", JSONObject().put("type", "string"))
                                 .put(
                                     "work_record_ids",
                                     JSONObject()
@@ -3641,6 +4126,7 @@ class InfinityMcpDispatcher(
                                 .put("payment_terms_text", JSONObject().put("type", "string"))
                                 .put("paid_in_cash", JSONObject().put("type", "boolean"))
                                 .put("invoice_id", JSONObject().put("type", "string"))
+                                .put("include_base64", JSONObject().put("type", "boolean"))
                                 .put("user_confirmed", JSONObject().put("type", "boolean"))
                                 .put("dry_run", JSONObject().put("type", "boolean"))
                                 .put("recipient_email", JSONObject().put("type", "string"))
@@ -3660,7 +4146,7 @@ class InfinityMcpDispatcher(
                 .put("name", "admin_send_invoice")
                 .put(
                     "description",
-                    "Versendet eine bestehende Original-Rechnung (PDF) aus Infinity per E-Mail an die hinterlegte Kundenadresse. Erfordert ausdrückliche Nutzerfreigabe (user_confirmed=true) oder dry_run=true für einen Trockenlauf ohne echten Versand."
+                    "Versendet eine bestehende Original-Rechnung (PDF) aus Infinity per E-Mail an die hinterlegte Kundenadresse und liefert die Versand- und Zustellbestätigung (sent_message_id, sent_at, delivery_confirmation). Erfordert ausdrückliche Nutzerfreigabe (user_confirmed=true) oder dry_run=true für einen Trockenlauf."
                 )
                 .put(
                     "annotations",
@@ -3686,6 +4172,109 @@ class InfinityMcpDispatcher(
                                 .put("recipient_email", JSONObject().put("type", "string"))
                                 .put("request_id", JSONObject().put("type", "string"))
                                 .put("expected_revision", JSONObject().put("type", "number"))
+                        )
+                )
+        )
+
+        tools.put(
+            JSONObject()
+                .put("name", "admin_send_work_record")
+                .put(
+                    "description",
+                    "Versendet eine oder mehrere Arbeitsaufzeichnungen aus Infinity direkt per E-Mail an den Kunden und speichert die Versand- und Zustellbestätigung (sent_at, sent_to, sent_status='sent', sent_message_id). Erfordert user_confirmed=true oder dry_run=true."
+                )
+                .put(
+                    "annotations",
+                    JSONObject()
+                        .put("title", "Arbeitsaufzeichnung direkt per E-Mail versenden")
+                        .put("readOnlyHint", false)
+                        .put("destructiveHint", false)
+                        .put("idempotentHint", true)
+                        .put("openWorldHint", false)
+                )
+                .put(
+                    "inputSchema",
+                    JSONObject()
+                        .put("type", "object")
+                        .put("additionalProperties", false)
+                        .put(
+                            "properties",
+                            JSONObject()
+                                .put("work_record_id", JSONObject().put("type", "string"))
+                                .put(
+                                    "work_record_ids",
+                                    JSONObject()
+                                        .put("type", "array")
+                                        .put("items", JSONObject().put("type", "string"))
+                                )
+                                .put("customer_id", JSONObject().put("type", "string"))
+                                .put("user_confirmed", JSONObject().put("type", "boolean"))
+                                .put("dry_run", JSONObject().put("type", "boolean"))
+                                .put("recipient_email", JSONObject().put("type", "string"))
+                                .put("request_id", JSONObject().put("type", "string"))
+                                .put("expected_revision", JSONObject().put("type", "number"))
+                        )
+                )
+        )
+
+        tools.put(
+            JSONObject()
+                .put("name", "admin_get_invoice_pdf")
+                .put(
+                    "description",
+                    "Ruft das Original-Rechnungs-PDF einer bestehenden Rechnung aus Infinity ab (inkl. Base64-PDF pdf_base64, data_url, Dateiname, Betreff, Begleittext und aktuellem Versand-/Zustellstatus), z.B. für direkten Abruf oder Übergabe an einen Versanddienst."
+                )
+                .put(
+                    "annotations",
+                    JSONObject()
+                        .put("title", "Original-Rechnungs-PDF abrufen")
+                        .put("readOnlyHint", true)
+                        .put("destructiveHint", false)
+                        .put("idempotentHint", true)
+                        .put("openWorldHint", false)
+                )
+                .put(
+                    "inputSchema",
+                    JSONObject()
+                        .put("type", "object")
+                        .put("additionalProperties", false)
+                        .put("required", JSONArray().put("invoice_id"))
+                        .put(
+                            "properties",
+                            JSONObject()
+                                .put("invoice_id", JSONObject().put("type", "string"))
+                                .put("include_base64", JSONObject().put("type", "boolean"))
+                        )
+                )
+        )
+
+        tools.put(
+            JSONObject()
+                .put("name", "admin_get_delivery_status")
+                .put(
+                    "description",
+                    "Ruft die Versand- und Zustellbestätigung (sent, delivered_to_provider, sent_status, sent_at, sent_to, sent_via, sent_message_id) für eine Rechnung oder eine Arbeitsaufzeichnung ab."
+                )
+                .put(
+                    "annotations",
+                    JSONObject()
+                        .put("title", "Versand- und Zustellbestätigung abrufen")
+                        .put("readOnlyHint", true)
+                        .put("destructiveHint", false)
+                        .put("idempotentHint", true)
+                        .put("openWorldHint", false)
+                )
+                .put(
+                    "inputSchema",
+                    JSONObject()
+                        .put("type", "object")
+                        .put("additionalProperties", false)
+                        .put(
+                            "properties",
+                            JSONObject()
+                                .put("invoice_id", JSONObject().put("type", "string"))
+                                .put("work_record_id", JSONObject().put("type", "string"))
+                                .put("id", JSONObject().put("type", "string"))
                         )
                 )
         )
