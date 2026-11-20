@@ -44,7 +44,9 @@ const LEGACY_CATEGORY_LABELS: Record<string, string> = {
   zub_filter_psa_sonstiges: 'Betriebsstoff & PSA',
   allgemein: 'Allgemein',
   geraet: 'Allgemeines Gerät',
-  zubehoer: 'Zubehör & Ersatzteile'
+  zubehoer: 'Zubehör & Ersatzteile',
+  kleinteil: 'Kleinteile',
+  kleinteile: 'Kleinteile'
 };
 
 const GLOBAL_SPEC_LABELS: Record<string, string> = {
@@ -145,9 +147,27 @@ export const SUGGESTED_CATEGORIES_ZUBEHOER = [
   'Ersatzteil / Zubehör'
 ] as const;
 
-export function getCategoryLabel(categoryId?: string, itemType?: 'geraet' | 'zubehoer'): string {
+export const SUGGESTED_CATEGORIES_KLEINTEIL = [
+  'Schrauben & Muttern',
+  'Dichtungen & O-Ringe',
+  'Filter & Zündkerzen',
+  'Splinte, Stifte & Federn',
+  'Schlauchverbinder & Schellen',
+  'Klingen & Ersatzmesser',
+  'Elektro- & Kabelkleinteile',
+  'Befestigung & Montage',
+  'Lager, Buchsen & Ringe',
+  'Kleinteil / Ersatzteil'
+] as const;
+
+export function getCategoryLabel(
+  categoryId?: string,
+  itemType?: 'geraet' | 'zubehoer' | 'kleinteil'
+): string {
   if (!categoryId || !categoryId.trim()) {
-    return itemType === 'zubehoer' ? 'Zubehör & Ersatzteile' : 'Allgemein';
+    if (itemType === 'kleinteil') return 'Kleinteile';
+    if (itemType === 'zubehoer') return 'Zubehör & Ersatzteile';
+    return 'Allgemein';
   }
   const trimmed = categoryId.trim();
   const lower = trimmed.toLowerCase();
@@ -158,9 +178,12 @@ export function getCategoryLabel(categoryId?: string, itemType?: 'geraet' | 'zub
 
 export function getFunctionalGroupInfo(
   categoryId?: string,
-  itemType?: 'geraet' | 'zubehoer'
+  itemType?: 'geraet' | 'zubehoer' | 'kleinteil'
 ): FunctionalGroupInfo {
   const label = getCategoryLabel(categoryId, itemType);
+  if (itemType === 'kleinteil') {
+    return { id: `kt:${label}`, title: label, order: 30 };
+  }
   if (itemType === 'zubehoer') {
     return { id: `zub:${label}`, title: label, order: 20 };
   }

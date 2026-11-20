@@ -19,6 +19,7 @@ import {
   getStore,
   hydrateAdminEngineStores,
   isCollectionName,
+  isKleinteileAlias,
   isValidAdminToken,
   queryCollection,
   recordMcpAccess,
@@ -757,7 +758,13 @@ async function handleSingleJsonRpc(
               name: `Collection: ${col}`,
               mimeType: 'application/json',
               description: `Alle gespeicherten Einträge aus ${col}`
-            }))
+            })),
+            {
+              uri: 'app://collection/kleinteile',
+              name: 'Collection: kleinteile (Kleinteileübersicht)',
+              mimeType: 'application/json',
+              description: 'Alle gespeicherten Kleinteile & Ersatzteile (item_type="kleinteil" in equipments)'
+            }
           ]
         }
       };
@@ -792,7 +799,7 @@ async function handleSingleJsonRpc(
       const prefix = 'app://collection/';
       if (uri.startsWith(prefix)) {
         const col = uri.slice(prefix.length);
-        if (isCollectionName(col)) {
+        if (isCollectionName(col) || isKleinteileAlias(col)) {
           return {
             jsonrpc: '2.0',
             id,
@@ -801,7 +808,13 @@ async function handleSingleJsonRpc(
                 {
                   uri,
                   mimeType: 'application/json',
-                  text: JSON.stringify(queryCollection({ collection: col }), null, 2)
+                  text: JSON.stringify(
+                    queryCollection({
+                      collection: isKleinteileAlias(col) ? 'kleinteile' : (col as typeof COLLECTION_NAMES[number])
+                    }),
+                    null,
+                    2
+                  )
                 }
               ]
             }

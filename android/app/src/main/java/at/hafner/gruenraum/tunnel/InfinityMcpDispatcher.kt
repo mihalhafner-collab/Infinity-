@@ -204,6 +204,13 @@ class InfinityMcpDispatcher(
                                 .put("description", "Einträge aus $col")
                         )
                     }
+                    resources.put(
+                        JSONObject()
+                            .put("uri", "app://collection/kleinteile")
+                            .put("name", "Collection: kleinteile (Kleinteileübersicht)")
+                            .put("mimeType", "application/json")
+                            .put("description", "Alle Kleinteile & Ersatzteile (item_type='kleinteil' in equipments)")
+                    )
                     okResponse(idVal, JSONObject().put("resources", resources))
                 }
 
@@ -228,7 +235,7 @@ class InfinityMcpDispatcher(
                         )
                     } else if (uri.startsWith("app://collection/")) {
                         val col = uri.removePrefix("app://collection/")
-                        if (NativeStoreManager.COLLECTION_KEYS.contains(col)) {
+                        if (NativeStoreManager.COLLECTION_KEYS.contains(col) || isKleinteileAlias(col)) {
                             val data = queryCollection(
                                 storeManager.loadOrInitLightStateObject(),
                                 JSONObject().put("collection", col).put("limit", 100)
@@ -432,11 +439,39 @@ class InfinityMcpDispatcher(
         return copy
     }
 
+    private fun isKleinteileAlias(col: String): Boolean {
+        val c = col.trim().lowercase(Locale.ROOT)
+        return c == "kleinteile" || c == "kleinteil"
+    }
+
+    private fun normalizeEquipmentItemType(raw: String?): String {
+        return when (raw?.trim()?.lowercase(Locale.ROOT)) {
+            "kleinteil", "kleinteile", "ersatzteil", "small_part" -> "kleinteil"
+            "zubehoer", "zubehör", "accessory" -> "zubehoer"
+            else -> "geraet"
+        }
+    }
+
     private fun buildStatusPayload(state: JSONObject): JSONObject {
         val counts = JSONObject()
         for (col in NativeStoreManager.COLLECTION_KEYS) {
             counts.put(col, state.optJSONArray(col)?.length() ?: 0)
         }
+        val eqArr = state.optJSONArray("equipments") ?: JSONArray()
+        var geraeteCount = 0
+        var zubehoerCount = 0
+        var kleinteileCount = 0
+        for (i in 0 until eqArr.length()) {
+            val eq = eqArr.optJSONObject(i) ?: continue
+            when (normalizeEquipmentItemType(eq.optString("item_type", "geraet"))) {
+                "kleinteil" -> kleinteileCount++
+                "zubehoer" -> zubehoerCount++
+                else -> geraeteCount++
+            }
+        }
+        counts.put("geraete", geraeteCount)
+        counts.put("zubehoer", zubehoerCount)
+        counts.put("kleinteile", kleinteileCount)
         return JSONObject()
             .put("app", "Infinity")
             .put("business", "Hafner Michael – Grünraum Handwerk")
@@ -672,7 +707,9 @@ class InfinityMcpDispatcher(
     }
 
     private fun queryCollection(state: JSONObject, args: JSONObject): JSONObject {
-        val col = args.optString("collection", "").trim()
+        val rawCol = args.optString("collection", "").trim()
+        val isKleinteileCol = isKleinteileAlias(rawCol)
+        val col = if (isKleinteileCol) "equipments" else rawCol
         val rev = storeManager.getLocalRevision()
 
         if (col == "taxSettings") {
@@ -706,7 +743,7 @@ class InfinityMcpDispatcher(
         }
 
         if (!NativeStoreManager.COLLECTION_KEYS.contains(col)) {
-            throw IllegalArgumentException("Unbekannte Collection '$col'.")
+            throw IllegalArgumentException("Unbekannte Collection '$rawCol'.")
         }
 
         val sourceArr = state.optJSONArray(col) ?: JSONArray()
@@ -715,7 +752,12 @@ class InfinityMcpDispatcher(
         val customerIdFilter = args.optString("customer_id", "").trim()
         val statusFilter = args.optString("status", "").trim()
         val categoryFilter = args.optString("category", "").trim()
-        val itemTypeFilter = args.optString("item_type", "").trim()
+        val rawItemTypeFilter = args.optString("item_type", "").trim()
+        val itemTypeFilter = when {
+            rawItemTypeFilter.isNotEmpty() -> normalizeEquipmentItemType(rawItemTypeFilter)
+            isKleinteileCol -> "kleinteil"
+            else -> ""
+        }
         val parentEqIdFilter = args.optString("parent_equipment_id", "").trim()
         val hasLcrFilter = args.has("is_lcr") && !args.isNull("is_lcr")
         val lcrFilter = args.optBoolean("is_lcr", false)
@@ -772,7 +814,7 @@ class InfinityMcpDispatcher(
                 continue
             }
             if (itemTypeFilter.isNotEmpty() && col == "equipments") {
-                val eqType = item.optString("item_type", "geraet")
+                val eqType = normalizeEquipmentItemType(item.optString("item_type", "geraet"))
                 if (!eqType.equals(itemTypeFilter, ignoreCase = true)) continue
             }
             if (parentEqIdFilter.isNotEmpty() && col == "equipments") {
@@ -869,11 +911,48 @@ class InfinityMcpDispatcher(
 
         val out = JSONObject()
             .put("revision", rev)
-            .put("collection", col)
+            .put("collection", if (isKleinteileCol) "kleinteile" else col)
             .put("totalMatched", totalMatched)
             .put("returnedCount", matched.length())
         if (workSummary != null) {
             out.put("workSummary", workSummary)
+        }
+        if (col == "equipments") {
+            var geraeteCount = 0
+            var zubehoerCount = 0
+            var kleinteileCount = 0
+            var kleinteileTotalPieces = 0
+            val kleinteilCategories = linkedSetOf<String>()
+            for (eq in matchedItems) {
+                when (normalizeEquipmentItemType(eq.optString("item_type", "geraet"))) {
+                    "kleinteil" -> {
+                        kleinteileCount++
+                        val q = if (eq.has("quantity") && !eq.isNull("quantity")) eq.optInt("quantity", 1) else 1
+                        kleinteileTotalPieces += q.coerceAtLeast(0)
+                        val cat = eq.optString("category", "").trim()
+                        if (cat.isNotEmpty()) kleinteilCategories.add(cat)
+                    }
+                    "zubehoer" -> zubehoerCount++
+                    else -> geraeteCount++
+                }
+            }
+            val catsJson = JSONArray()
+            for (c in kleinteilCategories) catsJson.put(c)
+            out.put(
+                "kleinteileSummary",
+                JSONObject()
+                    .put("totalItems", kleinteileCount)
+                    .put("totalQuantityPieces", kleinteileTotalPieces)
+                    .put("categories", catsJson)
+            )
+            out.put(
+                "equipmentSummary",
+                JSONObject()
+                    .put("geraete", geraeteCount)
+                    .put("zubehoer", zubehoerCount)
+                    .put("kleinteile", kleinteileCount)
+                    .put("kleinteileTotalPieces", kleinteileTotalPieces)
+            )
         }
         if (col == "invoices" && idFilter.isNotEmpty() && matchedItems.size == 1) {
             out.put(
@@ -1010,11 +1089,16 @@ class InfinityMcpDispatcher(
     private fun applySingleActionMutation(state: JSONObject, args: JSONObject): JSONObject {
         return when (val op = args.optString("op", "upsert").trim()) {
             "upsert", "update" -> {
-                val col = args.optString("collection", "").trim()
+                val rawCol = args.optString("collection", "").trim()
+                val isKleinteileCol = isKleinteileAlias(rawCol)
+                val col = if (isKleinteileCol) "equipments" else rawCol
                 if (!NativeStoreManager.COLLECTION_KEYS.contains(col)) {
-                    throw IllegalArgumentException("Unbekannte Collection '$col'.")
+                    throw IllegalArgumentException("Unbekannte Collection '$rawCol'.")
                 }
                 val record = buildNormalizedUpsertPayload(args, col)
+                if (isKleinteileCol && (!record.has("item_type") || record.isNull("item_type") || record.optString("item_type", "").trim().isEmpty())) {
+                    record.put("item_type", "kleinteil")
+                }
                 if (record.length() == 0) {
                     throw IllegalArgumentException("Parameter 'record' fehlt für op='$op'.")
                 }
@@ -1022,9 +1106,10 @@ class InfinityMcpDispatcher(
             }
 
             "delete" -> {
-                val col = args.optString("collection", "").trim()
+                val rawCol = args.optString("collection", "").trim()
+                val col = if (isKleinteileAlias(rawCol)) "equipments" else rawCol
                 if (!NativeStoreManager.COLLECTION_KEYS.contains(col)) {
-                    throw IllegalArgumentException("Unbekannte Collection '$col'.")
+                    throw IllegalArgumentException("Unbekannte Collection '$rawCol'.")
                 }
                 val id = firstNonBlank(
                     args.optString("id", ""),
@@ -1124,8 +1209,15 @@ class InfinityMcpDispatcher(
             }
         } else if (collection == "equipments" && !payload.optBoolean("allow_duplicate", false)) {
             fun normStr(s: String): String = s.trim().lowercase(Locale.ROOT).replace(Regex("\\s+"), " ")
-            val reqType = if (payload.optString("item_type") == "zubehoer") "zubehoer" else "geraet"
-            val reqSerial = normStr(payload.optString("serial_number", ""))
+            val reqType = normalizeEquipmentItemType(payload.optString("item_type", "geraet"))
+            val reqSerial = normStr(
+                firstNonBlank(
+                    payload.optString("serial_number", ""),
+                    payload.optString("part_number", ""),
+                    payload.optString("item_number", ""),
+                    payload.optString("artikelnummer", "")
+                )
+            )
             val reqManuf = normStr(payload.optString("manufacturer", ""))
             val reqModel = normStr(payload.optString("model", ""))
             val reqName = normStr(payload.optString("name", ""))
@@ -1134,9 +1226,9 @@ class InfinityMcpDispatcher(
 
             for (i in 0 until arr.length()) {
                 val item = arr.optJSONObject(i) ?: continue
-                val itType = if (item.optString("item_type") == "zubehoer") "zubehoer" else "geraet"
+                val itType = normalizeEquipmentItemType(item.optString("item_type", "geraet"))
                 if (itType != reqType) continue
-                if (reqType == "zubehoer" && reqParent.isNotEmpty() && item.optString("parent_equipment_id", "").trim() != reqParent) {
+                if (reqType != "geraet" && reqParent.isNotEmpty() && item.optString("parent_equipment_id", "").trim() != reqParent) {
                     continue
                 }
                 val itSerial = normStr(item.optString("serial_number", ""))
@@ -1583,8 +1675,9 @@ class InfinityMcpDispatcher(
 
             "equipments" -> {
                 val itemType = when {
-                    payload.has("item_type") -> if (payload.optString("item_type") == "zubehoer") "zubehoer" else "geraet"
-                    prev != null -> if (prev.optString("item_type") == "zubehoer") "zubehoer" else "geraet"
+                    payload.has("item_type") && !payload.isNull("item_type") && payload.optString("item_type", "").trim().isNotEmpty() ->
+                        normalizeEquipmentItemType(payload.optString("item_type"))
+                    prev != null -> normalizeEquipmentItemType(prev.optString("item_type", "geraet"))
                     else -> "geraet"
                 }
                 val rawStatus = when {
@@ -1610,24 +1703,40 @@ class InfinityMcpDispatcher(
                 } else {
                     prev?.optString("model", "")?.trim().orEmpty()
                 }
+                val defaultCategory = when (itemType) {
+                    "kleinteil" -> "Kleinteile"
+                    "zubehoer" -> "Zubehör"
+                    else -> "Allgemein"
+                }
                 val categoryVal = firstNonBlank(
                     if (payload.has("category") && !payload.isNull("category")) payload.optString("category", "") else "",
                     prev?.optString("category", "").orEmpty(),
-                    if (itemType == "zubehoer") "Zubehör" else "Allgemein"
+                    defaultCategory
                 )
                 val autoTitle = listOf(manufacturerVal, modelVal).filter { it.isNotEmpty() }.joinToString(" ")
+                val defaultName = when (itemType) {
+                    "kleinteil" -> "Kleinteil"
+                    "zubehoer" -> "Zubehör"
+                    else -> "Gerät"
+                }
                 val nameVal = firstNonBlank(
                     if (payload.has("name") && !payload.isNull("name")) payload.optString("name", "") else "",
                     prev?.optString("name", "").orEmpty(),
                     autoTitle,
                     categoryVal,
-                    if (itemType == "zubehoer") "Zubehör" else "Gerät"
+                    defaultName
                 )
 
-                val serialNumberVal = if (payload.has("serial_number") && !payload.isNull("serial_number")) {
-                    payload.optString("serial_number", "").trim()
-                } else {
-                    prev?.optString("serial_number", "")?.trim().orEmpty()
+                val serialNumberVal = when {
+                    payload.has("serial_number") && !payload.isNull("serial_number") ->
+                        payload.optString("serial_number", "").trim()
+                    payload.has("part_number") && !payload.isNull("part_number") ->
+                        payload.optString("part_number", "").trim()
+                    payload.has("item_number") && !payload.isNull("item_number") ->
+                        payload.optString("item_number", "").trim()
+                    payload.has("artikelnummer") && !payload.isNull("artikelnummer") ->
+                        payload.optString("artikelnummer", "").trim()
+                    else -> prev?.optString("serial_number", "")?.trim().orEmpty()
                 }
                 val purchaseDateVal = if (payload.has("purchase_date") && !payload.isNull("purchase_date")) {
                     payload.optString("purchase_date", "").trim()
@@ -1821,13 +1930,14 @@ class InfinityMcpDispatcher(
                 val reservedKeys = setOf(
                     "id", "equipment_id", "record_id", "__force_update",
                     "item_type", "category", "parent_equipment_id", "manufacturer", "model", "name",
-                    "serial_number", "purchase_date", "purchase_price", "dealer",
+                    "serial_number", "part_number", "item_number", "artikelnummer",
+                    "purchase_date", "purchase_price", "dealer",
                     "photo", "images", "add_images", "replace_images", "remove_image_ids", "set_primary_image_id",
                     "documents", "add_documents", "remove_document_ids",
                     "has_photo", "photo_count", "image_count", "document_count", "remove_photo",
                     "specs", "custom_fields", "custom_sections", "sections", "remove_fields",
-                    "data_source", "source", "allow_duplicate", "accessories",
-                    "quantity", "notes", "status", "last_maintenance", "next_maintenance", "maintenance_plan",
+                    "data_source", "source", "allow_duplicate", "accessories", "kleinteile", "small_parts",
+                    "quantity", "notes", "storage_location", "lagerort", "status", "last_maintenance", "next_maintenance", "maintenance_plan",
                     "interval_months", "history", "created_at", "updated_at"
                 )
 
@@ -2064,7 +2174,7 @@ class InfinityMcpDispatcher(
                 val qtySourceObj = if (payload.has("quantity")) payload else prev
                 if (qtySourceObj != null && qtySourceObj.has("quantity") && !qtySourceObj.isNull("quantity") && qtySourceObj.optString("quantity", "").trim().isNotEmpty()) {
                     record.put("quantity", qtySourceObj.optInt("quantity", 1).coerceAtLeast(0))
-                } else if (itemType == "zubehoer") {
+                } else if (itemType == "zubehoer" || itemType == "kleinteil") {
                     record.put("quantity", 1)
                 } else {
                     record.put("quantity", JSONObject.NULL)
@@ -2109,10 +2219,11 @@ class InfinityMcpDispatcher(
 
                 for (tmpKey in listOf(
                     "equipment_id", "record_id", "__force_update",
+                    "part_number", "item_number", "artikelnummer", "storage_location", "lagerort",
                     "has_photo", "photo_count", "image_count", "document_count", "remove_photo",
                     "add_images", "replace_images", "remove_image_ids", "set_primary_image_id",
                     "add_documents", "remove_document_ids", "sections", "remove_fields",
-                    "data_source", "source", "allow_duplicate", "accessories"
+                    "data_source", "source", "allow_duplicate", "accessories", "kleinteile", "small_parts"
                 )) {
                     record.remove(tmpKey)
                 }
@@ -2124,6 +2235,13 @@ class InfinityMcpDispatcher(
                     payload.has("parent_equipment_id") -> optNullableString(payload, "parent_equipment_id")
                     prev != null -> optNullableString(prev, "parent_equipment_id")
                     else -> null
+                }
+
+                val notesVal = when {
+                    payload.has("notes") && !payload.isNull("notes") -> payload.optString("notes", "")
+                    payload.has("storage_location") && !payload.isNull("storage_location") -> payload.optString("storage_location", "")
+                    payload.has("lagerort") && !payload.isNull("lagerort") -> payload.optString("lagerort", "")
+                    else -> prev?.optString("notes", "").orEmpty()
                 }
 
                 record.put("item_type", itemType)
@@ -2142,11 +2260,7 @@ class InfinityMcpDispatcher(
                 record.put("custom_fields", customFieldsJson)
                 record.put("custom_sections", customSectionsJson)
                 record.put("specs", mergedSpecs)
-                record.put(
-                    "notes",
-                    if (payload.has("notes") && !payload.isNull("notes")) payload.optString("notes", "")
-                    else prev?.optString("notes", "").orEmpty()
-                )
+                record.put("notes", notesVal)
                 record.put("status", statusVal)
                 record.put("last_maintenance", lastMaintIso)
                 record.put("next_maintenance", nextMaintIso)
@@ -2180,6 +2294,28 @@ class InfinityMcpDispatcher(
                             accCopy.put("item_type", "zubehoer")
                             accCopy.put("parent_equipment_id", id)
                             upsertRecordInState(state, "equipments", accCopy)
+                        }
+                    }
+                }
+
+                val kleinteileArr = payload.optJSONArray("kleinteile") ?: payload.optJSONArray("small_parts")
+                if (itemType == "geraet" && kleinteileArr != null) {
+                    for (i in 0 until kleinteileArr.length()) {
+                        val ktEntry = kleinteileArr.opt(i) ?: continue
+                        if (ktEntry is String) {
+                            val ktName = ktEntry.trim()
+                            if (ktName.isNotEmpty()) {
+                                val ktCopy = JSONObject()
+                                    .put("name", ktName)
+                                    .put("item_type", "kleinteil")
+                                    .put("parent_equipment_id", id)
+                                upsertRecordInState(state, "equipments", ktCopy)
+                            }
+                        } else if (ktEntry is JSONObject) {
+                            val ktCopy = JSONObject(ktEntry.toString())
+                            ktCopy.put("item_type", "kleinteil")
+                            ktCopy.put("parent_equipment_id", id)
+                            upsertRecordInState(state, "equipments", ktCopy)
                         }
                     }
                 }
@@ -3940,7 +4076,7 @@ class InfinityMcpDispatcher(
                 .put("name", "pixel_abfrage")
                 .put(
                     "description",
-                    "Gezielte Leseabfrage auf der lokalen Infinity-Datenbank des Pixel 10 Pro: Liest Betriebsübersicht, Kundensuche, einzelne Kunden/Einträge, mehrere Tabellen (customers, properties, appointments, workRecords, invoices, inquiries, offers, orders, equipments, materials, expenses, taxSettings) und österreichische GuV."
+                    "Gezielte Leseabfrage auf der lokalen Infinity-Datenbank des Pixel 10 Pro: Liest Betriebsübersicht, Kundensuche, einzelne Kunden/Einträge, mehrere Tabellen (customers, properties, appointments, workRecords, invoices, inquiries, offers, orders, equipments, kleinteile, materials, expenses, taxSettings; für Kleinteileübersicht collection='kleinteile' oder collection='equipments' mit item_type='kleinteil') und österreichische GuV."
                 )
                 .put(
                     "annotations",
@@ -4001,7 +4137,7 @@ class InfinityMcpDispatcher(
                 .put("name", "pixel_aktion")
                 .put(
                     "description",
-                    "Geprüfte Schreibfunktion für die lokale Infinity-Datenbank auf dem Pixel 10 Pro (erfordert aktive Schreibfreigabe am Gerät): Anlegen, Ändern und Löschen von Kunden, Objekten, Terminen, Arbeitsaufzeichnungen, Anfragen, Angeboten, Aufträgen, Geräten, Material und Ausgaben sowie Direktversand von Rechnungen (op='send_invoice') und Arbeitsaufzeichnungen (op='send_work_record'), Abruf des Original-Rechnungs-PDFs (op='get_invoice_pdf') und Versand-/Zustellbestätigung (op='delivery_status')."
+                    "Geprüfte Schreibfunktion für die lokale Infinity-Datenbank auf dem Pixel 10 Pro (erfordert aktive Schreibfreigabe am Gerät): Anlegen, Ändern und Löschen von Kunden, Objekten, Terminen, Arbeitsaufzeichnungen, Anfragen, Angeboten, Aufträgen, Geräten, Zubehör, Kleinteilen (collection='kleinteile' oder collection='equipments' mit item_type='kleinteil' — identische universelle Eingabemöglichkeiten wie Geräte inkl. Hersteller, Modell, Artikelnummer, Bestand/quantity, Hauptgerät parent_equipment_id, Bildern, Dokumenten und beliebigen custom_fields/sections), Material und Ausgaben sowie Direktversand von Rechnungen (op='send_invoice') und Arbeitsaufzeichnungen (op='send_work_record'), Abruf des Original-Rechnungs-PDFs (op='get_invoice_pdf') und Versand-/Zustellbestätigung (op='delivery_status')."
                 )
                 .put(
                     "annotations",

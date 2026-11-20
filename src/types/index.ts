@@ -12,6 +12,7 @@ export type ScreenId =
   | 'M11_MATERIAL'
   | 'M12_SICHERUNG'
   | 'M13_EINSTELLUNGEN'
+  | 'M14_KLEINTEILE'
   | 'M15_SPEICHER_APP'
   | 'M16_FOTOS'
   | 'M17_OBJEKTE'
@@ -270,7 +271,7 @@ export interface EquipmentDocument {
 
 export interface Equipment {
   id: string;
-  item_type?: 'geraet' | 'zubehoer';
+  item_type?: 'geraet' | 'zubehoer' | 'kleinteil';
   category?: string;
   parent_equipment_id?: string | null;
   manufacturer?: string;

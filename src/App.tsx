@@ -50,6 +50,7 @@ const MainRouter: React.FC = () => {
       case 'M09_LCR':
         return <LcrView />;
       case 'M10_GERAETE':
+      case 'M14_KLEINTEILE':
         return <GeraeteView />;
       case 'M11_MATERIAL':
         return <MaterialView />;
