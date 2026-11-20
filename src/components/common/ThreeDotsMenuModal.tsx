@@ -149,6 +149,20 @@ export const ThreeDotsMenuModal: React.FC = () => {
               </button>
 
               <button
+                onClick={() => handleSelect('M14_KLEINTEILE')}
+                className="w-full min-h-[54px] px-3.5 py-2.5 flex items-center justify-between hover:bg-emerald-50/60 active:bg-emerald-100/60 transition-colors text-left"
+              >
+                <div className="flex items-center gap-3">
+                  <Package size={20} className="text-[#2C7738] shrink-0" />
+                  <div>
+                    <span className="text-sm font-bold text-slate-950 block leading-tight">Kleinteile</span>
+                    <span className="text-xs text-slate-600">Kleinteileübersicht, Bestand & Zuordnung</span>
+                  </div>
+                </div>
+                <ChevronRight size={18} className="text-slate-400 shrink-0" />
+              </button>
+
+              <button
                 onClick={() => handleSelect('M11_MATERIAL')}
                 className="w-full min-h-[54px] px-3.5 py-2.5 flex items-center justify-between hover:bg-emerald-50/60 active:bg-emerald-100/60 transition-colors text-left"
               >

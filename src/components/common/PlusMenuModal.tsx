@@ -129,6 +129,10 @@ export const PlusMenuModal: React.FC = () => {
         setSelectedEquipmentId(null);
         setActiveModal('ZUBEHOER_ANLEGEN');
         break;
+      case 'kleinteil_anlegen':
+        setSelectedEquipmentId(null);
+        setActiveModal('KLEINTEIL_ANLEGEN');
+        break;
       case 'wartung_erfassen':
         setActiveModal('WARTUNG_DOKUMENTIEREN');
         break;
@@ -184,6 +188,8 @@ export const PlusMenuModal: React.FC = () => {
     switch (currentScreen) {
       case 'M10_GERAETE':
         return { title: 'Geräteverwaltung', subtitle: 'Aktionen für Maschinen & Werkzeuge' };
+      case 'M14_KLEINTEILE':
+        return { title: 'Kleinteileübersicht', subtitle: 'Aktionen für Kleinteile & Ersatzteile' };
       case 'M11_MATERIAL':
         return { title: 'Material', subtitle: 'Aktionen für Material & Preise' };
       case 'M08_ARBEITEN':
@@ -213,10 +219,20 @@ export const PlusMenuModal: React.FC = () => {
 
   // Screen-specific contextual actions (Timer & Arbeit starten removed)
   const getActions = () => {
+    if (currentScreen === 'M14_KLEINTEILE') {
+      return [
+        { key: 'kleinteil_anlegen', label: 'Neues Kleinteil hinzufügen', icon: PackagePlus, isPrimary: true },
+        { key: 'geraet_anlegen', label: 'Neues Gerät hinzufügen', icon: Wrench },
+        { key: 'zubehoer_anlegen', label: 'Neues Zubehör hinzufügen', icon: PackagePlus },
+        { key: 'material_anlegen', label: 'Material anlegen', icon: PackagePlus },
+      ];
+    }
+
     if (currentScreen === 'M10_GERAETE') {
       return [
         { key: 'geraet_anlegen', label: 'Neues Gerät hinzufügen', icon: Wrench, isPrimary: true },
         { key: 'zubehoer_anlegen', label: 'Neues Zubehör hinzufügen', icon: PackagePlus },
+        { key: 'kleinteil_anlegen', label: 'Neues Kleinteil hinzufügen', icon: PackagePlus },
         { key: 'wartung_erfassen', label: 'Wartung dokumentieren', icon: Clock },
         { key: 'material_anlegen', label: 'Material anlegen', icon: PackagePlus },
       ];

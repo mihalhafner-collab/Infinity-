@@ -35,6 +35,7 @@ import { getTodayLocalIso } from '../../utils/invoicePdf.ts';
 import {
   DEFAULT_SECTION_NAMES,
   SUGGESTED_CATEGORIES_GERAET,
+  SUGGESTED_CATEGORIES_KLEINTEIL,
   SUGGESTED_CATEGORIES_ZUBEHOER,
   formatDynamicFieldValue,
   getCategoryLabel,
@@ -91,8 +92,9 @@ export const GeraetModal: React.FC = () => {
 
   const isCreatingGeraet = activeModal === 'GERAET_ANLEGEN';
   const isCreatingZubehoer = activeModal === 'ZUBEHOER_ANLEGEN';
+  const isCreatingKleinteil = activeModal === 'KLEINTEIL_ANLEGEN';
   const isEditing = activeModal === 'GERAET_BEARBEITEN';
-  const isOpen = isCreatingGeraet || isCreatingZubehoer || isEditing;
+  const isOpen = isCreatingGeraet || isCreatingZubehoer || isCreatingKleinteil || isEditing;
 
   const existingItem = isEditing
     ? equipments.find((e) => e.id === selectedEquipmentId) || null
@@ -113,7 +115,7 @@ export const GeraetModal: React.FC = () => {
   );
 
   // Universelle Standardfelder (alle optional)
-  const [itemType, setItemType] = useState<'geraet' | 'zubehoer'>('geraet');
+  const [itemType, setItemType] = useState<'geraet' | 'zubehoer' | 'kleinteil'>('geraet');
   const [category, setCategory] = useState<string>('');
   const [manufacturer, setManufacturer] = useState<string>('');
   const [model, setModel] = useState<string>('');
@@ -177,9 +179,11 @@ export const GeraetModal: React.FC = () => {
       .map((e) => getCategoryLabel(e.category, e.item_type))
       .filter(Boolean);
     const defaults =
-      itemType === 'zubehoer'
-        ? SUGGESTED_CATEGORIES_ZUBEHOER
-        : SUGGESTED_CATEGORIES_GERAET;
+      itemType === 'kleinteil'
+        ? SUGGESTED_CATEGORIES_KLEINTEIL
+        : itemType === 'zubehoer'
+          ? SUGGESTED_CATEGORIES_ZUBEHOER
+          : SUGGESTED_CATEGORIES_GERAET;
     return Array.from(new Set([...existingCats, ...defaults]));
   }, [equipments, itemType]);
 
@@ -248,6 +252,27 @@ export const GeraetModal: React.FC = () => {
     if (isEditing && existingItem) {
       setIsEditMode(false);
       populateFromExisting(existingItem);
+    } else if (isCreatingKleinteil) {
+      setIsEditMode(true);
+      setItemType('kleinteil');
+      const preselectedParent =
+        availableGeraete.find((g) => g.id === selectedEquipmentId) || null;
+      setParentEquipmentId(preselectedParent?.id || '');
+      setCategory('Kleinteil / Ersatzteil');
+      setManufacturer(preselectedParent?.manufacturer || '');
+      setModel('');
+      setName('');
+      setSerialNumber('');
+      setPurchaseDate('');
+      setPurchasePriceStr('');
+      setDealer('');
+      setStatus('einsatzbereit');
+      setImages([]);
+      setDocuments([]);
+      setDynamicFields([]);
+      setCustomSections([]);
+      setQuantityStr('1');
+      setNotes('');
     } else if (isCreatingZubehoer) {
       setIsEditMode(true);
       setItemType('zubehoer');
@@ -551,14 +576,24 @@ export const GeraetModal: React.FC = () => {
 
     const cleanManufacturer = manufacturer.trim();
     const cleanModel = model.trim();
-    const cleanCategory = category.trim() || (itemType === 'zubehoer' ? 'Zubehör' : 'Allgemein');
+    const cleanCategory =
+      category.trim() ||
+      (itemType === 'kleinteil'
+        ? 'Kleinteil'
+        : itemType === 'zubehoer'
+          ? 'Zubehör'
+          : 'Allgemein');
     const autoTitle = [cleanManufacturer, cleanModel].filter(Boolean).join(' ');
     const effectiveName =
       name.trim() ||
       autoTitle ||
       existingItem?.name?.trim() ||
       cleanCategory ||
-      (itemType === 'zubehoer' ? 'Zubehör' : 'Gerät');
+      (itemType === 'kleinteil'
+        ? 'Kleinteil'
+        : itemType === 'zubehoer'
+          ? 'Zubehör'
+          : 'Gerät');
 
     const parsedPrice =
       purchasePriceStr.trim() === ''
@@ -572,7 +607,7 @@ export const GeraetModal: React.FC = () => {
     const normalizedQty =
       parsedQty !== null && !Number.isNaN(parsedQty)
         ? parsedQty
-        : itemType === 'zubehoer'
+        : itemType === 'zubehoer' || itemType === 'kleinteil'
           ? 1
           : null;
 
@@ -583,7 +618,9 @@ export const GeraetModal: React.FC = () => {
       item_type: itemType,
       category: cleanCategory,
       parent_equipment_id:
-        itemType === 'zubehoer' && parentEquipmentId ? parentEquipmentId : null,
+        (itemType === 'zubehoer' || itemType === 'kleinteil') && parentEquipmentId
+          ? parentEquipmentId
+          : null,
       manufacturer: cleanManufacturer,
       model: cleanModel,
       name: effectiveName,
@@ -634,6 +671,8 @@ export const GeraetModal: React.FC = () => {
   // ============================================================================
   if (isEditing && existingItem && !isEditMode) {
     const isZubehoer = existingItem.item_type === 'zubehoer';
+    const isKleinteil = existingItem.item_type === 'kleinteil';
+    const isSubPart = isZubehoer || isKleinteil;
     const catLabel = getCategoryLabel(existingItem.category, existingItem.item_type);
     const identity = resolveEquipmentIdentity(existingItem);
     const galleryImages = resolveEquipmentImages(existingItem);
@@ -646,9 +685,14 @@ export const GeraetModal: React.FC = () => {
     const parentDevice = existingItem.parent_equipment_id
       ? equipments.find((g) => g.id === existingItem.parent_equipment_id) || null
       : null;
-    const linkedAccessories = !isZubehoer
+    const linkedAccessories = !isSubPart
       ? equipments.filter(
           (z) => z.item_type === 'zubehoer' && z.parent_equipment_id === existingItem.id
+        )
+      : [];
+    const linkedKleinteile = !isSubPart
+      ? equipments.filter(
+          (k) => k.item_type === 'kleinteil' && k.parent_equipment_id === existingItem.id
         )
       : [];
 
@@ -685,7 +729,7 @@ export const GeraetModal: React.FC = () => {
     }
     if (existingItem.serial_number?.trim()) {
       baseInfoItems.push({
-        label: 'Seriennummer',
+        label: isKleinteil ? 'Artikel- / Teilenummer' : 'Seriennummer',
         value: existingItem.serial_number.trim()
       });
     }
@@ -711,7 +755,7 @@ export const GeraetModal: React.FC = () => {
     if (
       existingItem.quantity !== null &&
       existingItem.quantity !== undefined &&
-      (isZubehoer || existingItem.quantity > 1)
+      (isSubPart || existingItem.quantity > 1)
     ) {
       baseInfoItems.push({
         label: 'Bestand / Anzahl',
@@ -737,7 +781,7 @@ export const GeraetModal: React.FC = () => {
                 <span className="px-2 py-0.5 rounded-md bg-indigo-50 text-[#3138A0] text-[10px] font-bold">
                   {catLabel}
                 </span>
-                {!isZubehoer ? (
+                {!isSubPart ? (
                   <span
                     className={`px-2 py-0.5 rounded-md text-[10px] font-bold flex items-center gap-1 ${
                       isDue
@@ -763,6 +807,10 @@ export const GeraetModal: React.FC = () => {
                         <span>Einsatzbereit</span>
                       </>
                     )}
+                  </span>
+                ) : isKleinteil ? (
+                  <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 text-[10px] font-bold">
+                    Kleinteil
                   </span>
                 ) : (
                   <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 text-[10px] font-bold">
@@ -868,11 +916,11 @@ export const GeraetModal: React.FC = () => {
                 ) : (
                   <label
                     className={`w-24 h-24 rounded-2xl flex flex-col items-center justify-center shrink-0 border border-dashed cursor-pointer transition-colors ${
-                      isZubehoer
+                      isSubPart
                         ? 'bg-indigo-50/70 border-indigo-200 text-[#3138A0]'
                         : 'bg-emerald-50/70 border-emerald-200 text-[#2C7738]'
                     }`}
-                    title="Gerätefoto direkt aufnehmen"
+                    title="Foto direkt aufnehmen"
                   >
                     <Camera size={22} />
                     <span className="text-[10px] font-bold mt-1">Foto +</span>
@@ -1136,7 +1184,7 @@ export const GeraetModal: React.FC = () => {
             )}
 
             {/* 4. Wartung & Wartungshistorie (für Geräte) */}
-            {!isZubehoer && (
+            {!isSubPart && (
               <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden">
                 <div className="p-3 flex items-center justify-between gap-2">
                   <button
@@ -1241,34 +1289,49 @@ export const GeraetModal: React.FC = () => {
               </div>
             )}
 
-            {/* 5. Zugeordnetes Zubehör & Ersatzteile (für Geräte) */}
-            {!isZubehoer && (
+            {/* 5. Zugeordnetes Zubehör & Kleinteile (für Geräte) */}
+            {!isSubPart && (
               <div className="p-3 bg-white border border-slate-200 rounded-2xl space-y-2">
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
                   <span className="text-[11px] font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
                     <Package size={12} className="text-[#3138A0]" />
-                    <span>Zubehör & Ersatzteile ({linkedAccessories.length})</span>
+                    <span>
+                      Zubehör & Kleinteile ({linkedAccessories.length + linkedKleinteile.length})
+                    </span>
                   </span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSelectedEquipmentId(existingItem.id);
-                      setActiveModal('ZUBEHOER_ANLEGEN');
-                    }}
-                    className="px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-[#3138A0] border border-indigo-200 rounded-lg text-[11px] font-bold flex items-center gap-1 transition-colors"
-                  >
-                    <Plus size={12} />
-                    <span>Zubehör dazu</span>
-                  </button>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedEquipmentId(existingItem.id);
+                        setActiveModal('ZUBEHOER_ANLEGEN');
+                      }}
+                      className="px-2 py-1 bg-indigo-50 hover:bg-indigo-100 text-[#3138A0] border border-indigo-200 rounded-lg text-[10px] font-bold flex items-center gap-1 transition-colors"
+                    >
+                      <Plus size={11} />
+                      <span>Zubehör</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedEquipmentId(existingItem.id);
+                        setActiveModal('KLEINTEIL_ANLEGEN');
+                      }}
+                      className="px-2 py-1 bg-indigo-50 hover:bg-indigo-100 text-[#3138A0] border border-indigo-200 rounded-lg text-[10px] font-bold flex items-center gap-1 transition-colors"
+                    >
+                      <Plus size={11} />
+                      <span>Kleinteil</span>
+                    </button>
+                  </div>
                 </div>
 
-                {linkedAccessories.length === 0 ? (
+                {linkedAccessories.length === 0 && linkedKleinteile.length === 0 ? (
                   <p className="text-[11px] text-slate-400 italic">
-                    Noch kein Zubehör oder Ersatzteil zugeordnet.
+                    Noch kein Zubehör oder Kleinteil zugeordnet.
                   </p>
                 ) : (
                   <div className="divide-y divide-slate-100 border border-slate-100 rounded-xl overflow-hidden">
-                    {linkedAccessories.map((acc) => {
+                    {[...linkedAccessories, ...linkedKleinteile].map((acc) => {
                       const accIdentity = resolveEquipmentIdentity(acc);
                       const accFields = resolveEquipmentDynamicFields(acc)
                         .filter((f) => !isDynamicFieldValueEmpty(f))
@@ -1281,9 +1344,14 @@ export const GeraetModal: React.FC = () => {
                           className="w-full p-2.5 bg-slate-50/70 hover:bg-indigo-50/40 flex items-center justify-between gap-2 text-left transition-colors"
                         >
                           <div className="min-w-0">
-                            <span className="text-xs font-bold text-slate-900 block truncate">
-                              {accIdentity.title}
-                            </span>
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-xs font-bold text-slate-900 truncate">
+                                {accIdentity.title}
+                              </span>
+                              <span className="px-1.5 py-0.2 rounded bg-indigo-50 text-[#3138A0] text-[9px] font-bold shrink-0">
+                                {acc.item_type === 'kleinteil' ? 'Kleinteil' : 'Zubehör'}
+                              </span>
+                            </div>
                             {accFields.length > 0 && (
                               <span className="text-[10px] text-slate-500 block truncate">
                                 {accFields.join(' · ')}
@@ -1316,7 +1384,7 @@ export const GeraetModal: React.FC = () => {
 
             {/* Eindeutige MCP-ID */}
             <div className="px-1 pt-0.5 flex items-center justify-between text-[10px] text-slate-400">
-              <span>Eindeutige Geräte-ID (MCP)</span>
+              <span>Eindeutige ID (MCP)</span>
               <span className="font-mono select-all">{existingItem.id}</span>
             </div>
           </div>
@@ -1365,12 +1433,16 @@ export const GeraetModal: React.FC = () => {
           <div>
             <h2 className="text-base font-bold text-slate-900 leading-tight">
               {isEditing
-                ? itemType === 'zubehoer'
-                  ? 'Zubehör bearbeiten'
-                  : 'Gerät bearbeiten'
-                : itemType === 'zubehoer'
-                  ? 'Neues Zubehör anlegen'
-                  : 'Neues Gerät anlegen'}
+                ? itemType === 'kleinteil'
+                  ? 'Kleinteil bearbeiten'
+                  : itemType === 'zubehoer'
+                    ? 'Zubehör bearbeiten'
+                    : 'Gerät bearbeiten'
+                : itemType === 'kleinteil'
+                  ? 'Neues Kleinteil anlegen'
+                  : itemType === 'zubehoer'
+                    ? 'Neues Zubehör anlegen'
+                    : 'Neues Gerät anlegen'}
             </h2>
             <p className="text-[11px] text-slate-500">
               Universelle Erfassung · Alle Angaben optional & jederzeit erweiterbar
@@ -1392,11 +1464,11 @@ export const GeraetModal: React.FC = () => {
           <div className="p-3 bg-slate-50 border border-slate-200 rounded-2xl space-y-2.5">
             <div className="flex items-center justify-between">
               <span className="text-[11px] font-bold text-slate-800 uppercase tracking-wider">
-                Gerätebilder ({images.length})
+                Bilder ({images.length})
               </span>
               {images.length > 0 && (
                 <span className="text-[10px] text-slate-500">
-                  Stern = Hauptbild in der Geräteliste
+                  Stern = Hauptbild in der Liste
                 </span>
               )}
             </div>
@@ -1538,11 +1610,14 @@ export const GeraetModal: React.FC = () => {
                 </label>
                 <select
                   value={itemType}
-                  onChange={(e) => setItemType(e.target.value as 'geraet' | 'zubehoer')}
+                  onChange={(e) =>
+                    setItemType(e.target.value as 'geraet' | 'zubehoer' | 'kleinteil')
+                  }
                   className="w-full h-9 px-2 bg-white border border-slate-200 rounded-xl focus:border-[#3138A0] outline-hidden text-xs font-bold text-slate-900"
                 >
                   <option value="geraet">Gerät / Maschine</option>
                   <option value="zubehoer">Zubehör / Teil</option>
+                  <option value="kleinteil">Kleinteil</option>
                 </select>
               </div>
 
@@ -1555,7 +1630,7 @@ export const GeraetModal: React.FC = () => {
                   list="equipment-category-suggestions"
                   value={category}
                   onChange={(e) => setCategory(e.target.value)}
-                  placeholder="z. B. Motorsäge, Rasenmäher, Akku..."
+                  placeholder="z. B. Motorsäge, Zündkerze, Luftfilter..."
                   className="w-full h-9 px-2.5 bg-white border border-slate-200 rounded-xl focus:border-[#3138A0] outline-hidden text-xs font-semibold text-slate-900"
                 />
                 <datalist id="equipment-category-suggestions">
@@ -1575,20 +1650,20 @@ export const GeraetModal: React.FC = () => {
                   type="text"
                   value={manufacturer}
                   onChange={(e) => setManufacturer(e.target.value)}
-                  placeholder="z. B. STIHL, Sabo, Milwaukee..."
+                  placeholder="z. B. STIHL, Sabo, NGK, Bosch..."
                   className="w-full h-9 px-2.5 bg-white border border-slate-200 rounded-xl focus:border-[#3138A0] outline-hidden text-xs font-semibold text-slate-900"
                 />
               </div>
 
               <div>
                 <label className="font-semibold text-slate-700 block mb-1 text-[11px]">
-                  Modell
+                  Modell / Typ
                 </label>
                 <input
                   type="text"
                   value={model}
                   onChange={(e) => setModel(e.target.value)}
-                  placeholder="z. B. MS 261 C-M, 47-Pro..."
+                  placeholder="z. B. MS 261 C-M, BPMR7A..."
                   className="w-full h-9 px-2.5 bg-white border border-slate-200 rounded-xl focus:border-[#3138A0] outline-hidden text-xs font-semibold text-slate-900"
                 />
               </div>
@@ -1613,13 +1688,13 @@ export const GeraetModal: React.FC = () => {
 
               <div className="col-span-5">
                 <label className="font-semibold text-slate-700 block mb-1 text-[11px]">
-                  Seriennummer
+                  {itemType === 'kleinteil' ? 'Artikel- / Teilenr.' : 'Seriennummer'}
                 </label>
                 <input
                   type="text"
                   value={serialNumber}
                   onChange={(e) => setSerialNumber(e.target.value)}
-                  placeholder="SN / Gerätenr."
+                  placeholder={itemType === 'kleinteil' ? 'Art.-Nr. / OEM' : 'SN / Gerätenr.'}
                   className="w-full h-9 px-2.5 bg-white border border-slate-200 rounded-xl focus:border-[#3138A0] outline-hidden text-xs text-slate-900"
                 />
               </div>

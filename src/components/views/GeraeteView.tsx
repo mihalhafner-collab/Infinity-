@@ -28,6 +28,7 @@ import {
 
 export const GeraeteView: React.FC = () => {
   const {
+    currentScreen,
     equipments,
     setSelectedEquipmentId,
     updateEquipment,
@@ -35,7 +36,10 @@ export const GeraeteView: React.FC = () => {
     setActiveModal
   } = useApp();
 
-  const [activeTab, setActiveTab] = useState<'alle' | 'geraet' | 'zubehoer'>('alle');
+  const isKleinteileScreen = currentScreen === 'M14_KLEINTEILE';
+  const [activeTab, setActiveTab] = useState<'alle' | 'geraet' | 'zubehoer' | 'kleinteil'>(() =>
+    isKleinteileScreen ? 'kleinteil' : 'alle'
+  );
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState<string>('all');
   const [previewPhoto, setPreviewPhoto] = useState<{
     eqId: string;
@@ -44,6 +48,11 @@ export const GeraeteView: React.FC = () => {
   } | null>(null);
   const [photoSourceEq, setPhotoSourceEq] = useState<Equipment | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    setActiveTab(isKleinteileScreen ? 'kleinteil' : 'alle');
+    setSelectedCategoryFilter('all');
+  }, [isKleinteileScreen]);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -63,6 +72,10 @@ export const GeraeteView: React.FC = () => {
     () => equipments.filter((e) => e.item_type === 'zubehoer'),
     [equipments]
   );
+  const kleinteileItems = useMemo(
+    () => equipments.filter((e) => e.item_type === 'kleinteil'),
+    [equipments]
+  );
 
   const tabFiltered = useMemo(
     () =>
@@ -70,6 +83,7 @@ export const GeraeteView: React.FC = () => {
         const eType = e.item_type || 'geraet';
         if (activeTab === 'geraet' && eType !== 'geraet') return false;
         if (activeTab === 'zubehoer' && eType !== 'zubehoer') return false;
+        if (activeTab === 'kleinteil' && eType !== 'kleinteil') return false;
         return true;
       }),
     [equipments, activeTab]
@@ -153,6 +167,11 @@ export const GeraeteView: React.FC = () => {
     setActiveModal('ZUBEHOER_ANLEGEN');
   };
 
+  const handleOpenCreateKleinteil = (parentId?: string) => {
+    setSelectedEquipmentId(parentId || null);
+    setActiveModal('KLEINTEIL_ANLEGEN');
+  };
+
   // Antippen öffnet die schreibgeschützte Detailansicht
   const handleOpenDetail = (eqId: string) => {
     setSelectedEquipmentId(eqId);
@@ -197,12 +216,16 @@ export const GeraeteView: React.FC = () => {
         title={
           selectedCategoryFilter !== 'all'
             ? getCategoryLabel(selectedCategoryFilter)
-            : 'Geräte & Zubehör'
+            : isKleinteileScreen || activeTab === 'kleinteil'
+              ? 'Kleinteileübersicht'
+              : 'Geräte & Zubehör'
         }
         subtitle={
           selectedCategoryFilter !== 'all'
-            ? 'Kategorie gewählt · Zurück für Geräteübersicht'
-            : 'Einheitliche Geräteansicht · Antippen für Details'
+            ? 'Kategorie gewählt · Zurück für Übersicht'
+            : isKleinteileScreen || activeTab === 'kleinteil'
+              ? 'Einheitliche Kleinteileansicht · Antippen für Details'
+              : 'Einheitliche Geräteansicht · Antippen für Details'
         }
         showBack
         onBack={
@@ -222,35 +245,64 @@ export const GeraeteView: React.FC = () => {
         {groupedByFunction.length === 0 ? (
           <div className="p-6 bg-white border border-slate-200 rounded-2xl text-center space-y-3 shadow-2xs">
             <div className="w-11 h-11 rounded-2xl bg-indigo-50 text-[#3138A0] flex items-center justify-center mx-auto">
-              {activeTab === 'zubehoer' ? <Package size={22} /> : <Wrench size={22} />}
+              {activeTab === 'zubehoer' || activeTab === 'kleinteil' ? (
+                <Package size={22} />
+              ) : (
+                <Wrench size={22} />
+              )}
             </div>
             <div>
               <h3 className="font-bold text-slate-900 text-sm">
-                {activeTab === 'zubehoer'
-                  ? 'Noch kein Zubehör erfasst'
-                  : 'Noch keine Geräte oder Zubehörteile erfasst'}
+                {activeTab === 'kleinteil'
+                  ? 'Noch keine Kleinteile erfasst'
+                  : activeTab === 'zubehoer'
+                    ? 'Noch kein Zubehör erfasst'
+                    : 'Noch keine Geräte, Zubehör oder Kleinteile erfasst'}
               </h3>
               <p className="text-xs text-slate-500 max-w-[260px] mx-auto mt-1">
-                Erfasse beliebige Geräte universell manuell oder direkt über ChatGPT & MCP.
+                {activeTab === 'kleinteil'
+                  ? 'Erfasse Kleinteile, Verschleißteile und Befestigungen universell manuell oder direkt über ChatGPT & MCP.'
+                  : 'Erfasse beliebige Geräte, Zubehör & Kleinteile universell manuell oder direkt über ChatGPT & MCP.'}
               </p>
             </div>
-            <div className="flex items-center justify-center gap-2 pt-1">
-              <button
-                type="button"
-                onClick={handleOpenCreateGeraet}
-                className="px-3.5 py-2 bg-[#3138A0] hover:bg-[#272d82] text-white text-xs font-semibold rounded-xl shadow-2xs transition-colors flex items-center gap-1.5"
-              >
-                <Plus size={14} />
-                <span>Gerät anlegen</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => handleOpenCreateZubehoer()}
-                className="px-3.5 py-2 bg-indigo-50 hover:bg-indigo-100 text-[#3138A0] text-xs font-semibold rounded-xl transition-colors flex items-center gap-1.5"
-              >
-                <Package size={14} />
-                <span>Zubehör anlegen</span>
-              </button>
+            <div className="flex items-center justify-center flex-wrap gap-2 pt-1">
+              {activeTab === 'kleinteil' ? (
+                <button
+                  type="button"
+                  onClick={() => handleOpenCreateKleinteil()}
+                  className="px-3.5 py-2 bg-[#3138A0] hover:bg-[#272d82] text-white text-xs font-semibold rounded-xl shadow-2xs transition-colors flex items-center gap-1.5"
+                >
+                  <Plus size={14} />
+                  <span>Kleinteil anlegen</span>
+                </button>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={handleOpenCreateGeraet}
+                    className="px-3.5 py-2 bg-[#3138A0] hover:bg-[#272d82] text-white text-xs font-semibold rounded-xl shadow-2xs transition-colors flex items-center gap-1.5"
+                  >
+                    <Plus size={14} />
+                    <span>Gerät anlegen</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleOpenCreateZubehoer()}
+                    className="px-3.5 py-2 bg-indigo-50 hover:bg-indigo-100 text-[#3138A0] text-xs font-semibold rounded-xl transition-colors flex items-center gap-1.5"
+                  >
+                    <Package size={14} />
+                    <span>Zubehör</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleOpenCreateKleinteil()}
+                    className="px-3.5 py-2 bg-indigo-50 hover:bg-indigo-100 text-[#3138A0] text-xs font-semibold rounded-xl transition-colors flex items-center gap-1.5"
+                  >
+                    <Plus size={14} />
+                    <span>Kleinteil</span>
+                  </button>
+                </>
+              )}
             </div>
           </div>
         ) : (
@@ -288,14 +340,19 @@ export const GeraeteView: React.FC = () => {
               <div className="space-y-2">
                 {group.items.map((eq) => {
                   const isZubehoer = eq.item_type === 'zubehoer';
-                  const isDue = !isZubehoer && eq.status === 'faellig';
-                  const isInMaint = !isZubehoer && eq.status === 'wartung';
+                  const isKleinteil = eq.item_type === 'kleinteil';
+                  const isSubPart = isZubehoer || isKleinteil;
+                  const isDue = !isSubPart && eq.status === 'faellig';
+                  const isInMaint = !isSubPart && eq.status === 'wartung';
                   const parentGeraet =
-                    isZubehoer && eq.parent_equipment_id
+                    isSubPart && eq.parent_equipment_id
                       ? equipments.find((p) => p.id === eq.parent_equipment_id)
                       : null;
-                  const linkedAccessories = !isZubehoer
+                  const linkedAccessories = !isSubPart
                     ? zubehoerItems.filter((z) => z.parent_equipment_id === eq.id)
+                    : [];
+                  const linkedKleinteile = !isSubPart
+                    ? kleinteileItems.filter((k) => k.parent_equipment_id === eq.id)
                     : [];
                   const identity = resolveEquipmentIdentity(eq);
                   const photoSrc = resolvePrimaryEquipmentPhoto(eq);
@@ -305,14 +362,20 @@ export const GeraeteView: React.FC = () => {
                     <SwipeToDeleteRow
                       key={eq.id}
                       onDelete={() => deleteEquipment(eq.id)}
-                      deleteLabel={isZubehoer ? 'Zubehör löschen' : 'Gerät löschen'}
+                      deleteLabel={
+                        isKleinteil
+                          ? 'Kleinteil löschen'
+                          : isZubehoer
+                            ? 'Zubehör löschen'
+                            : 'Gerät löschen'
+                      }
                     >
                       <div
                         onClick={() => handleOpenDetail(eq.id)}
                         className="p-3 bg-white border border-slate-200 hover:border-[#3138A0]/50 active:bg-slate-50/70 rounded-2xl shadow-2xs transition-colors cursor-pointer flex items-center justify-between gap-3"
                       >
                         <div className="flex items-center gap-3 min-w-0 flex-1">
-                          {/* Einheitliches Gerätefoto (Hauptbild) mit Galerie-Zähler */}
+                          {/* Einheitliches Geräte-/Kleinteilfoto (Hauptbild) mit Galerie-Zähler */}
                           {photoSrc ? (
                             <button
                               type="button"
@@ -325,7 +388,7 @@ export const GeraeteView: React.FC = () => {
                                 });
                               }}
                               className="w-16 h-16 rounded-2xl overflow-hidden border border-slate-200 shrink-0 bg-white shadow-2xs relative"
-                              title="Gerätefoto vergrößern"
+                              title="Foto vergrößern"
                             >
                               <img
                                 src={photoSrc}
@@ -346,13 +409,13 @@ export const GeraeteView: React.FC = () => {
                                 setPhotoSourceEq(eq);
                               }}
                               className={`w-16 h-16 rounded-2xl border border-dashed flex flex-col items-center justify-center shrink-0 transition-colors ${
-                                isZubehoer
+                                isSubPart
                                   ? 'bg-indigo-50/50 border-indigo-200 text-[#3138A0]'
                                   : isDue
                                     ? 'bg-fuchsia-50 border-fuchsia-200 text-[#9A1B8D]'
                                     : 'bg-emerald-50/60 border-emerald-200 text-[#2C7738]'
                               }`}
-                              title="Gerätefoto hinzufügen"
+                              title="Foto hinzufügen"
                             >
                               <Camera size={18} />
                               <span className="text-[9px] font-bold mt-0.5">Foto</span>
@@ -381,14 +444,15 @@ export const GeraeteView: React.FC = () => {
                             ) : (
                               eq.serial_number && (
                                 <p className="text-[11px] text-slate-500 truncate mt-0.5">
-                                  SN: {eq.serial_number}
+                                  {isKleinteil ? 'Art.-Nr.: ' : 'SN: '}
+                                  {eq.serial_number}
                                 </p>
                               )
                             )}
 
                             {/* Status, Bestand & Wartungstermin kompakt in einer Zeile */}
                             <div className="flex items-center gap-1.5 flex-wrap mt-1.5">
-                              {!isZubehoer ? (
+                              {!isSubPart ? (
                                 <span
                                   className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md ${
                                     isDue
@@ -404,6 +468,10 @@ export const GeraeteView: React.FC = () => {
                                       ? 'In Wartung'
                                       : 'Einsatzbereit'}
                                 </span>
+                              ) : isKleinteil ? (
+                                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-indigo-50 text-[#3138A0]">
+                                  Kleinteil
+                                </span>
                               ) : (
                                 <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-indigo-50 text-[#3138A0]">
                                   Zubehör
@@ -412,7 +480,7 @@ export const GeraeteView: React.FC = () => {
 
                               {eq.quantity !== null &&
                                 eq.quantity !== undefined &&
-                                (isZubehoer || eq.quantity > 1) && (
+                                (isSubPart || eq.quantity > 1) && (
                                   <span
                                     className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md tabular-nums ${
                                       eq.quantity === 0
@@ -424,7 +492,7 @@ export const GeraeteView: React.FC = () => {
                                   </span>
                                 )}
 
-                              {!isZubehoer && eq.next_maintenance && (
+                              {!isSubPart && eq.next_maintenance && (
                                 <span className="text-[11px] text-slate-500 inline-flex items-center gap-1 tabular-nums">
                                   <Calendar size={11} className="text-slate-400" />
                                   <span>{eq.next_maintenance}</span>
@@ -434,6 +502,12 @@ export const GeraeteView: React.FC = () => {
                               {linkedAccessories.length > 0 && (
                                 <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-indigo-50 text-[#3138A0]">
                                   +{linkedAccessories.length} Zubehör
+                                </span>
+                              )}
+
+                              {linkedKleinteile.length > 0 && (
+                                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-indigo-50 text-[#3138A0]">
+                                  +{linkedKleinteile.length} Kleinteile
                                 </span>
                               )}
 
@@ -467,7 +541,7 @@ export const GeraeteView: React.FC = () => {
             <div className="flex items-center justify-between">
               <div className="min-w-0">
                 <h3 className="text-base font-bold text-slate-950 truncate">
-                  Gerätefoto hinzufügen
+                  Foto hinzufügen
                 </h3>
                 <p className="text-xs text-slate-600 truncate">{photoSourceEq.name}</p>
               </div>
@@ -602,7 +676,7 @@ export const GeraeteView: React.FC = () => {
                   setActiveTab('alle');
                   setSelectedCategoryFilter('all');
                 }}
-                className={`flex-1 py-1.5 text-[11px] font-bold rounded-xl transition-all truncate px-1 ${
+                className={`flex-1 py-1.5 text-[10px] font-bold rounded-xl transition-all truncate px-1 ${
                   activeTab === 'alle'
                     ? 'bg-white text-[#3138A0] shadow-xs'
                     : 'text-slate-600 hover:text-slate-900'
@@ -616,7 +690,7 @@ export const GeraeteView: React.FC = () => {
                   setActiveTab('geraet');
                   setSelectedCategoryFilter('all');
                 }}
-                className={`flex-1 py-1.5 text-[11px] font-bold rounded-xl transition-all truncate px-1 ${
+                className={`flex-1 py-1.5 text-[10px] font-bold rounded-xl transition-all truncate px-1 ${
                   activeTab === 'geraet'
                     ? 'bg-white text-[#3138A0] shadow-xs'
                     : 'text-slate-600 hover:text-slate-900'
@@ -630,7 +704,7 @@ export const GeraeteView: React.FC = () => {
                   setActiveTab('zubehoer');
                   setSelectedCategoryFilter('all');
                 }}
-                className={`flex-1 py-1.5 text-[11px] font-bold rounded-xl transition-all truncate px-1 ${
+                className={`flex-1 py-1.5 text-[10px] font-bold rounded-xl transition-all truncate px-1 ${
                   activeTab === 'zubehoer'
                     ? 'bg-white text-[#3138A0] shadow-xs'
                     : 'text-slate-600 hover:text-slate-900'
@@ -638,12 +712,30 @@ export const GeraeteView: React.FC = () => {
               >
                 Zubehör ({zubehoerItems.length})
               </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTab('kleinteil');
+                  setSelectedCategoryFilter('all');
+                }}
+                className={`flex-1 py-1.5 text-[10px] font-bold rounded-xl transition-all truncate px-1 ${
+                  activeTab === 'kleinteil'
+                    ? 'bg-white text-[#3138A0] shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Kleinteile ({kleinteileItems.length})
+              </button>
             </div>
 
             <button
               type="button"
               onClick={() =>
-                activeTab === 'zubehoer' ? handleOpenCreateZubehoer() : handleOpenCreateGeraet()
+                activeTab === 'kleinteil'
+                  ? handleOpenCreateKleinteil()
+                  : activeTab === 'zubehoer'
+                    ? handleOpenCreateZubehoer()
+                    : handleOpenCreateGeraet()
               }
               className="h-9 px-3 bg-[#3138A0] hover:bg-[#272d82] active:scale-97 text-white text-xs font-bold rounded-xl flex items-center gap-1 shrink-0 shadow-2xs"
             >

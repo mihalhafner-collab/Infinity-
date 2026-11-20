@@ -448,7 +448,11 @@ export const SucheModal: React.FC = () => {
           keywords: [
             e.notes,
             e.maintenance_plan,
-            e.item_type === 'zubehoer' ? 'zubehör zubehoer' : 'gerät geraet maschine',
+            e.item_type === 'kleinteil'
+              ? 'kleinteil kleinteile ersatzteil'
+              : e.item_type === 'zubehoer'
+                ? 'zubehör zubehoer'
+                : 'gerät geraet maschine',
             e.status === 'faellig' ? 'wartung fällig faellig' : 'einsatzbereit'
           ]
         })
@@ -553,9 +557,10 @@ export const SucheModal: React.FC = () => {
   };
 
   const handleOpenEquipment = (id: string) => {
+    const eq = equipments.find((x) => x.id === id);
     resetAndCloseSearch();
     setSelectedEquipmentId(id);
-    navigate('M10_GERAETE');
+    navigate(eq?.item_type === 'kleinteil' ? 'M14_KLEINTEILE' : 'M10_GERAETE');
     setActiveModal('GERAET_BEARBEITEN');
   };
 
@@ -949,11 +954,13 @@ export const SucheModal: React.FC = () => {
               {matchingEquipment.length > 0 && (
                 <div>
                   <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-2 px-0.5">
-                    Geräte & Zubehör ({matchingEquipment.length})
+                    Geräte, Zubehör & Kleinteile ({matchingEquipment.length})
                   </span>
                   <div className="space-y-2">
                     {matchingEquipment.map((e) => {
                       const isZubehoer = e.item_type === 'zubehoer';
+                      const isKleinteil = e.item_type === 'kleinteil';
+                      const isSubPart = isZubehoer || isKleinteil;
                       const primaryPhoto = resolvePrimaryEquipmentPhoto(e);
                       const identity = resolveEquipmentIdentity(e);
                       return (
@@ -973,12 +980,14 @@ export const SucheModal: React.FC = () => {
                             ) : (
                               <div
                                 className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border ${
-                                  isZubehoer
-                                    ? 'bg-indigo-50 border-indigo-100 text-[#3138A0]'
-                                    : 'bg-emerald-50 border-emerald-100 text-[#2C7738]'
+                                  isKleinteil
+                                    ? 'bg-emerald-50 border-emerald-200 text-[#2C7738]'
+                                    : isZubehoer
+                                      ? 'bg-indigo-50 border-indigo-100 text-[#3138A0]'
+                                      : 'bg-emerald-50 border-emerald-100 text-[#2C7738]'
                                 }`}
                               >
-                                {isZubehoer ? <Package size={18} /> : <Wrench size={18} />}
+                                {isSubPart ? <Package size={18} /> : <Wrench size={18} />}
                               </div>
                             )}
                             <div className="min-w-0">
@@ -986,6 +995,11 @@ export const SucheModal: React.FC = () => {
                                 <span className="font-bold text-slate-950 truncate text-sm leading-snug">
                                   {identity.title}
                                 </span>
+                                {isKleinteil && (
+                                  <span className="px-1.5 py-0.5 bg-emerald-50 text-[#2C7738] text-[10px] font-bold rounded shrink-0">
+                                    Kleinteil
+                                  </span>
+                                )}
                                 {isZubehoer && (
                                   <span className="px-1.5 py-0.5 bg-indigo-50 text-[#3138A0] text-[10px] font-bold rounded shrink-0">
                                     Zubehör
@@ -997,10 +1011,12 @@ export const SucheModal: React.FC = () => {
                                   .filter(Boolean)
                                   .join(' · ')}{' '}
                                 ·{' '}
-                                {isZubehoer
+                                {isSubPart
                                   ? e.quantity != null
                                     ? `${e.quantity} Stk.`
-                                    : 'Zubehör'
+                                    : isKleinteil
+                                      ? 'Kleinteil'
+                                      : 'Zubehör'
                                   : e.status === 'faellig'
                                     ? 'Wartung fällig'
                                     : e.status === 'wartung'

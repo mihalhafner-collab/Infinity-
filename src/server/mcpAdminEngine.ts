@@ -454,6 +454,24 @@ export function isCollectionName(name: string): name is CollectionName {
   return (COLLECTION_NAMES as readonly string[]).includes(name);
 }
 
+export function isKleinteileAlias(name: unknown): boolean {
+  const c = String(name || '').trim().toLowerCase();
+  return c === 'kleinteile' || c === 'kleinteil';
+}
+
+export function normalizeEquipmentItemType(
+  raw: unknown
+): 'geraet' | 'zubehoer' | 'kleinteil' {
+  const s = String(raw || '').trim().toLowerCase();
+  if (s === 'kleinteil' || s === 'kleinteile' || s === 'ersatzteil' || s === 'small_part') {
+    return 'kleinteil';
+  }
+  if (s === 'zubehoer' || s === 'zubehör' || s === 'accessory') {
+    return 'zubehoer';
+  }
+  return 'geraet';
+}
+
 function stripHeavyPhotos<T>(item: T, includePhotos = false): T {
   if (includePhotos || !item || typeof item !== 'object') return item;
   const clone = { ...(item as Record<string, unknown>) };
@@ -529,6 +547,9 @@ export function getAdminOverview(includeFullSnapshot = false) {
       offers: data.offers.length,
       orders: data.orders.length,
       equipments: data.equipments.length,
+      geraete: data.equipments.filter((e) => normalizeEquipmentItemType(e.item_type) === 'geraet').length,
+      zubehoer: data.equipments.filter((e) => normalizeEquipmentItemType(e.item_type) === 'zubehoer').length,
+      kleinteile: data.equipments.filter((e) => normalizeEquipmentItemType(e.item_type) === 'kleinteil').length,
       materials: data.materials.length,
       expenses: data.expenses.length
     },
@@ -640,7 +661,7 @@ function resolveCustomerByIdOrName(
 }
 
 export function queryCollection(params: {
-  collection: CollectionName | 'taxSettings' | 'all';
+  collection: CollectionName | 'kleinteile' | 'kleinteil' | 'taxSettings' | 'all';
   id?: string;
   customer_id?: string;
   status?: string;
@@ -659,6 +680,17 @@ export function queryCollection(params: {
   include_photos?: boolean;
 }) {
   const { data, revision } = getStore();
+  const isKleinteileCol = isKleinteileAlias(params.collection);
+  const effectiveCollection: CollectionName | 'taxSettings' | 'all' = isKleinteileCol
+    ? 'equipments'
+    : (params.collection as CollectionName | 'taxSettings' | 'all');
+  const effectiveItemType =
+    params.item_type && String(params.item_type).trim()
+      ? normalizeEquipmentItemType(params.item_type)
+      : isKleinteileCol
+        ? 'kleinteil'
+        : undefined;
+
   const requestedFields =
     Array.isArray(params.fields) && params.fields.length > 0
       ? params.fields.map((f) => String(f).trim()).filter(Boolean)
@@ -676,7 +708,7 @@ export function queryCollection(params: {
     }
     return projected as T;
   };
-  if (params.collection === 'taxSettings') {
+  if (effectiveCollection === 'taxSettings') {
     return {
       revision,
       collection: 'taxSettings',
@@ -685,7 +717,7 @@ export function queryCollection(params: {
     };
   }
 
-  if (params.collection === 'all') {
+  if (effectiveCollection === 'all') {
     const perCollectionLimit = params.limit && params.limit > 0 ? params.limit : 25;
     const grouped: Record<string, unknown[]> = {};
     let totalMatched = 0;
@@ -708,7 +740,7 @@ export function queryCollection(params: {
     };
   }
 
-  let items = [...(data[params.collection] as unknown as Array<Record<string, unknown>>)];
+  let items = [...(data[effectiveCollection] as unknown as Array<Record<string, unknown>>)];
 
   if (params.id) {
     const rawId = params.id.trim();
@@ -749,10 +781,12 @@ export function queryCollection(params: {
   if (params.category) {
     items = items.filter((item) => String(item.category || '') === params.category);
   }
-  if (params.item_type && params.collection === 'equipments') {
-    items = items.filter((item) => String(item.item_type || 'geraet') === params.item_type);
+  if (effectiveItemType && effectiveCollection === 'equipments') {
+    items = items.filter(
+      (item) => normalizeEquipmentItemType(item.item_type) === effectiveItemType
+    );
   }
-  if (params.parent_equipment_id && params.collection === 'equipments') {
+  if (params.parent_equipment_id && effectiveCollection === 'equipments') {
     items = items.filter(
       (item) => String(item.parent_equipment_id || '') === params.parent_equipment_id
     );
@@ -890,11 +924,51 @@ export function queryCollection(params: {
     };
   }
 
+  let kleinteileSummary: Record<string, unknown> | undefined;
+  let equipmentSummary: Record<string, unknown> | undefined;
+  if (effectiveCollection === 'equipments') {
+    let geraeteCount = 0;
+    let zubehoerCount = 0;
+    let kleinteileCount = 0;
+    let kleinteileTotalPieces = 0;
+    const kleinteilCategories = new Set<string>();
+    for (const raw of items) {
+      const eqType = normalizeEquipmentItemType(raw.item_type);
+      if (eqType === 'kleinteil') {
+        kleinteileCount++;
+        const q =
+          raw.quantity !== undefined && raw.quantity !== null && String(raw.quantity).trim() !== ''
+            ? Math.max(0, Number(raw.quantity) || 0)
+            : 1;
+        kleinteileTotalPieces += q;
+        const cat = String(raw.category || '').trim();
+        if (cat) kleinteilCategories.add(cat);
+      } else if (eqType === 'zubehoer') {
+        zubehoerCount++;
+      } else {
+        geraeteCount++;
+      }
+    }
+    kleinteileSummary = {
+      totalItems: kleinteileCount,
+      totalQuantityPieces: kleinteileTotalPieces,
+      categories: Array.from(kleinteilCategories)
+    };
+    equipmentSummary = {
+      geraete: geraeteCount,
+      zubehoer: zubehoerCount,
+      kleinteile: kleinteileCount,
+      kleinteileTotalPieces
+    };
+  }
+
   return {
     revision,
-    collection: params.collection,
+    collection: isKleinteileCol ? 'kleinteile' : effectiveCollection,
     totalMatched,
     ...(workSummary ? { workSummary } : {}),
+    ...(kleinteileSummary ? { kleinteileSummary } : {}),
+    ...(equipmentSummary ? { equipmentSummary } : {}),
     items: items.map((i) => projectFields(i))
   };
 }
@@ -1657,8 +1731,10 @@ function mutateUpsertOnSnapshotInner(
         .trim()
         .toLowerCase()
         .replace(/\s+/g, ' ');
-    const reqType = payload.item_type === 'zubehoer' ? 'zubehoer' : 'geraet';
-    const reqSerial = normStr(payload.serial_number);
+    const reqType = normalizeEquipmentItemType(payload.item_type);
+    const reqSerial = normStr(
+      payload.serial_number ?? payload.part_number ?? payload.item_number ?? payload.artikelnummer
+    );
     const reqManuf = normStr(payload.manufacturer);
     const reqModel = normStr(payload.model);
     const reqName = normStr(payload.name);
@@ -1666,9 +1742,9 @@ function mutateUpsertOnSnapshotInner(
     const reqParent = payload.parent_equipment_id ? String(payload.parent_equipment_id).trim() : '';
 
     existingIdx = arr.findIndex((item) => {
-      const itType = item.item_type === 'zubehoer' ? 'zubehoer' : 'geraet';
+      const itType = normalizeEquipmentItemType(item.item_type);
       if (itType !== reqType) return false;
-      if (reqType === 'zubehoer' && reqParent && String(item.parent_equipment_id || '').trim() !== reqParent) {
+      if (reqType !== 'geraet' && reqParent && String(item.parent_equipment_id || '').trim() !== reqParent) {
         return false;
       }
       const itSerial = normStr(item.serial_number);
@@ -1794,13 +1870,11 @@ function mutateUpsertOnSnapshotInner(
     merged.created_at = prev?.created_at || nowIso;
     merged.updated_at = nowIso;
   } else if (collection === 'equipments') {
-    const itemType =
-      payload.item_type !== undefined
-        ? payload.item_type === 'zubehoer'
-          ? 'zubehoer'
-          : 'geraet'
-        : prev?.item_type === 'zubehoer'
-          ? 'zubehoer'
+    const itemType: 'geraet' | 'zubehoer' | 'kleinteil' =
+      payload.item_type !== undefined && String(payload.item_type).trim() !== ''
+        ? normalizeEquipmentItemType(payload.item_type)
+        : prev?.item_type !== undefined
+          ? normalizeEquipmentItemType(prev.item_type)
           : 'geraet';
 
     const rawStatus =
@@ -1822,11 +1896,15 @@ function mutateUpsertOnSnapshotInner(
       payload.model !== undefined
         ? String(payload.model ?? '').trim()
         : String(prev?.model ?? '').trim();
+    const defaultCategory =
+      itemType === 'kleinteil' ? 'Kleinteile' : itemType === 'zubehoer' ? 'Zubehör' : 'Allgemein';
     const category =
       payload.category !== undefined && String(payload.category).trim() !== ''
         ? String(payload.category).trim()
-        : String(prev?.category || (itemType === 'zubehoer' ? 'Zubehör' : 'Allgemein')).trim();
+        : String(prev?.category || defaultCategory).trim();
     const autoTitle = [manufacturer, model].filter(Boolean).join(' ');
+    const defaultName =
+      itemType === 'kleinteil' ? 'Kleinteil' : itemType === 'zubehoer' ? 'Zubehör' : 'Gerät';
     const name =
       (payload.name !== undefined && String(payload.name).trim() !== ''
         ? String(payload.name).trim()
@@ -1834,12 +1912,18 @@ function mutateUpsertOnSnapshotInner(
       (prev?.name ? String(prev.name).trim() : '') ||
       autoTitle ||
       category ||
-      (itemType === 'zubehoer' ? 'Zubehör' : 'Gerät');
+      defaultName;
 
     const serialNumber =
       payload.serial_number !== undefined
         ? String(payload.serial_number ?? '').trim()
-        : String(prev?.serial_number ?? '').trim();
+        : payload.part_number !== undefined
+          ? String(payload.part_number ?? '').trim()
+          : payload.item_number !== undefined
+            ? String(payload.item_number ?? '').trim()
+            : payload.artikelnummer !== undefined
+              ? String(payload.artikelnummer ?? '').trim()
+              : String(prev?.serial_number ?? '').trim();
     const purchaseDate =
       payload.purchase_date !== undefined
         ? String(payload.purchase_date ?? '').trim()
@@ -2034,6 +2118,9 @@ function mutateUpsertOnSnapshotInner(
       'model',
       'name',
       'serial_number',
+      'part_number',
+      'item_number',
+      'artikelnummer',
       'purchase_date',
       'purchase_price',
       'dealer',
@@ -2060,8 +2147,12 @@ function mutateUpsertOnSnapshotInner(
       'source',
       'allow_duplicate',
       'accessories',
+      'kleinteile',
+      'small_parts',
       'quantity',
       'notes',
+      'storage_location',
+      'lagerort',
       'status',
       'last_maintenance',
       'next_maintenance',
@@ -2324,7 +2415,7 @@ function mutateUpsertOnSnapshotInner(
     const normalizedQty =
       rawQty !== undefined && rawQty !== null && String(rawQty).trim() !== ''
         ? Math.max(0, Math.round(Number(rawQty) || 0))
-        : itemType === 'zubehoer'
+        : itemType === 'zubehoer' || itemType === 'kleinteil'
           ? 1
           : null;
 
@@ -2359,6 +2450,11 @@ function mutateUpsertOnSnapshotInner(
     delete merged.equipment_id;
     delete merged.record_id;
     delete merged.__force_update;
+    delete merged.part_number;
+    delete merged.item_number;
+    delete merged.artikelnummer;
+    delete merged.storage_location;
+    delete merged.lagerort;
     delete merged.has_photo;
     delete merged.photo_count;
     delete merged.image_count;
@@ -2376,6 +2472,8 @@ function mutateUpsertOnSnapshotInner(
     delete merged.source;
     delete merged.allow_duplicate;
     delete merged.accessories;
+    delete merged.kleinteile;
+    delete merged.small_parts;
 
     merged.item_type = itemType;
     merged.category = category;
@@ -2402,7 +2500,13 @@ function mutateUpsertOnSnapshotInner(
     merged.specs = syncedSpecs;
     merged.quantity = normalizedQty;
     merged.notes =
-      payload.notes !== undefined ? String(payload.notes ?? '') : String(prev?.notes ?? '');
+      payload.notes !== undefined
+        ? String(payload.notes ?? '')
+        : payload.storage_location !== undefined
+          ? String(payload.storage_location ?? '')
+          : payload.lagerort !== undefined
+            ? String(payload.lagerort ?? '')
+            : String(prev?.notes ?? '');
     merged.status = status;
     merged.last_maintenance = lastMaintIso;
     merged.next_maintenance = nextMaintIso;
@@ -2435,6 +2539,33 @@ function mutateUpsertOnSnapshotInner(
           mutateUpsertOnSnapshot(next, 'equipments', {
             ...accObj,
             item_type: 'zubehoer',
+            parent_equipment_id: id
+          });
+        }
+      }
+    }
+
+    const kleinteileList = Array.isArray(payload.kleinteile)
+      ? payload.kleinteile
+      : Array.isArray(payload.small_parts)
+        ? payload.small_parts
+        : null;
+    if (itemType === 'geraet' && kleinteileList) {
+      for (const ktRaw of kleinteileList) {
+        if (!ktRaw) continue;
+        if (typeof ktRaw === 'string') {
+          const ktName = ktRaw.trim();
+          if (!ktName) continue;
+          mutateUpsertOnSnapshot(next, 'equipments', {
+            name: ktName,
+            item_type: 'kleinteil',
+            parent_equipment_id: id
+          });
+        } else if (typeof ktRaw === 'object') {
+          const ktObj = ktRaw as Record<string, unknown>;
+          mutateUpsertOnSnapshot(next, 'equipments', {
+            ...ktObj,
+            item_type: 'kleinteil',
             parent_equipment_id: id
           });
         }
@@ -3914,8 +4045,13 @@ export function executeBatchAdmin(
 
   // Atomic execution on cloned snapshot: if any step throws, nothing is persisted
   for (const item of operations) {
-    if (!isCollectionName(item.collection)) {
-      throw new Error(`Ungültige Collection: "${String(item.collection)}".`);
+    const rawCol = String(item.collection || '').trim();
+    const isKleinteileCol = isKleinteileAlias(rawCol);
+    const targetCol: CollectionName = isKleinteileCol
+      ? 'equipments'
+      : (rawCol as CollectionName);
+    if (!isCollectionName(targetCol)) {
+      throw new Error(`Ungültige Collection: "${rawCol}".`);
     }
     if (item.op === 'delete') {
       const targetId =
@@ -3923,19 +4059,22 @@ export function executeBatchAdmin(
         item.equipment_id ||
         String(item.record?.id || item.record?.equipment_id || '');
       if (!targetId) {
-        throw new Error(`Fehlende "id" bei Löschoperation in "${item.collection}".`);
+        throw new Error(`Fehlende "id" bei Löschoperation in "${rawCol}".`);
       }
-      const delRes = mutateDeleteOnSnapshot(next, item.collection, String(targetId).trim());
-      results.push({ op: 'delete', collection: item.collection, id: String(targetId).trim(), ...delRes });
+      const delRes = mutateDeleteOnSnapshot(next, targetCol, String(targetId).trim());
+      results.push({ op: 'delete', collection: rawCol, id: String(targetId).trim(), ...delRes });
     } else {
       const payload = buildNormalizedUpsertRecord(
         item as unknown as Record<string, unknown>,
-        item.collection
+        targetCol
       );
-      const upRes = mutateUpsertOnSnapshot(next, item.collection, payload);
+      if (isKleinteileCol && !payload.item_type) {
+        payload.item_type = 'kleinteil';
+      }
+      const upRes = mutateUpsertOnSnapshot(next, targetCol, payload);
       results.push({
         op: item.op === 'update' ? 'update' : 'upsert',
-        collection: item.collection,
+        collection: rawCol,
         action: upRes.action,
         record: upRes.record,
         ...(upRes.extra || {})
@@ -3957,7 +4096,7 @@ export const MCP_TOOLS = [
   {
     name: 'infinity_status',
     description:
-      'Liefert den aktuellen Verbindungs- und Datenbankstatus der Standard-Infinity-MCP-Schnittstelle (Revision, letzte Änderung, Schreibfreigabe und Datensatzzähler).',
+      'Liefert den aktuellen Verbindungs- und Datenbankstatus der Standard-Infinity-MCP-Schnittstelle (Revision, letzte Änderung, Schreibfreigabe und Datensatzzähler inkl. geraete, zubehoer, kleinteile).',
     annotations: {
       title: 'Infinity Status & Revision',
       readOnlyHint: true,
@@ -3974,7 +4113,7 @@ export const MCP_TOOLS = [
   {
     name: 'pixel_abfrage',
     description:
-      'Gezielter Lese- & Suchzugriff in einem einzigen Aufruf (ersetzt mehrfache Einzelabfragen): Liest wahlweise eine oder mehrere Tabellen gleichzeitig (customers, properties, appointments, workRecords, invoices, inquiries, offers, orders, equipments, materials, expenses, taxSettings), erkennt Vor- und Nachnamen unabhängig von der Reihenfolge, liefert bei workRecords mit unbilled_only=true exakt nur offene abrechenbare Nicht-L.C.R.-Arbeiten (billable=true, is_lcr=false, settlement_id=null), liefert bei invoices mit include_pdf=true das Original-Rechnungs-PDF (Base64) sowie die Versand-/Zustellbestätigung (deliveryStatus).',
+      'Gezielter Lese- & Suchzugriff in einem einzigen Aufruf (ersetzt mehrfache Einzelabfragen): Liest wahlweise eine oder mehrere Tabellen gleichzeitig (customers, properties, appointments, workRecords, invoices, inquiries, offers, orders, equipments, kleinteile, materials, expenses, taxSettings; für die Kleinteileübersicht collection="kleinteile" oder collection="equipments" mit item_type="kleinteil"), erkennt Vor- und Nachnamen unabhängig von der Reihenfolge, liefert bei workRecords mit unbilled_only=true exakt nur offene abrechenbare Nicht-L.C.R.-Arbeiten (billable=true, is_lcr=false, settlement_id=null), liefert bei invoices mit include_pdf=true das Original-Rechnungs-PDF (Base64) sowie die Versand-/Zustellbestätigung (deliveryStatus).',
     annotations: {
       title: 'Gezielte Abfrage (Übersicht, Tabellen, Original-PDF & Zustellstatus in 1 Aufruf)',
       readOnlyHint: true,
@@ -3990,15 +4129,15 @@ export const MCP_TOOLS = [
           type: 'array',
           items: {
             type: 'string',
-            enum: [...COLLECTION_NAMES, 'taxSettings', 'all']
+            enum: [...COLLECTION_NAMES, 'kleinteile', 'kleinteil', 'taxSettings', 'all']
           },
           description:
-            'Mehrere Tabellen gleichzeitig in einem einzigen Aufruf abfragen (z.B. ["customers", "workRecords", "invoices"]).'
+            'Mehrere Tabellen gleichzeitig in einem einzigen Aufruf abfragen (z.B. ["customers", "workRecords", "invoices"] oder ["equipments", "kleinteile"]).'
         },
         collection: {
           type: 'string',
-          enum: [...COLLECTION_NAMES, 'taxSettings', 'all'],
-          description: 'Einzelne abzufragende Tabelle oder "all" für globale Suche.'
+          enum: [...COLLECTION_NAMES, 'kleinteile', 'kleinteil', 'taxSettings', 'all'],
+          description: 'Einzelne abzufragende Tabelle ("kleinteile" für Kleinteileübersicht) oder "all" für globale Suche.'
         },
         id: { type: 'string', description: 'Optionale exakte Datensatz-ID oder Rechnungsnummer (z.B. RE-75/2026).' },
         invoice_id: { type: 'string', description: 'Optionale Rechnungs-ID oder Rechnungsnummer für Original-PDF oder Zustellstatus.' },
@@ -4009,9 +4148,9 @@ export const MCP_TOOLS = [
             'Optionaler Filter auf eine Kunden-ID (liefert gezielt Kundenakte, Objekte, Termine, Arbeiten & Rechnungen dieses Kunden).'
         },
         status: { type: 'string', description: 'Optionaler Status-Filter (z.B. unpaid, paid, geplant, einsatzbereit, faellig, wartung).' },
-        category: { type: 'string', description: 'Optionaler Kategorie-Filter (z.B. bei equipments oder materials).' },
-        item_type: { type: 'string', description: 'Optionaler Typ-Filter bei equipments ("geraet" oder "zubehoer").' },
-        parent_equipment_id: { type: 'string', description: 'Optionaler Filter auf zugeordnetes Hauptgerät bei equipments.' },
+        category: { type: 'string', description: 'Optionaler Kategorie-Filter (z.B. bei equipments, kleinteile oder materials).' },
+        item_type: { type: 'string', description: 'Optionaler Typ-Filter bei equipments ("geraet", "zubehoer" oder "kleinteil").' },
+        parent_equipment_id: { type: 'string', description: 'Optionaler Filter auf zugeordnetes Hauptgerät bei equipments / kleinteile.' },
         is_lcr: {
           type: 'boolean',
           description: 'Bei workRecords: Filtert gezielt auf L.C.R.-Einträge (true) oder Nicht-L.C.R. (false).'
@@ -4042,7 +4181,7 @@ export const MCP_TOOLS = [
         },
         limit: {
           type: 'number',
-          description: 'Maximale Anzahl an Ergebnissen pro Tabelle (Standard 25).'
+          description: 'Maximale Anzahl an Ergebnissen pro Tabelle (Standard 25, bei equipments/kleinteile 200).'
         },
         include_overview: {
           type: 'boolean',
@@ -4062,7 +4201,7 @@ export const MCP_TOOLS = [
   {
     name: 'pixel_aktion',
     description:
-      'Gemeinsame geprüfte App-Logik zum Anlegen, Ändern, Löschen und Versenden in einem einzigen Aufruf: Verarbeitet Einzel- oder Stapeländerungen (Kunden, Objekte, Termine inkl. Konfliktprüfung, Arbeitsaufzeichnungen inkl. Betragsberechnung, L.C.R.-Sperre & Direktversand per op="send_work_record", Rechnungen inkl. Direktversand per op="send_invoice", Original-PDF-Abruf per op="get_invoice_pdf", Zustellbestätigung per op="delivery_status", Anfragen, Angebote, Aufträge, Geräte inkl. Wartung, Material, Ausgaben, Steuereinstellungen) atomar.',
+      'Gemeinsame geprüfte App-Logik zum Anlegen, Ändern, Löschen und Versenden in einem einzigen Aufruf: Verarbeitet Einzel- oder Stapeländerungen (Kunden, Objekte, Termine inkl. Konfliktprüfung, Arbeitsaufzeichnungen inkl. Betragsberechnung, L.C.R.-Sperre & Direktversand per op="send_work_record", Rechnungen inkl. Direktversand per op="send_invoice", Original-PDF-Abruf per op="get_invoice_pdf", Zustellbestätigung per op="delivery_status", Anfragen, Angebote, Aufträge, Geräte, Zubehör & Kleinteile [collection="kleinteile" oder collection="equipments" mit item_type="kleinteil" — gleiche universelle Eingabemöglichkeiten wie Geräte], Material, Ausgaben, Steuereinstellungen) atomar.',
     annotations: {
       title: 'Daten anlegen, ändern, löschen & Belege/Arbeiten versenden',
       readOnlyHint: false,
@@ -4117,19 +4256,19 @@ export const MCP_TOOLS = [
         },
         collection: {
           type: 'string',
-          enum: [...COLLECTION_NAMES],
-          description: 'Zieltabelle bei op="upsert", op="update" oder op="delete".'
+          enum: [...COLLECTION_NAMES, 'kleinteile', 'kleinteil'],
+          description: 'Zieltabelle bei op="upsert", op="update" oder op="delete" (nutze "kleinteile" für die Kleinteileübersicht).'
         },
         id: {
           type: 'string',
           description:
-            'Eindeutige Datensatz-ID bei op="upsert", op="update" oder op="delete" (bei vorhandener ID in equipments wird ausschließlich aktualisiert und niemals neu angelegt).'
+            'Eindeutige Datensatz-ID bei op="upsert", op="update" oder op="delete" (bei vorhandener ID in equipments/kleinteile wird ausschließlich aktualisiert und niemals neu angelegt).'
         },
         record: {
           type: 'object',
           additionalProperties: true,
           description:
-            'Datensatz-Felder bei op="upsert" oder op="update" (mit id = bestehendes Gerät aktualisieren, unbekannte id = Fehler; ohne id = neu anlegen, wobei automatischer Abgleich über serial_number oder manufacturer+model Dubletten verhindert). Universelle Gerätefelder bei collection="equipments": id, item_type ("geraet"|"zubehoer"), manufacturer, model, name, category, serial_number, purchase_date, purchase_price, dealer, status ("einsatzbereit"|"faellig"|"wartung"), quantity, parent_equipment_id, custom_fields (Array aus {label, type: "text"|"number"|"unit"|"date"|"boolean", value, unit, section, source: "manufacturer"|"individual"}), sections (Array aus {name, source, fields}), custom_sections (Array von Bereichsnamen), specs (Objekt mit technischen Parametern, wird verlustfrei zusammengeführt), remove_fields (Array zu löschender Feldnamen), photo, images / add_images (Array aus URLs/Data-URLs oder {url, caption, source: "own"|"manufacturer", is_primary}), set_primary_image_id, documents / add_documents (Array aus {title, type: "rechnung"|"anleitung"|"sonstiges", url}), accessories (Array verknüpfter Zubehörteile), maintenance_plan, interval_months, last_maintenance, next_maintenance, notes, history.'
+            'Datensatz-Felder bei op="upsert" oder op="update" (mit id = bestehenden Eintrag aktualisieren, unbekannte id = Fehler; ohne id = neu anlegen, wobei automatischer Abgleich über serial_number/part_number oder manufacturer+model Dubletten verhindert). Universelle Geräte- & Kleinteilefelder bei collection="equipments" oder collection="kleinteile": id, item_type ("geraet"|"zubehoer"|"kleinteil"), manufacturer, model, name, category, serial_number (oder part_number / item_number / artikelnummer), purchase_date, purchase_price, dealer, status ("einsatzbereit"|"faellig"|"wartung"), quantity (Bestand in Stück), parent_equipment_id (zugeordnetes Hauptgerät), custom_fields (Array aus {label, type: "text"|"number"|"unit"|"date"|"boolean", value, unit, section, source: "manufacturer"|"individual"}), sections (Array aus {name, source, fields}), custom_sections (Array von Bereichsnamen), specs (Objekt mit technischen Parametern/Maßen/Gewinde, wird verlustfrei zusammengeführt), remove_fields (Array zu löschender Feldnamen), photo, images / add_images (Array aus URLs/Data-URLs oder {url, caption, source: "own"|"manufacturer", is_primary}), set_primary_image_id, documents / add_documents (Array aus {title, type: "rechnung"|"anleitung"|"sonstiges", url}), accessories (Array verknüpfter Zubehörteile), kleinteile / small_parts (Array verknüpfter Kleinteile), maintenance_plan, interval_months, last_maintenance, next_maintenance, notes (oder storage_location / lagerort), history.'
         },
         work_record_ids: {
           type: 'array',
@@ -4142,7 +4281,7 @@ export const MCP_TOOLS = [
         },
         equipment_id: {
           type: 'string',
-          description: 'Geräte-ID bei op="upsert", op="update", op="maintenance" oder op="equipment_media".'
+          description: 'Geräte- oder Kleinteil-ID bei op="upsert", op="update", op="maintenance" oder op="equipment_media".'
         },
         maintenance: {
           type: 'object',
@@ -4175,7 +4314,7 @@ export const MCP_TOOLS = [
             required: ['op', 'collection'],
             properties: {
               op: { type: 'string', enum: ['upsert', 'update', 'delete'] },
-              collection: { type: 'string', enum: [...COLLECTION_NAMES] },
+              collection: { type: 'string', enum: [...COLLECTION_NAMES, 'kleinteile', 'kleinteil'] },
               id: { type: 'string' },
               equipment_id: { type: 'string' },
               record: { type: 'object', additionalProperties: true }
@@ -4518,11 +4657,11 @@ async function executeTargetedPixelQuery(args: Record<string, unknown>) {
 
   if (requestedCollections.length === 1) {
     const col = requestedCollections[0];
-    if (col !== 'taxSettings' && col !== 'all' && !isCollectionName(col)) {
+    if (col !== 'taxSettings' && col !== 'all' && !isCollectionName(col) && !isKleinteileAlias(col)) {
       throw new Error(`Unbekannte Collection "${col}".`);
     }
     response.result = queryCollection({
-      collection: col,
+      collection: col as CollectionName | 'kleinteile' | 'kleinteil' | 'taxSettings' | 'all',
       id: typeof args.id === 'string' ? args.id : undefined,
       customer_id: typeof args.customer_id === 'string' ? args.customer_id : undefined,
       status: typeof args.status === 'string' ? args.status : undefined,
@@ -4537,15 +4676,15 @@ async function executeTargetedPixelQuery(args: Record<string, unknown>) {
       date_to: typeof args.date_to === 'string' ? args.date_to : undefined,
       search: typeof args.search === 'string' ? args.search : undefined,
       fields,
-      limit: col === 'equipments' && args.limit === undefined ? 200 : limit,
+      limit: (col === 'equipments' || isKleinteileAlias(col)) && args.limit === undefined ? 200 : limit,
       include_photos: Boolean(args.include_photos)
     });
   } else if (requestedCollections.length > 1) {
     const multiResults: Record<string, unknown> = {};
     for (const col of requestedCollections) {
-      if (col === 'taxSettings' || col === 'all' || isCollectionName(col)) {
+      if (col === 'taxSettings' || col === 'all' || isCollectionName(col) || isKleinteileAlias(col)) {
         multiResults[col] = queryCollection({
-          collection: col,
+          collection: col as CollectionName | 'kleinteile' | 'kleinteil' | 'taxSettings' | 'all',
           id: typeof args.id === 'string' ? args.id : undefined,
           customer_id: typeof args.customer_id === 'string' ? args.customer_id : undefined,
           status: typeof args.status === 'string' ? args.status : undefined,
@@ -4560,7 +4699,7 @@ async function executeTargetedPixelQuery(args: Record<string, unknown>) {
           date_to: typeof args.date_to === 'string' ? args.date_to : undefined,
           search: typeof args.search === 'string' ? args.search : undefined,
           fields,
-          limit: col === 'equipments' && args.limit === undefined ? 200 : limit,
+          limit: (col === 'equipments' || isKleinteileAlias(col)) && args.limit === undefined ? 200 : limit,
           include_photos: Boolean(args.include_photos)
         });
       }
@@ -4580,17 +4719,23 @@ function executeUnifiedPixelAction(args: Record<string, unknown>) {
   switch (op) {
     case 'upsert':
     case 'update': {
-      const col = String(args.collection || '').trim();
+      const rawCol = String(args.collection || '').trim();
+      const isKleinteileCol = isKleinteileAlias(rawCol);
+      const col = isKleinteileCol ? 'equipments' : rawCol;
       if (!isCollectionName(col)) {
-        throw new Error(`Unbekannte Collection "${col}".`);
+        throw new Error(`Unbekannte Collection "${rawCol}".`);
       }
       const rec = buildNormalizedUpsertRecord(args, col);
+      if (isKleinteileCol && !rec.item_type) {
+        rec.item_type = 'kleinteil';
+      }
       return upsertCollectionRecord(col, rec, 'mcp');
     }
     case 'delete': {
-      const col = String(args.collection || '').trim();
+      const rawCol = String(args.collection || '').trim();
+      const col = isKleinteileAlias(rawCol) ? 'equipments' : rawCol;
       if (!isCollectionName(col)) {
-        throw new Error(`Unbekannte Collection "${col}".`);
+        throw new Error(`Unbekannte Collection "${rawCol}".`);
       }
       const id = String(
         args.id ||
@@ -4838,6 +4983,9 @@ export async function callMcpTool(
           offers: store.data.offers.length,
           orders: store.data.orders.length,
           equipments: store.data.equipments.length,
+          geraete: store.data.equipments.filter((e) => normalizeEquipmentItemType(e.item_type) === 'geraet').length,
+          zubehoer: store.data.equipments.filter((e) => normalizeEquipmentItemType(e.item_type) === 'zubehoer').length,
+          kleinteile: store.data.equipments.filter((e) => normalizeEquipmentItemType(e.item_type) === 'kleinteil').length,
           materials: store.data.materials.length,
           expenses: store.data.expenses.length
         }
@@ -4857,14 +5005,18 @@ export async function callMcpTool(
       return getAdminOverview(Boolean(args.include_full_snapshot));
     case 'admin_read_records': {
       const col = String(args.collection || '');
-      if (col !== 'taxSettings' && col !== 'all' && !isCollectionName(col)) {
+      if (col !== 'taxSettings' && col !== 'all' && !isCollectionName(col) && !isKleinteileAlias(col)) {
         throw new Error(`Unbekannte Collection "${col}".`);
       }
       return queryCollection({
-        collection: col,
+        collection: col as CollectionName | 'kleinteile' | 'kleinteil' | 'taxSettings' | 'all',
         id: typeof args.id === 'string' ? args.id : undefined,
         customer_id: typeof args.customer_id === 'string' ? args.customer_id : undefined,
         status: typeof args.status === 'string' ? args.status : undefined,
+        category: typeof args.category === 'string' ? args.category : undefined,
+        item_type: typeof args.item_type === 'string' ? args.item_type : undefined,
+        parent_equipment_id:
+          typeof args.parent_equipment_id === 'string' ? args.parent_equipment_id : undefined,
         is_lcr: typeof args.is_lcr === 'boolean' ? args.is_lcr : undefined,
         billable: typeof args.billable === 'boolean' ? args.billable : undefined,
         unbilled_only: Boolean(args.unbilled_only),
@@ -4881,17 +5033,23 @@ export async function callMcpTool(
         typeof args.year === 'number' ? args.year : undefined
       );
     case 'admin_upsert_record': {
-      const col = String(args.collection || '').trim();
+      const rawCol = String(args.collection || '').trim();
+      const isKleinteileCol = isKleinteileAlias(rawCol);
+      const col = isKleinteileCol ? 'equipments' : rawCol;
       if (!isCollectionName(col)) {
-        throw new Error(`Unbekannte Collection "${col}".`);
+        throw new Error(`Unbekannte Collection "${rawCol}".`);
       }
       const rec = buildNormalizedUpsertRecord(args, col);
+      if (isKleinteileCol && !rec.item_type) {
+        rec.item_type = 'kleinteil';
+      }
       return upsertCollectionRecord(col, rec, 'mcp');
     }
     case 'admin_delete_record': {
-      const col = String(args.collection || '').trim();
+      const rawCol = String(args.collection || '').trim();
+      const col = isKleinteileAlias(rawCol) ? 'equipments' : rawCol;
       if (!isCollectionName(col)) {
-        throw new Error(`Unbekannte Collection "${col}".`);
+        throw new Error(`Unbekannte Collection "${rawCol}".`);
       }
       const id = String(args.id || args.equipment_id || '').trim();
       if (!id) throw new Error('Parameter "id" ist erforderlich.');
