@@ -15,3 +15,7 @@ android/local.properties
 *.keystore
 *.jks
 .runtime-data/
+
+# Importierte Entwürfe, Screenshots und Dokumente mit möglichen Kundendaten
+/public/assets/aistudio/*
+!/public/assets/aistudio/Hafner_Rechnungslogo_Original_236f7b3b.png
